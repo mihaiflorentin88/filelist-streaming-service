@@ -1,0 +1,131 @@
+import sys
+from pathlib import Path
+import struct
+import tempfile
+import unittest
+import zlib
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import tizen_wgt
+
+
+VALID_CONFIG = b'''<?xml version="1.0" encoding="UTF-8"?>
+<widget xmlns="http://www.w3.org/ns/widgets" xmlns:tizen="http://tizen.org/ns/widgets" version="0.1.2">
+  <tizen:application id="FListTV001.FileListTV" package="FListTV001" required_version="7.0"/>
+  <content src="index.html"/>
+  <icon src="icon.png"/>
+  <tizen:profile name="tv-samsung"/>
+  <tizen:privilege name="http://tizen.org/privilege/internet"/>
+  <tizen:privilege name="http://tizen.org/privilege/download"/>
+  <tizen:privilege name="http://tizen.org/privilege/tv.inputdevice"/>
+  <access origin="*" subdomains="true"/>
+</widget>'''
+
+VALID_HTML = b'''<link rel="stylesheet" href="app.css">
+<script type="text/javascript" src="$WEBAPIS/webapis/webapis.js"></script>
+<script type="text/javascript" src="startup.js"></script>
+<script type="text/javascript" src="app.js"></script>'''
+
+
+def png(width: int, height: int) -> bytes:
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+
+    header = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
+    rows = b"".join(b"\0" + b"\0\0\0\xff" * width for _ in range(height))
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b"")
+
+
+class WGTTests(unittest.TestCase):
+    def test_pack_and_validate_unsigned_package(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "dist"
+            (source / "assets").mkdir(parents=True)
+            (source / "index.html").write_bytes(VALID_HTML)
+            (source / "app.js").write_bytes(self.valid_app())
+            (source / "app.css").write_text("body{}")
+            (source / "startup.js").write_text("window.FileListBoot={};")
+            (source / "signature1.xml").write_text("stale")
+            (root / "config.xml").write_bytes(VALID_CONFIG)
+            (root / "icon.png").write_bytes(png(117, 117))
+            output = root / "FileListTV-0.1.2.wgt"
+
+            entries = tizen_wgt.collect_entries(source, root / "config.xml", root / "icon.png")
+            self.assertNotIn("signature1.xml", entries)
+            tizen_wgt.write_archive(output, entries)
+            report = tizen_wgt.validate_archive(output, "7.0")
+            self.assertIn("unsigned; Apps2Samsung will sign it", report)
+            digest = tizen_wgt.write_checksum(output)
+            self.assertEqual(64, len(digest))
+            self.assertTrue(Path(str(output) + ".sha256").is_file())
+
+    def test_rejects_newer_tizen_requirement(self):
+        output = self.make_archive(VALID_CONFIG, VALID_HTML)
+        with self.assertRaisesRegex(tizen_wgt.WGTError, "requires Tizen 7.0"):
+            tizen_wgt.validate_archive(output, "6.5")
+
+    def test_rejects_missing_html_asset(self):
+        output = self.make_archive(VALID_CONFIG, VALID_HTML + b'<script src="missing.js"></script>')
+        with self.assertRaisesRegex(tizen_wgt.WGTError, "missing bundled asset"):
+            tizen_wgt.validate_archive(output, "7.0")
+
+    def test_rejects_partner_privilege(self):
+        config = VALID_CONFIG.replace(
+            b'<access origin="*"',
+            b'<tizen:privilege name="http://tizen.org/privilege/vpnservice"/><access origin="*"',
+        )
+        output = self.make_archive(config, VALID_HTML)
+        with self.assertRaisesRegex(tizen_wgt.WGTError, "partner-only"):
+            tizen_wgt.validate_archive(output, "7.0")
+
+    def test_rejects_module_entry_point(self):
+        html = VALID_HTML + b'<script type="module" src="module.js"></script>'
+        output = self.make_archive(VALID_CONFIG, html, {"module.js": b"export {}"})
+        with self.assertRaisesRegex(tizen_wgt.WGTError, "classic scripts"):
+            tizen_wgt.validate_archive(output, "7.0")
+
+    def test_rejects_static_avplay_surface(self):
+        html = VALID_HTML + b'<object type="application/avplayer"></object>'
+        output = self.make_archive(VALID_CONFIG, html)
+        with self.assertRaisesRegex(tizen_wgt.WGTError, "must not exist in startup HTML"):
+            tizen_wgt.validate_archive(output, "7.0")
+
+    def test_rejects_generic_tv_profile(self):
+        config = VALID_CONFIG.replace(b'name="tv-samsung"', b'name="tv"')
+        output = self.make_archive(config, VALID_HTML)
+        with self.assertRaisesRegex(tizen_wgt.WGTError, "tv-samsung profile"):
+            tizen_wgt.validate_archive(output, "7.0")
+
+    def test_rejects_wrong_icon_dimensions(self):
+        output = self.make_archive(VALID_CONFIG, VALID_HTML, {"icon.png": png(512, 512)})
+        with self.assertRaisesRegex(tizen_wgt.WGTError, "117x117"):
+            tizen_wgt.validate_archive(output, "7.0")
+
+    def make_archive(self, config: bytes, html: bytes, extra: dict[str, bytes] | None = None) -> Path:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        output = Path(temporary.name) / "app.wgt"
+        entries = {
+            "app.css": b"body{}",
+            "app.js": self.valid_app(),
+            "config.xml": config,
+            "icon.png": png(117, 117),
+            "index.html": html,
+            "startup.js": b"window.FileListBoot={};",
+        }
+        entries.update(extra or {})
+        tizen_wgt.write_archive(output, entries)
+        return output
+
+    @staticmethod
+    def valid_app() -> bytes:
+        return (
+            b"(function(){var surface='application/avplayer',av=window.webapis.avplay;"
+            b"av.open('url');av.setDisplayRect(0,0,1920,1080);av.prepareAsync(function(){});"
+            b"av.stop();av.close();}());"
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

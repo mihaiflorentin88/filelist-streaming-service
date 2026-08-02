@@ -1,0 +1,11 @@
+FROM node:24-bookworm-slim@sha256:235600a8101ab264e117b1768e925532262668dc9b581ef1dd7d96ced463b8e7
+WORKDIR /src
+COPY package.json package-lock.json ./
+COPY web/package.json web/package.json
+COPY clients/shared/package.json clients/shared/package.json
+COPY clients/tizen/package.json clients/tizen/package.json
+RUN npm ci
+RUN chmod -R a+rwX /src/node_modules
+COPY web web
+COPY clients clients
+CMD ["npm","run","build"]

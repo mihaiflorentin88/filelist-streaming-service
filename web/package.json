@@ -1,0 +1,1 @@
+{"name":"@filelist/web","version":"0.1.0","private":true,"type":"module","scripts":{"build":"tsc --noEmit && vite build"},"dependencies":{"@filelist/shared":"0.1.0","preact":"10.29.8"},"devDependencies":{"@preact/preset-vite":"2.10.2","typescript":"5.9.2","vite":"7.3.6"}}

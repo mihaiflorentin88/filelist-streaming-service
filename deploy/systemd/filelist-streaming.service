@@ -1,0 +1,31 @@
+[Unit]
+Description=FileList Streaming Service
+After=network-online.target qbittorrent-nox.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=filelist-streaming
+Group=filelist-streaming
+SupplementaryGroups=qbittorrent
+WorkingDirectory=/var/lib/filelist-streaming
+ExecStart=/usr/local/bin/filelist-streaming
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=20
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/filelist-streaming
+ReadOnlyPaths=-/srv/filelist-downloads -/var/lib/qbittorrent/qBittorrent/downloads
+MemoryHigh=1536M
+MemoryMax=2G
+CPUQuota=250%
+TasksMax=256
+IOWeight=50
+OOMPolicy=stop
+
+[Install]
+WantedBy=multi-user.target

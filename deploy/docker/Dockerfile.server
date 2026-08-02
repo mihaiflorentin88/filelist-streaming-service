@@ -1,0 +1,26 @@
+FROM node:24-bookworm-slim@sha256:235600a8101ab264e117b1768e925532262668dc9b581ef1dd7d96ced463b8e7 AS frontend
+WORKDIR /src
+COPY package.json package-lock.json ./
+COPY web/package.json web/package.json
+COPY clients/shared/package.json clients/shared/package.json
+COPY clients/tizen/package.json clients/tizen/package.json
+RUN npm ci
+COPY web web
+COPY clients clients
+RUN npm run build:web
+
+FROM golang:1.26.5-bookworm@sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651 AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+COPY --from=frontend /src/internal/adapters/httpapi/static ./internal/adapters/httpapi/static
+ARG VERSION=dev
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X github.com/mihaiflorentin88/filelist-streaming-service/internal/composition.Version=${VERSION}" -o /out/filelist-streaming ./cmd/server
+
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:f5b485ea962d9bd1186b2f6b3a061191539b905b82ec395de78cbfae51f20e35
+WORKDIR /var/lib/filelist-streaming
+COPY --from=build /out/filelist-streaming /usr/local/bin/filelist-streaming
+EXPOSE 8097
+VOLUME ["/var/lib/filelist-streaming"]
+ENTRYPOINT ["/usr/local/bin/filelist-streaming"]

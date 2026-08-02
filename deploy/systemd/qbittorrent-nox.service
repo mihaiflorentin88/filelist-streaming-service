@@ -1,0 +1,21 @@
+[Unit]
+Description=qBittorrent headless torrent client
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=qbittorrent
+Group=qbittorrent
+UMask=0007
+ExecStart=/usr/bin/qbittorrent-nox --webui-port=8080
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/qbittorrent /srv/filelist-downloads
+
+[Install]
+WantedBy=multi-user.target

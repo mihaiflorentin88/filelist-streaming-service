@@ -1,0 +1,60 @@
+# Local credentials and runtime configuration
+.env
+.env.*
+!.env.example
+data/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Build outputs and generated embedded frontend assets
+bin/
+dist/
+release/
+artifacts/
+internal/adapters/httpapi/static/index.html
+internal/adapters/httpapi/static/assets/
+web/dist/
+clients/tizen/dist/
+clients/tizen/.build/
+*.wgt
+*.exe
+*.test
+*.out
+*.prof
+*.pprof
+*.sarif
+coverage/
+
+# JavaScript/Python tooling
+node_modules/
+**/node_modules/
+.npm/
+.vite/
+*.tsbuildinfo
+web/src.js
+clients/shared/src/*.js
+clients/tizen/src/*.js
+__pycache__/
+*.pyc
+
+# Signing material and local design scratch space
+clients/tizen/certificates/*
+!clients/tizen/certificates/README.md
+*.p12
+*.pfx
+*.pem
+*.key
+*.crt
+*.cer
+.impeccable/
+
+# Logs and editor/OS state
+*.log
+*.log.*
+.DS_Store
+.idea/
+.vscode/

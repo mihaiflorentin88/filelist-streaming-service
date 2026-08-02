@@ -1,0 +1,1005 @@
+package httpapi
+
+import (
+	"context"
+	"database/sql"
+	"embed"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"log/slog"
+	"mime"
+	"net"
+	"net/http"
+	"net/netip"
+	"os"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/mihaiflorentin88/filelist-streaming-service/internal/adapters/sqlite"
+	"github.com/mihaiflorentin88/filelist-streaming-service/internal/application"
+	"github.com/mihaiflorentin88/filelist-streaming-service/internal/domain"
+	"github.com/mihaiflorentin88/filelist-streaming-service/internal/platform/config"
+)
+
+//go:embed static/*
+var static embed.FS
+
+type API struct {
+	service  *application.Service
+	settings *config.Store
+	log      *slog.Logger
+	version  string
+}
+
+func New(service *application.Service, settings *config.Store, log *slog.Logger, version string) http.Handler {
+	a := &API{service: service, settings: settings, log: log, version: version}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/system/info", a.info)
+	mux.HandleFunc("GET /api/v1/settings", a.getSettings)
+	mux.HandleFunc("PUT /api/v1/settings", a.putSettings)
+	mux.HandleFunc("GET /api/v1/settings/schema", a.settingsSchema)
+	mux.HandleFunc("POST /api/v1/dependencies/{name}/test", a.testDependency)
+	mux.HandleFunc("POST /api/v1/diagnostics/client", a.clientDiagnostic)
+	mux.HandleFunc("GET /api/v1/catalog/categories", a.categories)
+	mux.HandleFunc("GET /api/v1/catalog/latest", a.catalog)
+	mux.HandleFunc("GET /api/v1/catalog/search", a.search)
+	mux.HandleFunc("POST /api/v1/catalog/search", a.searchTitles)
+	mux.HandleFunc("GET /api/v1/catalog/titles", a.catalogTitles)
+	mux.HandleFunc("GET /api/v1/catalog/titles/{id}", a.catalogTitle)
+	mux.HandleFunc("POST /api/v1/catalog/titles/{id}/refresh", a.refreshCatalogTitle)
+	mux.HandleFunc("POST /api/v1/catalog/sync", a.catalogSync)
+	mux.HandleFunc("GET /api/v1/catalog/status", a.catalogStatus)
+	mux.HandleFunc("POST /api/v1/metadata/ensure", a.ensureMetadata)
+	mux.HandleFunc("GET /api/v1/catalog/facets", a.catalogFacets)
+	mux.HandleFunc("GET /api/v1/artwork/{titleId}/{kind}", a.artwork)
+	mux.HandleFunc("POST /api/v1/releases/{id}/prepare", a.prepare)
+	mux.HandleFunc("GET /api/v1/downloads", a.downloads)
+	mux.HandleFunc("GET /api/v1/jobs", a.jobs)
+	mux.HandleFunc("GET /api/v1/jobs/{id}", a.job)
+	mux.HandleFunc("GET /api/v1/jobs/{id}/logs", a.jobLogs)
+	mux.HandleFunc("POST /api/v1/jobs/{id}/retry", a.retryJob)
+	mux.HandleFunc("GET /api/v1/events", a.events)
+	mux.HandleFunc("GET /api/v1/downloads/{id}/subtitles", a.searchSubtitles)
+	mux.HandleFunc("POST /api/v1/downloads/{id}/subtitles/prepare", a.prepareSubtitle)
+	mux.HandleFunc("GET /api/v1/subtitles/{asset}", a.subtitle)
+	mux.HandleFunc("POST /api/v1/downloads/{id}/{action}", a.manage)
+	mux.HandleFunc("GET /api/v1/state", a.householdState)
+	mux.HandleFunc("GET /api/v1/library/{section}", a.library)
+	mux.HandleFunc("PUT /api/v1/library/favorites/{titleId}", a.titleFavorite)
+	mux.HandleFunc("DELETE /api/v1/library/favorites/{titleId}", a.titleFavorite)
+	mux.HandleFunc("PUT /api/v1/favorites/{releaseId}", a.favorite)
+	mux.HandleFunc("DELETE /api/v1/favorites/{releaseId}", a.favorite)
+	mux.HandleFunc("GET /api/v1/playback/{sourceId}", a.getPlayback)
+	mux.HandleFunc("PUT /api/v1/playback/{sourceId}", a.putPlayback)
+	mux.HandleFunc("PUT /api/v1/playback/{sourceId}/watched", a.putWatched)
+	mux.HandleFunc("GET /api/v1/streams/{id}", a.stream)
+	mux.HandleFunc("HEAD /api/v1/streams/{id}", a.stream)
+	sub, _ := fs.Sub(static, "static")
+	mux.Handle("/", http.FileServer(http.FS(sub)))
+	return recoverer(log, access(log, trusted(settings, mux)))
+}
+func (a *API) info(w http.ResponseWriter, r *http.Request) {
+	write(w, 200, map[string]any{"name": "FileList Streaming", "version": a.version, "apiVersion": "v1", "configured": configured(a.settings.Get()), "capabilities": []string{"catalog", "canonicalCatalog", "metadata", "artworkProxy", "qbittorrent", "rangeStreaming", "settingsFile", "householdState", "canonicalFavorites", "persistentJobs", "subtitles"}})
+}
+
+func (a *API) clientDiagnostic(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+	var value struct {
+		Level   string         `json:"level"`
+		Message string         `json:"message"`
+		Context map[string]any `json:"context"`
+	}
+	if err := decode(r, &value); err != nil {
+		problem(w, http.StatusBadRequest, fmt.Errorf("invalid client diagnostic: %w", err))
+		return
+	}
+	value.Message = strings.TrimSpace(value.Message)
+	if value.Message == "" || len(value.Message) > 1000 {
+		problem(w, http.StatusBadRequest, fmt.Errorf("diagnostic message must contain 1 to 1000 characters"))
+		return
+	}
+	attributes := []any{"client", r.UserAgent(), "remote", r.RemoteAddr, "context", value.Context}
+	if strings.EqualFold(value.Level, "error") {
+		a.log.Error("client diagnostic: "+value.Message, attributes...)
+	} else {
+		a.log.Warn("client diagnostic: "+value.Message, attributes...)
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type settingsView struct {
+	config.Settings
+	FileListPasskeyConfigured     bool   `json:"fileListPasskeyConfigured"`
+	QBittorrentPasswordConfigured bool   `json:"qbittorrentPasswordConfigured"`
+	TMDBAPIKeyConfigured          bool   `json:"tmdbApiKeyConfigured"`
+	SubDLAPIKeyConfigured         bool   `json:"subDLApiKeyConfigured"`
+	SettingsPath                  string `json:"settingsPath"`
+}
+
+func (a *API) getSettings(w http.ResponseWriter, r *http.Request) {
+	v := a.settings.Get()
+	write(w, 200, redactedSettings(v, a.settings.Path()))
+}
+func redactedSettings(v config.Settings, path string) settingsView {
+	view := settingsView{Settings: v, FileListPasskeyConfigured: v.FileListPasskey != "", QBittorrentPasswordConfigured: v.QBittorrentPassword != "", TMDBAPIKeyConfigured: v.TMDBAPIKey != "", SubDLAPIKeyConfigured: v.SubDLAPIKey != "", SettingsPath: path}
+	view.Settings.FileListPasskey = ""
+	view.Settings.QBittorrentPassword = ""
+	view.Settings.TMDBAPIKey = ""
+	view.Settings.SubDLAPIKey = ""
+	return view
+}
+func (a *API) putSettings(w http.ResponseWriter, r *http.Request) {
+	var v config.Settings
+	if err := decode(r, &v); err != nil {
+		problem(w, 400, err)
+		return
+	}
+	old := a.settings.Get()
+	if err := a.settings.Save(v); err != nil {
+		problem(w, 400, err)
+		return
+	}
+	restart := old.ListenAddress != v.ListenAddress || old.DatabasePath != v.DatabasePath || old.MaxConcurrentJobs != v.MaxConcurrentJobs || old.TitleRefreshTimeoutMinutes != v.TitleRefreshTimeoutMinutes
+	write(w, 200, map[string]any{"saved": true, "restartRequired": restart})
+}
+func (a *API) settingsSchema(w http.ResponseWriter, r *http.Request) {
+	type field struct {
+		Key             string `json:"key"`
+		Label           string `json:"label"`
+		Help            string `json:"help"`
+		Obtain          string `json:"obtain,omitempty"`
+		TVVisible       bool   `json:"tvVisible"`
+		Sensitive       bool   `json:"sensitive"`
+		RestartRequired bool   `json:"restartRequired"`
+	}
+	fields := []field{
+		{Key: "fileListUrl", Label: "FileList URL", Help: "Address of the private tracker API. The default works unless FileList changes domain.", TVVisible: false},
+		{Key: "fileListUsername", Label: "FileList username", Help: "Account name used with your passkey for API requests.", Obtain: "Use the username shown on your FileList profile.", Sensitive: true},
+		{Key: "fileListPasskey", Label: "FileList passkey", Help: "Private API credential used to search and download torrent metadata. Treat it like a password.", Obtain: "Open your FileList profile and copy the passkey, not your login password.", Sensitive: true},
+		{Key: "tmdbApiKey", Label: "TMDB API key or token", Help: "Adds posters, backdrops, descriptions, years and ratings.", Obtain: "Create a TMDB account and request API access from your account settings.", Sensitive: true},
+		{Key: "qbittorrentUrl", Label: "qBittorrent URL", Help: "Address of qBittorrent Web UI used to add and manage this app's downloads."},
+		{Key: "qbittorrentUsername", Label: "qBittorrent username", Help: "Username configured in qBittorrent Web UI authentication.", Sensitive: true},
+		{Key: "qbittorrentPassword", Label: "qBittorrent password", Help: "Password configured in qBittorrent Web UI authentication.", Sensitive: true},
+		{Key: "downloadRoot", Label: "Download root", Help: "Server filesystem path where qBittorrent stores media. It must describe the same files visible to this server."},
+		{Key: "subDLUrl", Label: "SubDL API URL", Help: "Official SubDL API base used for direct subtitle files.", Obtain: "Use https://api.subdl.com.", Sensitive: false},
+		{Key: "subDLApiKey", Label: "SubDL API key", Help: "Free SubDL API credential used to search and download direct subtitle files.", Obtain: "Create a free account and generate a key in the API section at https://subdl.com/panel.", Sensitive: true},
+		{Key: "subtitleCachePath", Label: "Subtitle cache path", Help: "Server directory containing prepared WebVTT and SAMI subtitle files."},
+		{Key: "subtitleCacheMaxBytes", Label: "Subtitle cache maximum bytes", Help: "Maximum disk space used by prepared and downloaded subtitle files."},
+		{Key: "ffprobePath", Label: "ffprobe path", Help: "Absolute path to ffprobe. It reads embedded subtitle language, title, codec and disposition metadata without transcoding.", Obtain: "Install the FFmpeg package on the server; ffprobe is normally /usr/bin/ffprobe."},
+		{Key: "ffmpegPath", Label: "FFmpeg path", Help: "Absolute path to FFmpeg. It extracts only the selected embedded subtitle stream to WebVTT; video and audio are never transcoded.", Obtain: "Install the FFmpeg package on the server; FFmpeg is normally /usr/bin/ffmpeg."},
+		{Key: "preferredSubtitleLanguage", Label: "Preferred subtitle language", Help: "ISO language code selected first for automatic subtitles, for example ro.", TVVisible: true},
+		{Key: "fallbackSubtitleLanguage", Label: "Fallback subtitle language", Help: "Language used when no suitable preferred-language subtitle exists.", TVVisible: true},
+		{Key: "initialBufferBytes", Label: "Initial buffer bytes", Help: "Amount that must be readable before playback begins. Larger values improve reliability but delay startup.", TVVisible: true},
+		{Key: "readAheadBytes", Label: "Read-ahead bytes", Help: "Range prioritized ahead of the current playback position.", TVVisible: true},
+		{Key: "pieceWaitTimeoutSeconds", Label: "Piece timeout seconds", Help: "Maximum wait for qBittorrent pieces before a stream request fails.", TVVisible: true},
+		{Key: "watchedThresholdPercent", Label: "Watched threshold percent", Help: "Playback percentage at which an item moves to Watched.", TVVisible: true},
+		{Key: "maxConcurrentJobs", Label: "Maximum concurrent jobs", Help: "Global ceiling for background work. FileList requests remain serialized.", TVVisible: true, RestartRequired: true},
+		{Key: "titleRefreshTimeoutMinutes", Label: "Title refresh timeout minutes", Help: "Active execution allowance after a title refresh obtains its worker slots. Queue and rate-limit waiting do not count.", TVVisible: true, RestartRequired: true},
+		{Key: "listenAddress", Label: "Listen address", Help: "Network address and port used by the server. Changing it requires restart.", RestartRequired: true},
+		{Key: "databasePath", Label: "Database path", Help: "SQLite catalog and household-state file. Changing it requires restart.", RestartRequired: true},
+		{Key: "trustedCidrs", Label: "Trusted CIDRs", Help: "Private network ranges allowed to use the unauthenticated server."},
+	}
+	write(w, http.StatusOK, map[string]any{"items": fields})
+}
+func (a *API) testDependency(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 50*time.Second)
+	defer cancel()
+	switch r.PathValue("name") {
+	case "filelist":
+		n, err := a.service.TestFileList(ctx)
+		if err != nil {
+			problem(w, 502, err)
+			return
+		}
+		write(w, 200, map[string]any{"success": true, "message": "Connected to FileList", "count": n})
+	case "qbittorrent":
+		v, err := a.service.TestQB(ctx)
+		if err != nil {
+			problem(w, 502, err)
+			return
+		}
+		write(w, 200, map[string]any{"success": true, "message": "Connected to qBittorrent " + v})
+	case "storage":
+		message, err := a.service.TestStorage()
+		if err != nil {
+			problem(w, 503, err)
+			return
+		}
+		write(w, 200, map[string]any{"success": true, "message": message})
+	case "tmdb":
+		if a.settings.Get().TMDBAPIKey == "" {
+			problem(w, 409, fmt.Errorf("TMDB is not configured"))
+			return
+		}
+		write(w, 200, map[string]any{"success": true, "message": "TMDB credentials are configured; the next visible title will verify lookup access"})
+	case "subtitles":
+		v := a.settings.Get()
+		if v.SubDLAPIKey == "" {
+			problem(w, 409, fmt.Errorf("no downloadable subtitle provider is configured"))
+			return
+		}
+		write(w, 200, map[string]any{"success": true, "message": "A downloadable subtitle provider is configured"})
+	case "subdl":
+		message, err := a.service.TestSubtitleProvider(ctx, r.PathValue("name"))
+		if err != nil {
+			problem(w, 502, err)
+			return
+		}
+		write(w, 200, map[string]any{"success": true, "message": message})
+	default:
+		problem(w, 404, fmt.Errorf("unknown dependency"))
+	}
+}
+
+func (a *API) catalogSync(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Mode string `json:"mode"`
+	}
+	if err := decode(r, &input); err != nil {
+		problem(w, 400, err)
+		return
+	}
+	job, err := a.service.SyncCatalog(input.Mode)
+	if err != nil {
+		problem(w, 409, err)
+		return
+	}
+	write(w, http.StatusAccepted, job)
+}
+func (a *API) catalogStatus(w http.ResponseWriter, r *http.Request) {
+	status, err := a.service.CatalogStatus(r.Context())
+	if err != nil {
+		problem(w, 500, err)
+		return
+	}
+	write(w, 200, status)
+}
+func (a *API) ensureMetadata(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		TitleIDs []string `json:"titleIds"`
+	}
+	if err := decode(r, &input); err != nil {
+		problem(w, 400, err)
+		return
+	}
+	write(w, http.StatusAccepted, map[string]any{"queued": a.service.EnsureMetadata(r.Context(), input.TitleIDs)})
+}
+func (a *API) categories(w http.ResponseWriter, r *http.Request) {
+	items := []domain.Category{}
+	for _, x := range domain.Categories {
+		if !x.DefaultBlacklisted {
+			items = append(items, x)
+		}
+	}
+	write(w, 200, map[string]any{"items": items, "nextCursor": nil, "total": len(items)})
+}
+func (a *API) catalog(w http.ResponseWriter, r *http.Request) {
+	limit := integer(r, "pageSize", 24)
+	offset, err := sqlite.DecodeCursor(r.URL.Query().Get("cursor"))
+	if err != nil {
+		problem(w, 400, err)
+		return
+	}
+	page, err := a.service.Browse(r.Context(), r.URL.Query().Get("search"), r.URL.Query().Get("category"), limit, offset)
+	if err != nil {
+		problem(w, 502, err)
+		return
+	}
+	write(w, 200, page)
+}
+func (a *API) search(w http.ResponseWriter, r *http.Request) {
+	page, err := a.service.Search(r.Context(), strings.TrimSpace(r.URL.Query().Get("query")))
+	if err != nil {
+		problem(w, 502, err)
+		return
+	}
+	write(w, 200, page)
+}
+
+func (a *API) searchTitles(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Query string `json:"query"`
+	}
+	if err := decode(r, &input); err != nil {
+		problem(w, 400, err)
+		return
+	}
+	query := strings.TrimSpace(input.Query)
+	page, err := a.service.SearchTitles(r.Context(), query)
+	if err != nil {
+		problem(w, 400, err)
+		return
+	}
+	job, err := a.service.QueueTrackerSearch(r.Context(), query, false)
+	if err != nil {
+		problem(w, 409, err)
+		return
+	}
+	write(w, http.StatusAccepted, map[string]any{"items": page.Items, "nextCursor": page.NextCursor, "total": page.Total, "job": job})
+}
+
+func (a *API) refreshCatalogTitle(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Query string `json:"query"`
+	}
+	if r.ContentLength != 0 {
+		if err := decode(r, &input); err != nil {
+			problem(w, 400, err)
+			return
+		}
+	}
+	if strings.TrimSpace(input.Query) == "" {
+		detail, err := a.service.CatalogDetail(r.Context(), r.PathValue("id"))
+		if err != nil {
+			problem(w, 404, err)
+			return
+		}
+		input.Query = detail.Title.Title
+	}
+	job, err := a.service.QueueTitleRefresh(r.Context(), r.PathValue("id"), input.Query, false)
+	if err != nil {
+		problem(w, 409, err)
+		return
+	}
+	write(w, http.StatusAccepted, job)
+}
+
+func (a *API) catalogTitles(w http.ResponseWriter, r *http.Request) {
+	offset, err := sqlite.DecodeCursor(r.URL.Query().Get("cursor"))
+	if err != nil {
+		problem(w, http.StatusBadRequest, err)
+		return
+	}
+	q := domain.CatalogQuery{
+		Search: strings.TrimSpace(r.URL.Query().Get("search")), Category: r.URL.Query().Get("category"),
+		Kind: domain.MediaKind(r.URL.Query().Get("kind")), Resolution: r.URL.Query().Get("resolution"), HDR: r.URL.Query().Get("hdr"),
+		Source: r.URL.Query().Get("source"), Codec: r.URL.Query().Get("codec"), MinSeeders: integer(r, "minSeeders", 0),
+		Sort: r.URL.Query().Get("sort"), Limit: integer(r, "pageSize", 24), Offset: offset,
+	}
+	if q.Kind != "" && q.Kind != domain.MediaMovie && q.Kind != domain.MediaSeries {
+		problem(w, http.StatusBadRequest, fmt.Errorf("kind must be movie or series"))
+		return
+	}
+	for name, target := range map[string]**bool{"freeleech": &q.Freeleech, "internal": &q.Internal, "moderated": &q.Moderated} {
+		if raw, ok := r.URL.Query()[name]; ok {
+			value, parseErr := strconv.ParseBool(raw[len(raw)-1])
+			if parseErr != nil {
+				problem(w, http.StatusBadRequest, fmt.Errorf("%s must be true or false", name))
+				return
+			}
+			*target = &value
+		}
+	}
+	page, err := a.service.CatalogTitles(r.Context(), q)
+	if err != nil {
+		problem(w, http.StatusBadGateway, err)
+		return
+	}
+	write(w, http.StatusOK, page)
+}
+
+func (a *API) catalogTitle(w http.ResponseWriter, r *http.Request) {
+	detail, err := a.service.CatalogDetail(r.Context(), r.PathValue("id"))
+	if err != nil {
+		problem(w, http.StatusNotFound, err)
+		return
+	}
+	write(w, http.StatusOK, detail)
+}
+
+func (a *API) catalogFacets(w http.ResponseWriter, r *http.Request) {
+	facets, err := a.service.CatalogFacets(r.Context())
+	if err != nil {
+		problem(w, http.StatusInternalServerError, err)
+		return
+	}
+	write(w, http.StatusOK, facets)
+}
+
+func (a *API) artwork(w http.ResponseWriter, r *http.Request) {
+	path, contentType, err := a.service.Artwork(r.Context(), r.PathValue("titleId"), r.PathValue("kind"))
+	if err != nil {
+		problem(w, http.StatusNotFound, err)
+		return
+	}
+	if contentType != "" {
+		w.Header().Set("Content-Type", contentType)
+	}
+	w.Header().Set("Cache-Control", "public, max-age=86400, immutable")
+	http.ServeFile(w, r, path)
+}
+func (a *API) prepare(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		FileIndex int `json:"fileIndex"`
+	}
+	body.FileIndex = -1
+	if r.ContentLength != 0 {
+		if err := decode(r, &body); err != nil {
+			problem(w, 400, err)
+			return
+		}
+	}
+	d, err := a.service.Prepare(r.Context(), r.PathValue("id"), body.FileIndex)
+	if err != nil {
+		problem(w, 502, err)
+		return
+	}
+	write(w, 202, downloadDTO(d))
+}
+func (a *API) downloads(w http.ResponseWriter, r *http.Request) {
+	items, err := a.service.Downloads(r.Context())
+	if err != nil {
+		problem(w, 502, err)
+		return
+	}
+	out := make([]any, len(items))
+	for i, x := range items {
+		out[i] = downloadDTO(x)
+	}
+	write(w, 200, map[string]any{"items": out, "nextCursor": nil, "total": len(out)})
+}
+func (a *API) jobs(w http.ResponseWriter, r *http.Request) {
+	offset, decodeErr := sqlite.DecodeCursor(r.URL.Query().Get("cursor"))
+	if decodeErr != nil {
+		problem(w, 400, decodeErr)
+		return
+	}
+	updatedSince := int64(0)
+	if hours := integer(r, "updatedHours", 0); hours > 0 && hours <= 24*365 {
+		updatedSince = time.Now().Add(-time.Duration(hours) * time.Hour).Unix()
+	}
+	page, err := a.service.QueryJobs(r.Context(), strings.TrimSpace(r.URL.Query().Get("search")), r.URL.Query().Get("state"), r.URL.Query().Get("kind"), r.URL.Query().Get("retryable"), updatedSince, integer(r, "pageSize", 24), offset)
+	if err != nil {
+		problem(w, 500, err)
+		return
+	}
+	write(w, 200, page)
+}
+func (a *API) job(w http.ResponseWriter, r *http.Request) {
+	job, err := a.service.Job(r.Context(), r.PathValue("id"))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			problem(w, 404, fmt.Errorf("job not found"))
+		} else {
+			problem(w, 500, err)
+		}
+		return
+	}
+	logs, _ := a.service.JobLogs(r.Context(), job.ID, 0, 100)
+	rows := make([]map[string]any, 0, len(logs.Items))
+	for i := len(logs.Items) - 1; i >= 0; i-- {
+		entry := logs.Items[i]
+		rows = append(rows, map[string]any{"id": entry.ID, "at": entry.CreatedAt, "attempt": entry.Attempt, "level": entry.Level, "phase": entry.Phase, "message": entry.Message, "context": entry.Context})
+	}
+	write(w, 200, map[string]any{"job": job, "logs": rows})
+}
+func (a *API) jobLogs(w http.ResponseWriter, r *http.Request) {
+	before := int64(0)
+	if raw := r.URL.Query().Get("cursor"); raw != "" {
+		offset, err := sqlite.DecodeCursor(raw)
+		if err != nil {
+			problem(w, 400, err)
+			return
+		}
+		before = int64(offset)
+	}
+	page, err := a.service.JobLogs(r.Context(), r.PathValue("id"), before, integer(r, "pageSize", 100))
+	if err != nil {
+		problem(w, 500, err)
+		return
+	}
+	write(w, 200, page)
+}
+func (a *API) retryJob(w http.ResponseWriter, r *http.Request) {
+	job, err := a.service.RetryJob(r.Context(), r.PathValue("id"))
+	if err != nil {
+		problem(w, 409, err)
+		return
+	}
+	write(w, http.StatusAccepted, job)
+}
+func (a *API) events(w http.ResponseWriter, r *http.Request) {
+	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
+	replay := r.URL.Query().Has("after")
+	if header := r.Header.Get("Last-Event-ID"); header != "" {
+		replay = true
+		if n, e := strconv.ParseInt(header, 10, 64); e == nil && n > after {
+			after = n
+		}
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		problem(w, 500, fmt.Errorf("streaming unsupported"))
+		return
+	}
+	send := func(event domain.Event) {
+		b, _ := json.Marshal(event)
+		fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", event.ID, event.Kind, b)
+		flusher.Flush()
+	}
+	if replay {
+		if events, err := a.service.Events(r.Context(), after, 200); err == nil {
+			for _, event := range events {
+				send(event)
+			}
+		}
+	}
+	stream, cancel := a.service.SubscribeEvents()
+	defer cancel()
+	heartbeat := time.NewTicker(20 * time.Second)
+	defer heartbeat.Stop()
+	for {
+		select {
+		case event, open := <-stream:
+			if !open {
+				return
+			}
+			send(event)
+		case <-heartbeat.C:
+			fmt.Fprint(w, ": keepalive\n\n")
+			flusher.Flush()
+		case <-r.Context().Done():
+			return
+		}
+	}
+}
+func (a *API) manage(w http.ResponseWriter, r *http.Request) {
+	deleteFiles := r.URL.Query().Get("deleteFiles") == "true"
+	if err := a.service.Manage(r.Context(), r.PathValue("id"), r.PathValue("action"), deleteFiles); err != nil {
+		problem(w, 409, err)
+		return
+	}
+	w.WriteHeader(204)
+}
+
+func (a *API) searchSubtitles(w http.ResponseWriter, r *http.Request) {
+	language := strings.TrimSpace(r.URL.Query().Get("language"))
+	if language == "" {
+		language = a.settings.Get().PreferredSubtitleLanguage
+	}
+	scope, scopeErr := application.ParseSubtitleSearchScope(r.URL.Query().Get("scope"))
+	if scopeErr != nil {
+		problem(w, 400, scopeErr)
+		return
+	}
+	items, warnings, err := a.service.SearchSubtitles(r.Context(), r.PathValue("id"), language, scope)
+	if err != nil {
+		problem(w, 502, err)
+		return
+	}
+	write(w, 200, map[string]any{"items": items, "warnings": warnings, "nextCursor": nil, "total": len(items)})
+}
+
+func (a *API) prepareSubtitle(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Provider string `json:"provider"`
+		ID       string `json:"id"`
+		Format   string `json:"format"`
+	}
+	if err := decode(r, &input); err != nil {
+		problem(w, 400, err)
+		return
+	}
+	if input.Provider == "" || input.ID == "" {
+		problem(w, 400, fmt.Errorf("provider and id are required"))
+		return
+	}
+	asset, err := a.service.PrepareSubtitle(r.Context(), r.PathValue("id"), strings.ToLower(input.Provider), input.ID, input.Format)
+	if err != nil {
+		problem(w, 502, err)
+		return
+	}
+	write(w, 201, asset)
+}
+
+func (a *API) subtitle(w http.ResponseWriter, r *http.Request) {
+	asset := r.PathValue("asset")
+	ext := filepathExt(asset)
+	if ext != ".smi" && ext != ".vtt" {
+		problem(w, 404, fmt.Errorf("subtitle asset not found"))
+		return
+	}
+	id := strings.TrimSuffix(asset, ext)
+	format := "sami"
+	if ext == ".vtt" {
+		format = "vtt"
+	}
+	path, err := a.service.SubtitlePath(id, format)
+	if err != nil {
+		problem(w, 404, err)
+		return
+	}
+	if ext == ".vtt" {
+		w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
+	} else {
+		w.Header().Set("Content-Type", "application/x-sami; charset=utf-8")
+	}
+	w.Header().Set("Content-Disposition", "inline")
+	w.Header().Set("Cache-Control", "private, max-age=86400")
+	http.ServeFile(w, r, path)
+}
+
+func (a *API) householdState(w http.ResponseWriter, r *http.Request) {
+	state, err := a.service.HouseholdState(r.Context())
+	if err != nil {
+		problem(w, 500, err)
+		return
+	}
+	write(w, 200, state)
+}
+func (a *API) library(w http.ResponseWriter, r *http.Request) {
+	state, err := a.service.HouseholdState(r.Context())
+	if err != nil {
+		problem(w, http.StatusInternalServerError, err)
+		return
+	}
+	var items []domain.HouseholdItem
+	switch r.PathValue("section") {
+	case "continue-watching":
+		items = state.ContinueWatching
+	case "favorites":
+		items = state.Favorites
+	case "watched":
+		items = state.Watched
+	case "recent":
+		items = state.Recent
+	case "dashboard":
+		write(w, http.StatusOK, state)
+		return
+	case "categories":
+		bySource := map[string]domain.HouseholdItem{}
+		for _, group := range [][]domain.HouseholdItem{state.Favorites, state.ContinueWatching, state.Watched, state.Recent} {
+			for _, item := range group {
+				key := item.SourceID
+				if key == "" && item.Catalog != nil {
+					key = "title:" + item.Catalog.ID
+				}
+				if key == "" {
+					key = "release:" + item.Release.ID
+				}
+				bySource[key] = item
+			}
+		}
+		selected := strings.TrimSpace(r.URL.Query().Get("category"))
+		if selected != "" {
+			items = []domain.HouseholdItem{}
+			for _, item := range bySource {
+				if strings.EqualFold(item.Release.Category, selected) {
+					items = append(items, item)
+				}
+			}
+			sort.Slice(items, func(i, j int) bool { return items[i].UpdatedAt.After(items[j].UpdatedAt) })
+			write(w, http.StatusOK, map[string]any{"items": items, "nextCursor": nil, "total": len(items)})
+			return
+		}
+		counts := map[string]int{}
+		for _, item := range bySource {
+			if item.Release.Category != "" {
+				counts[item.Release.Category]++
+			}
+		}
+		categories := make([]domain.LibraryCategory, 0, len(counts))
+		for name, count := range counts {
+			categories = append(categories, domain.LibraryCategory{Name: name, Count: count})
+		}
+		sort.Slice(categories, func(i, j int) bool { return categories[i].Name < categories[j].Name })
+		write(w, http.StatusOK, map[string]any{"items": categories, "nextCursor": nil, "total": len(categories)})
+		return
+	default:
+		problem(w, http.StatusNotFound, fmt.Errorf("unknown library section"))
+		return
+	}
+	write(w, http.StatusOK, map[string]any{"items": items, "nextCursor": nil, "total": len(items)})
+}
+func (a *API) titleFavorite(w http.ResponseWriter, r *http.Request) {
+	err := a.service.SetTitleFavorite(r.Context(), r.PathValue("titleId"), r.Method == http.MethodPut)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			problem(w, http.StatusNotFound, err)
+		} else {
+			problem(w, http.StatusInternalServerError, err)
+		}
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+func (a *API) favorite(w http.ResponseWriter, r *http.Request) {
+	if err := a.service.SetFavorite(r.Context(), r.PathValue("releaseId"), r.Method == http.MethodPut); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			problem(w, 404, err)
+		} else {
+			problem(w, 500, err)
+		}
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+func (a *API) getPlayback(w http.ResponseWriter, r *http.Request) {
+	p, err := a.service.Playback(r.Context(), r.PathValue("sourceId"))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			problem(w, 404, err)
+		} else {
+			problem(w, 500, err)
+		}
+		return
+	}
+	write(w, 200, p)
+}
+func (a *API) putPlayback(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		PositionMS int64 `json:"positionMs"`
+		DurationMS int64 `json:"durationMs"`
+	}
+	if err := decode(r, &input); err != nil {
+		problem(w, 400, err)
+		return
+	}
+	p, err := a.service.UpdatePlayback(r.Context(), r.PathValue("sourceId"), input.PositionMS, input.DurationMS)
+	if err != nil {
+		problem(w, 409, err)
+		return
+	}
+	write(w, 200, p)
+}
+func (a *API) putWatched(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Watched bool `json:"watched"`
+	}
+	if err := decode(r, &input); err != nil {
+		problem(w, 400, err)
+		return
+	}
+	p, err := a.service.SetWatched(r.Context(), r.PathValue("sourceId"), input.Watched)
+	if err != nil {
+		problem(w, 409, err)
+		return
+	}
+	write(w, 200, p)
+}
+func (a *API) stream(w http.ResponseWriter, r *http.Request) {
+	d, err := a.service.Acquire(r.Context(), r.PathValue("id"))
+	if err != nil {
+		problem(w, 404, err)
+		return
+	}
+	defer a.service.Release(d.ID)
+	start, end, partial, ok := parseRange(r.Header.Get("Range"), d.SizeBytes)
+	if !ok {
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", d.SizeBytes))
+		problem(w, 416, fmt.Errorf("invalid or multiple byte range"))
+		return
+	}
+	settings := a.settings.Get()
+	firstChunk := settings.InitialBufferBytes
+	if remaining := end - start + 1; firstChunk > remaining {
+		firstChunk = remaining
+	}
+	if err := a.service.ValidateSourcePath(d); err != nil {
+		problem(w, 409, err)
+		return
+	}
+	if r.Method != http.MethodHead {
+		waitStarted := time.Now()
+		if err := a.service.WaitReadableRange(r.Context(), d, start, firstChunk); err != nil {
+			a.log.Warn("stream preflight failed", "sourceId", d.ID, "rangeStart", start, "rangeBytes", firstChunk, "waitMs", time.Since(waitStarted).Milliseconds(), "error", err)
+			problem(w, 503, err)
+			return
+		}
+		a.log.Info("stream range ready", "sourceId", d.ID, "rangeStart", start, "rangeBytes", firstChunk, "waitMs", time.Since(waitStarted).Milliseconds())
+	}
+	w.Header().Set("Accept-Ranges", "bytes")
+	w.Header().Set("Content-Type", contentType(d.FilePath))
+	w.Header().Set("Content-Disposition", "inline")
+	w.Header().Set("Content-Length", strconv.FormatInt(end-start+1, 10))
+	if partial {
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, d.SizeBytes))
+		w.WriteHeader(206)
+	} else {
+		w.WriteHeader(200)
+	}
+	if r.Method == http.MethodHead {
+		return
+	}
+	position := start
+	first := true
+	for position <= end {
+		chunk := settings.ReadAheadBytes
+		if first {
+			chunk = firstChunk
+		}
+		if remaining := end - position + 1; chunk > remaining {
+			chunk = remaining
+		}
+		if !first {
+			if err := a.service.WaitReadableRange(r.Context(), d, position, chunk); err != nil {
+				a.log.Warn("stream range wait stopped", "sourceId", d.ID, "rangeStart", position, "rangeBytes", chunk, "error", err)
+				return
+			}
+		}
+		if err := copyRange(r.Context(), w, d.AbsolutePath, position, chunk); err != nil {
+			if !errors.Is(err, context.Canceled) {
+				a.log.Warn("stream read stopped", "sourceId", d.ID, "error", err)
+			}
+			return
+		}
+		position += chunk
+		first = false
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	}
+}
+func copyRange(ctx context.Context, w io.Writer, path string, offset, count int64) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if _, err = f.Seek(offset, io.SeekStart); err != nil {
+		return err
+	}
+	buf := make([]byte, 1<<20)
+	remaining := count
+	for remaining > 0 {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		want := int64(len(buf))
+		if remaining < want {
+			want = remaining
+		}
+		n, err := io.ReadFull(f, buf[:want])
+		if n > 0 {
+			if _, e := w.Write(buf[:n]); e != nil {
+				return e
+			}
+			remaining -= int64(n)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+func downloadDTO(d domain.Download) map[string]any {
+	return map[string]any{"id": d.ID, "releaseId": d.ReleaseID, "titleId": d.TitleID, "displayTitle": d.DisplayTitle, "releaseName": d.ReleaseName, "category": d.Category, "releaseSizeBytes": d.ReleaseSizeBytes, "trackerSeeders": d.TrackerSeeders, "rating": d.Rating, "ratingVotes": d.RatingVotes, "ratingProvider": d.RatingProvider, "parsed": d.Parsed, "engineId": d.EngineID, "fileIndex": d.FileIndex, "filePath": d.FilePath, "mimeType": contentType(d.FilePath), "sizeBytes": d.SizeBytes, "state": d.State, "progress": d.Progress, "downloadedBytes": d.DownloadedBytes, "speedBytesPerSecond": d.SpeedBytesPerSecond, "etaSeconds": d.ETASeconds, "peers": d.Peers, "seeds": d.Seeds, "bufferedBytes": d.BufferedBytes, "leased": d.Leased, "error": d.Error, "createdAt": d.CreatedAt, "updatedAt": d.UpdatedAt, "streamUrl": "/api/v1/streams/" + d.ID}
+}
+func parseRange(h string, length int64) (int64, int64, bool, bool) {
+	if length <= 0 {
+		return 0, 0, false, false
+	}
+	if h == "" {
+		return 0, length - 1, false, true
+	}
+	if !strings.HasPrefix(strings.ToLower(h), "bytes=") || strings.Contains(h, ",") {
+		return 0, 0, true, false
+	}
+	p := strings.SplitN(h[6:], "-", 2)
+	if len(p) != 2 {
+		return 0, 0, true, false
+	}
+	if p[0] == "" {
+		n, e := strconv.ParseInt(p[1], 10, 64)
+		if e != nil || n <= 0 {
+			return 0, 0, true, false
+		}
+		if n > length {
+			n = length
+		}
+		return length - n, length - 1, true, true
+	}
+	start, e := strconv.ParseInt(p[0], 10, 64)
+	if e != nil || start < 0 || start >= length {
+		return 0, 0, true, false
+	}
+	end := length - 1
+	if p[1] != "" {
+		end, e = strconv.ParseInt(p[1], 10, 64)
+		if e != nil || end < start {
+			return 0, 0, true, false
+		}
+		if end >= length {
+			end = length - 1
+		}
+	}
+	return start, end, true, true
+}
+func configured(v config.Settings) bool {
+	return v.FileListUsername != "" && v.FileListPasskey != "" && v.QBittorrentUsername != "" && v.QBittorrentPassword != ""
+}
+func contentType(p string) string {
+	switch strings.ToLower(filepathExt(p)) {
+	case ".mkv":
+		return "video/matroska"
+	case ".mp4", ".m4v":
+		return "video/mp4"
+	case ".webm":
+		return "video/webm"
+	case ".avi":
+		return "video/x-msvideo"
+	case ".ts", ".m2ts":
+		return "video/mp2t"
+	}
+	if v := mime.TypeByExtension(strings.ToLower(filepathExt(p))); v != "" {
+		return v
+	}
+	return "application/octet-stream"
+}
+func filepathExt(p string) string {
+	i := strings.LastIndexByte(p, '.')
+	if i < 0 {
+		return ""
+	}
+	return p[i:]
+}
+func integer(r *http.Request, k string, d int) int {
+	n, e := strconv.Atoi(r.URL.Query().Get(k))
+	if e != nil {
+		return d
+	}
+	return n
+}
+func decode(r *http.Request, v any) error {
+	defer r.Body.Close()
+	dec := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
+	dec.DisallowUnknownFields()
+	return dec.Decode(v)
+}
+func write(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+func problem(w http.ResponseWriter, status int, err error) {
+	write(w, status, map[string]any{"type": "about:blank", "title": http.StatusText(status), "status": status, "detail": err.Error()})
+}
+func trusted(s *config.Store, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			problem(w, 403, fmt.Errorf("untrusted client"))
+			return
+		}
+		addr, err := netip.ParseAddr(host)
+		if err != nil {
+			problem(w, 403, fmt.Errorf("untrusted client"))
+			return
+		}
+		for _, p := range s.TrustedPrefixes() {
+			if p.Contains(addr) {
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
+		problem(w, 403, fmt.Errorf("client address is outside trusted CIDRs"))
+	})
+}
+func access(log *slog.Logger, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		started := time.Now()
+		next.ServeHTTP(w, r)
+		log.Info("http request", "method", r.Method, "path", r.URL.Path, "durationMs", time.Since(started).Milliseconds())
+	})
+}
+func recoverer(log *slog.Logger, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if v := recover(); v != nil {
+				log.Error("request panic", "panic", v)
+				problem(w, 500, fmt.Errorf("internal server error"))
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
+}

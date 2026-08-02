@@ -1,0 +1,12 @@
+asyncapi: 3.0.0
+info: {title: FileList Streaming Events, version: 0.2.0}
+servers: {lan: {host: 'server.lan:8097', protocol: http, pathname: /api/v1/events}}
+channels:
+  events:
+    address: /api/v1/events
+    messages:
+      event:
+        payload: {type: object, required: [id, kind, createdAt, payload], properties: {id: {type: integer}, kind: {type: string}, createdAt: {type: string, format: date-time}, payload: {type: object}}}
+operations: {receiveEvents: {action: receive, channel: {$ref: '#/channels/events'}}}
+# Cold connections are live-only. Clients that reconnect with Last-Event-ID or
+# `after` may receive at most 200 journaled events before live delivery.
