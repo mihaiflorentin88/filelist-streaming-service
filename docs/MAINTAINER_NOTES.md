@@ -32,6 +32,7 @@ This file records constraints and invariants that must survive context resets an
 - Generated web bundles, WGTs, binaries, SBOMs, certificates, runtime data, logs, editor state, and local design scratch files stay ignored.
 - Run `make check`, the Docker frontend build, WGT validation, and the secret audit before publishing. GitHub CI repeats unit/compiler/package checks; Security runs Gitleaks, govulncheck, Trivy, CodeQL, actionlint, Zizmor, and dependency review.
 - Pin GitHub Actions to the commit behind an annotated release tag (`refs/tags/<tag>^{}`), not the tag-object SHA. Trivy SARIF must set `limit-severities-for-sarif: true`; otherwise its exit code includes severities outside the configured HIGH/CRITICAL release gate.
+- CycloneDX Go application SBOM generation receives the repository module root (`.`) and identifies the executable with `-main cmd/server`; a package directory is not itself a Go module.
 - A master push builds the complete release matrix without publishing. Only an exact version tag publishes Linux amd64/arm64/armv7, Windows amd64, macOS amd64/arm64, the unsigned Apps2Samsung WGT, checksums, CycloneDX/SPDX SBOMs, and provenance attestations.
 
 ## Next verification/implementation checkpoints

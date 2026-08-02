@@ -169,7 +169,7 @@ jobs:
       - name: Generate CycloneDX SBOMs
         run: |
           go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.9.0
-          cyclonedx-gomod app -json -licenses -output release/sbom-go.cdx.json ./cmd/server
+          cyclonedx-gomod app -json -licenses -main cmd/server -output release/sbom-go.cdx.json .
           npm ci
           npm exec --yes --package=@cyclonedx/cyclonedx-npm@4.1.1 -- cyclonedx-npm --output-file release/sbom-npm.cdx.json --output-format JSON --omit dev
       - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
