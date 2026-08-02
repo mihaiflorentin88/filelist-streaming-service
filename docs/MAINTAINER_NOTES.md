@@ -40,5 +40,11 @@ This file records constraints and invariants that must survive context resets an
 1. Install the new `0.2.0` WGT and confirm contained/embedded server WebVTT subtitles render on the physical TV. Confirm native AVPlay tracks remain selectable only as fallback.
 2. On the TV Jobs detail page, D-pad to several log entries, press OK repeatedly to expand/collapse them, inspect long context, load older logs, and return without losing focus.
 3. Deploy the matcher fix, retry representative TMDB failures, and confirm valid cross-kind results complete while genuine people/episode/unlisted IDs retain informative result-count errors.
-4. Verify the initial GitHub workflows and release artifacts. Treat scanner findings as work to resolve, not checks to silently disable.
-5. Continue the remaining items in `KNOWN_ISSUES.md` and the implementation plan, preserving confirmed UX and data invariants above.
+4. Continue the remaining items in `KNOWN_ISSUES.md` and the implementation plan, preserving confirmed UX and data invariants above.
+
+## Published baseline
+
+- `v0.2.0` was published from commit `c94f5945f816c03de1fe34456c5a3db1dc4f3c1a` on 2026-08-02.
+- Hosted CI, CodeQL, Gitleaks, govulncheck, Trivy, actionlint, Zizmor, the six-platform release matrix, Tizen WGT validation, SBOM generation, checksums, provenance, and release publication all completed successfully.
+- The release contains Linux amd64/arm64/armv7, Windows amd64, macOS amd64/arm64, `FileListTV-0.2.0.wgt`, SHA-256 checksums, CycloneDX Go/npm SBOMs, and an SPDX release SBOM.
+- The repository secret audit found no committed credentials. Keep `.env`, runtime settings/data, keys, certificates, logs, downloaded media, and generated artifacts outside Git; use `.env.example` and documented placeholders only.
