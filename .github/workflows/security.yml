@@ -24,7 +24,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: gitleaks/gitleaks-action@dcedce43c6f43de0b836d1fe38946645c9c638dc # v2
+      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -57,11 +57,13 @@ jobs:
           scan-ref: .
           format: sarif
           output: trivy-results.sarif
+          scanners: vuln
           severity: HIGH,CRITICAL
           ignore-unfixed: true
+          limit-severities-for-sarif: true
           exit-code: '1'
       - if: always()
-        uses: github/codeql-action/upload-sarif@bce182f857edf1feab116e9795a3393d21977282 # v4
+        uses: github/codeql-action/upload-sarif@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4
         with:
           sarif_file: trivy-results.sarif
           category: trivy
@@ -76,11 +78,11 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - uses: github/codeql-action/init@bce182f857edf1feab116e9795a3393d21977282 # v4
+      - uses: github/codeql-action/init@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4
         with:
           languages: go,javascript-typescript
-      - uses: github/codeql-action/autobuild@bce182f857edf1feab116e9795a3393d21977282 # v4
-      - uses: github/codeql-action/analyze@bce182f857edf1feab116e9795a3393d21977282 # v4
+      - uses: github/codeql-action/autobuild@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4
+      - uses: github/codeql-action/analyze@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4
 
   workflow-security:
     name: Workflow security

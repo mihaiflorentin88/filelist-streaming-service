@@ -31,6 +31,7 @@ This file records constraints and invariants that must survive context resets an
 - `VERSION` is the release source of truth. It must equal the Tizen package and manifest versions; release tags use `v<VERSION>`.
 - Generated web bundles, WGTs, binaries, SBOMs, certificates, runtime data, logs, editor state, and local design scratch files stay ignored.
 - Run `make check`, the Docker frontend build, WGT validation, and the secret audit before publishing. GitHub CI repeats unit/compiler/package checks; Security runs Gitleaks, govulncheck, Trivy, CodeQL, actionlint, Zizmor, and dependency review.
+- Pin GitHub Actions to the commit behind an annotated release tag (`refs/tags/<tag>^{}`), not the tag-object SHA. Trivy SARIF must set `limit-severities-for-sarif: true`; otherwise its exit code includes severities outside the configured HIGH/CRITICAL release gate.
 - A master push builds the complete release matrix without publishing. Only an exact version tag publishes Linux amd64/arm64/armv7, Windows amd64, macOS amd64/arm64, the unsigned Apps2Samsung WGT, checksums, CycloneDX/SPDX SBOMs, and provenance attestations.
 
 ## Next verification/implementation checkpoints
