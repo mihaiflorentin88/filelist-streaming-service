@@ -13,8 +13,8 @@ make frontend
 The build uses the pinned Node 24 Docker image and an ephemeral container volume for `node_modules`, so Node and frontend dependencies do not need to be installed on the host. Packaging uses only Python 3 standard-library modules. It creates:
 
 ```text
-clients/tizen/.build/artifacts/FileListTV-0.2.6.wgt
-clients/tizen/.build/artifacts/FileListTV-0.2.6.wgt.sha256
+clients/tizen/.build/artifacts/FileListTV-0.2.7.wgt
+clients/tizen/.build/artifacts/FileListTV-0.2.7.wgt.sha256
 ```
 
 The WGT is deliberately unsigned. Apps2Samsung accepts a custom `.wgt`, obtains or reuses a Samsung certificate, and re-signs the package for the selected TV during installation. Signature files from an old build are excluded to prevent a mismatched certificate from leaking into the artifact. No certificate, password, or TV DUID is stored in this repository.
@@ -34,9 +34,9 @@ Offline validation cannot prove certificate/DUID acceptance or runtime behavior.
 
 1. Put the computer and TV on the same LAN. The TV must be reachable on its internal development port (26101); that port cannot be enabled independently.
 2. On the TV, open **Apps**, then **App Settings**, enter `12345`, enable **Developer mode**, enter the IP address of the computer running Apps2Samsung, and reboot the TV. If that computer's IP changes, update this setting.
-3. Start Apps2Samsung and select the TV. Choose the custom WGT option and select `clients/tizen/.build/artifacts/FileListTV-0.2.6.wgt` from disk.
+3. Start Apps2Samsung and select the TV. Choose the custom WGT option and select `clients/tizen/.build/artifacts/FileListTV-0.2.7.wgt` from disk.
 4. Install it. Apps2Samsung can request a Samsung account login the first time it needs to create signing material; later installs reuse the certificate. Do not copy that signing material into the repository.
-5. Launch **FileList TV**, enter the server URL (for example `http://server.lan:8097`, if using the default port), and exercise the physical-TV checks above.
+5. Launch **FileList TV**, select the discovered server or choose **Manual address**, and exercise the physical-TV checks above.
 
 If Apps2Samsung cannot discover or connect to the TV, verify Developer Mode after reboot, the authorized computer IP, same-LAN routing and firewall rules, and the TV's IP. A Samsung `1010` installation error commonly indicates a signing/certificate problem; retry Apps2Samsung certificate setup before changing the WGT.
 
@@ -61,6 +61,8 @@ Version 0.2.4 adds a complete spatial-focus audit: every TV button and input has
 Version 0.2.5 hardens the canonical resume action. A partially watched movie or series replaces Play with Resume, series labels identify the exact `SxxExx`, and the secondary line shows the saved position. Matching accepts either canonical title identity carried directly by household history or its embedded catalog title. Play and Resume share one stable row/column/key, so the Smart Remote focus graph does not change when playback state changes.
 
 Version 0.2.6 groups every household dashboard rail to one card per canonical series title and makes complete-season release alternatives explicit. Each pack card owns its exact download state; a completed version is marked without disabling other releases. The detail focus graph fixes season tabs on row 2, pack alternatives on row 3, and episodes on row 4 and below, so Down follows the screen and Left/Right selects another pack. Series detail polls cache-only state in place while the pack is registered.
+
+Version 0.2.7 makes complete-season cards safe disclosures: OK expands one card at a time, and only the inner Download button starts work. Active, paused, failed, and completed packs expose the relevant Pause, Resume, Retry, and protected Delete controls. The detail graph uses seasons on row 2, pack headers on row 3, expanded actions on row 4, and episodes from row 10, so every D-pad direction follows the visible layout. First launch now scans a bounded local subnet for validated FileList Streaming servers; a discovered URL is normalized, verified, saved, and reused exactly like a successful manual connection. Rescan, Manual address, and Forget saved server remain available.
 
 Current canonical navigation opens every My Library and Tracker card in title details. Episode cards expand version actions; unmanaged versions say **Play and download**, while owned versions say **Play**. Season and episode controls expose separate download/watch markers. Back collapses an expanded episode before leaving details. Starting a season pack keeps details open and updates its episode rows.
 
@@ -108,14 +110,15 @@ This is the durable source of truth for device results. **Confirmed** means obse
 | 0.2.4 | Stable browser timeline/audio selection, unclipped Downloads facts, and complete spatial player focus | Pending TV test | Browser/Tizen production builds and all 23 spatial/player/catalog Tizen tests passed in the pinned Docker build; offline validation passed; unsigned SHA-256 `55313bbf797c27b2d16d1a5731bd10b4662783e33cd98b31179c1df6e40d1a01` |
 | 0.2.5 | Canonical title-level Resume action and stable primary-action focus | Server confirmed; pending TV test | Deployed Pi reports 0.2.5; browser/Tizen production builds, 24 Tizen tests, shared selector tests, and offline validation passed; unsigned SHA-256 `0fe2436f79d2c9331151efacd8a68e1a20079586fa574b5bc782d3a4a1105e8c` |
 | 0.2.6 | Exact season-pack state, selectable alternatives, canonical dashboard grouping, and deterministic pack-row focus | Server confirmed; pending TV test | Pi reports 0.2.6; live Silo data marks the exact 1080p pack downloaded, another pack partial, and alternatives untouched; household sections contain no repeated title IDs. Browser/Tizen production builds, 26 Tizen tests, and WGT validation passed; unsigned SHA-256 `522322e24bc1350162fb03cb7a80af39f19fbbb21d9933e079f604f2c926a6e7` |
+| 0.2.7 | Safe season-pack disclosures, explicit lifecycle controls, environment-managed Settings, and persisted LAN discovery | Automated checks passed; pending Pi/TV confirmation | Browser/Tizen production builds, 29 Tizen tests, Docker integration verification, WGT packaging, and offline validation passed; unsigned SHA-256 `41166a397d76530222013a1c0fd5c51db6d3a7462ffb992a88ba38bfa76081a3` |
 
-After installing 0.2.6, verify in order:
+After installing 0.2.7, verify in order:
 
 1. Connect has an obvious green focus ring immediately after launch; OK connects using the prefilled address.
 2. Before connecting, focus the address without opening Samsung IME; press OK to enter edit mode, edit text, choose Done, and confirm D-pad navigation resumes.
 3. D-pad traverses header buttons, media cards, favorite/watched actions, and multiple rails without losing focus; off-screen targets scroll into view.
    On a partially watched series, confirm the primary action reads **Resume SxxExx**, Down from Back reaches it, Right reaches Favorite, Left returns, and OK resumes the displayed episode at the displayed position.
-   On a series with complete-season sources, move Down from a season tab to the closest pack version, use Left/Right across alternatives, and move Down to the corresponding first episode. Confirm the downloaded/downloading marker belongs only to the chosen release and another release remains selectable.
+   On a series with complete-season sources, move Down from a season tab to the closest pack version and use Left/Right across alternatives. OK must only expand the pack. Down reaches its Pause/Resume/Download and Delete controls; another Down reaches the first episode. Confirm the downloaded/downloading marker belongs only to the chosen release and another release remains selectable.
 4. OK invokes only the focused action once. Connection errors remain visible and leave Connect usable.
 5. Start playback, use Back to return, and confirm the exact originating card regains focus. Back while editing closes IME first. On the main shell short Back opens/closes the rail; holding it for five seconds exits.
 6. During playback, allow the controls to hide; Left/Right must reveal the timeline and seek 10 seconds. Verify OK/Up/Down reveals controls, media keys work, and Back first closes an open menu then exits playback.
@@ -128,11 +131,11 @@ After installing 0.2.6, verify in order:
 
 ## Optional manual Tizen CLI signing
 
-Apps2Samsung users do not need this path. If Tizen Studio and the Samsung TV extensions already exist, `clients/tizen/scripts/package.sh` accepts an existing certificate profile in `TIZEN_PROFILE` and creates `FileListTV-0.2.6-signed.wgt`. This separate filename prevents it from overwriting the unsigned Apps2Samsung artifact. The script never creates certificate material.
+Apps2Samsung users do not need this path. If Tizen Studio and the Samsung TV extensions already exist, `clients/tizen/scripts/package.sh` accepts an existing certificate profile in `TIZEN_PROFILE` and creates `FileListTV-0.2.7-signed.wgt`. This separate filename prevents it from overwriting the unsigned Apps2Samsung artifact. The script never creates certificate material.
 
 ## Device behavior
 
-First launch asks for the server URL and verifies `/api/v1/system/info`. The URL is saved in Tizen application storage. Retry, Change Server, and Forget Server remain available without credentials.
+When no server is saved, first launch uses Samsung's network API to scan at most the television's local `/24` for `/api/v1/system/info` on port `8097` and any manually retained port. Results show instance name, URL, version, and setup state. Selecting a result runs the normal connection verification; only success writes the normalized URL to Tizen application storage. Manual address supports arbitrary hostnames and ports, failed attempts do not replace the saved server, and Rescan/Change Server/Forget saved server remain available without credentials.
 
 Arrow, Enter, and Back are mandatory Samsung remote keys and do not require registration. The client handles their DOM key events with spatial focus navigation. Only the optional media keys are registered through `tvinputdevice`. Samsung IME owns key input while the address field is focused; its Done and Cancel events blur the field and restore Connect focus without suppressing text-editing defaults.
 

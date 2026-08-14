@@ -47,6 +47,7 @@ type CatalogSource struct {
 
 type MediaState struct {
 	DownloadState string  `json:"downloadState"`
+	TransferState string  `json:"transferState,omitempty"`
 	WatchState    string  `json:"watchState"`
 	DownloadID    string  `json:"downloadId,omitempty"`
 	Progress      float64 `json:"progress,omitempty"`

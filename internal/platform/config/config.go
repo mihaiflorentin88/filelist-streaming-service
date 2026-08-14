@@ -7,14 +7,18 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
 const DefaultSettingsPath = "data/settings.json"
+const EnvironmentPrefix = "FILELIST_STREAMING_"
 
 type Settings struct {
+	InstanceName               string   `json:"instanceName"`
 	ListenAddress              string   `json:"listenAddress"`
 	TrustedCIDRs               []string `json:"trustedCidrs"`
 	DatabasePath               string   `json:"databasePath"`
@@ -52,6 +56,7 @@ type Settings struct {
 
 func Defaults() Settings {
 	return Settings{
+		InstanceName:  "FileList Streaming",
 		ListenAddress: ":8097", TrustedCIDRs: []string{"127.0.0.0/8", "::1/128", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"}, DatabasePath: "data/filelist.db",
 		DownloadRoot: "/srv/filelist-downloads", FileListURL: "https://filelist.io", QBittorrentURL: "http://127.0.0.1:8080",
 		InitialBufferBytes: 128 << 20, ReadAheadBytes: 256 << 20, PieceWaitTimeoutSeconds: 600, CatalogMaxAgeHours: 24,
@@ -65,75 +70,103 @@ func Defaults() Settings {
 }
 
 type Store struct {
-	mu    sync.RWMutex
-	path  string
-	value Settings
+	mu         sync.RWMutex
+	path       string
+	base       Settings
+	value      Settings
+	envManaged map[string]bool
 }
 
 func Load() (*Store, error) {
-	s := &Store{path: DefaultSettingsPath, value: Defaults()}
+	path := strings.TrimSpace(os.Getenv(EnvironmentPrefix + "SETTINGS_PATH"))
+	if path == "" {
+		path = DefaultSettingsPath
+	}
+	base := Defaults()
+	s := &Store{path: path, envManaged: map[string]bool{}}
 	b, err := os.ReadFile(s.path)
 	if err == nil {
-		if err = json.Unmarshal(b, &s.value); err != nil {
+		if err = json.Unmarshal(b, &base); err != nil {
 			return nil, fmt.Errorf("decode settings: %w", err)
 		}
-		if s.value.WatchedThresholdPercent == 0 {
-			s.value.WatchedThresholdPercent = 90
+		if base.InstanceName == "" {
+			base.InstanceName = "FileList Streaming"
 		}
-		if s.value.PreferredAudioLanguage == "" {
-			s.value.PreferredAudioLanguage = "en"
+		if base.WatchedThresholdPercent == 0 {
+			base.WatchedThresholdPercent = 90
 		}
-		if s.value.MetadataLanguage == "" {
-			s.value.MetadataLanguage = "ro-RO"
+		if base.PreferredAudioLanguage == "" {
+			base.PreferredAudioLanguage = "en"
 		}
-		if s.value.MetadataFallbackLanguage == "" {
-			s.value.MetadataFallbackLanguage = "en-US"
+		if base.MetadataLanguage == "" {
+			base.MetadataLanguage = "ro-RO"
 		}
-		if s.value.ArtworkCachePath == "" {
-			s.value.ArtworkCachePath = "data/artwork"
+		if base.MetadataFallbackLanguage == "" {
+			base.MetadataFallbackLanguage = "en-US"
 		}
-		if s.value.ArtworkCacheMaxBytes == 0 {
-			s.value.ArtworkCacheMaxBytes = 512 << 20
+		if base.ArtworkCachePath == "" {
+			base.ArtworkCachePath = "data/artwork"
 		}
-		if s.value.SubDLURL == "" {
-			s.value.SubDLURL = "https://api.subdl.com"
+		if base.ArtworkCacheMaxBytes == 0 {
+			base.ArtworkCacheMaxBytes = 512 << 20
 		}
-		if s.value.MaxConcurrentJobs == 0 {
-			s.value.MaxConcurrentJobs = 10
+		if base.SubDLURL == "" {
+			base.SubDLURL = "https://api.subdl.com"
 		}
-		if s.value.TitleRefreshTimeoutMinutes == 0 {
-			s.value.TitleRefreshTimeoutMinutes = 30
+		if base.MaxConcurrentJobs == 0 {
+			base.MaxConcurrentJobs = 10
 		}
-		if s.value.FFprobePath == "" {
-			s.value.FFprobePath = "/usr/bin/ffprobe"
+		if base.TitleRefreshTimeoutMinutes == 0 {
+			base.TitleRefreshTimeoutMinutes = 30
 		}
-		if s.value.FFmpegPath == "" {
-			s.value.FFmpegPath = "/usr/bin/ffmpeg"
+		if base.FFprobePath == "" {
+			base.FFprobePath = "/usr/bin/ffprobe"
+		}
+		if base.FFmpegPath == "" {
+			base.FFmpegPath = "/usr/bin/ffmpeg"
 		}
 	} else if !os.IsNotExist(err) {
 		return nil, err
 	}
-	if err := s.validate(s.value); err != nil {
+	effective := base
+	managed, err := applyEnvironment(&effective)
+	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(filepath.Dir(s.value.DatabasePath), 0o750); err != nil {
+	s.base, s.value, s.envManaged = base, effective, managed
+	if err := s.validate(effective); err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(filepath.Dir(effective.DatabasePath), 0o750); err != nil {
 		return nil, err
 	}
 	return s, nil
 }
 func (s *Store) Get() Settings { s.mu.RLock(); defer s.mu.RUnlock(); return s.value }
 func (s *Store) Path() string  { return s.path }
+func (s *Store) EnvironmentManaged(key string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.envManaged[key]
+}
 func (s *Store) Save(next Settings) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	mergeSecrets(&next, s.value)
-	if err := s.validate(next); err != nil {
+	persisted := next
+	restoreManagedFields(&persisted, s.base, s.envManaged)
+	effective := persisted
+	managed, err := applyEnvironment(&effective)
+	if err != nil {
+		return err
+	}
+	if err := s.validate(effective); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o750); err != nil {
 		return err
 	}
-	b, err := json.MarshalIndent(next, "", "  ")
+	b, err := json.MarshalIndent(persisted, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -147,7 +180,7 @@ func (s *Store) Save(next Settings) error {
 	if err = os.Rename(tmp, s.path); err != nil {
 		return err
 	}
-	s.value = next
+	s.base, s.value, s.envManaged = persisted, effective, managed
 	return nil
 }
 func (s *Store) TrustedPrefixes() []netip.Prefix {
@@ -167,8 +200,8 @@ func (s *Store) CatalogMaxAge() time.Duration {
 	return time.Duration(s.Get().CatalogMaxAgeHours) * time.Hour
 }
 func (s *Store) validate(v Settings) error {
-	if v.ListenAddress == "" || v.DatabasePath == "" || v.DownloadRoot == "" {
-		return fmt.Errorf("listenAddress, databasePath, and downloadRoot are required")
+	if strings.TrimSpace(v.InstanceName) == "" || v.ListenAddress == "" || v.DatabasePath == "" || v.DownloadRoot == "" {
+		return fmt.Errorf("instanceName, listenAddress, databasePath, and downloadRoot are required")
 	}
 	if v.InitialBufferBytes < 16<<20 || v.InitialBufferBytes > 2<<30 {
 		return fmt.Errorf("initialBufferBytes must be between 16 MiB and 2 GiB")
@@ -212,6 +245,76 @@ func (s *Store) validate(v Settings) error {
 		}
 	}
 	return nil
+}
+
+func applyEnvironment(settings *Settings) (map[string]bool, error) {
+	managed := map[string]bool{}
+	value := reflect.ValueOf(settings).Elem()
+	typeOf := value.Type()
+	for i := 0; i < value.NumField(); i++ {
+		fieldType := typeOf.Field(i)
+		jsonKey := strings.Split(fieldType.Tag.Get("json"), ",")[0]
+		if jsonKey == "" || jsonKey == "-" {
+			continue
+		}
+		environmentKey := EnvironmentPrefix + camelToEnvironment(jsonKey)
+		raw, ok := os.LookupEnv(environmentKey)
+		if !ok {
+			continue
+		}
+		field := value.Field(i)
+		switch field.Kind() {
+		case reflect.String:
+			field.SetString(raw)
+		case reflect.Int, reflect.Int64:
+			parsed, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("%s must be an integer: %w", environmentKey, err)
+			}
+			field.SetInt(parsed)
+		case reflect.Slice:
+			if field.Type().Elem().Kind() != reflect.String {
+				return nil, fmt.Errorf("%s uses an unsupported settings type", environmentKey)
+			}
+			items := []string{}
+			for _, item := range strings.Split(raw, ",") {
+				if item = strings.TrimSpace(item); item != "" {
+					items = append(items, item)
+				}
+			}
+			field.Set(reflect.ValueOf(items))
+		default:
+			return nil, fmt.Errorf("%s uses an unsupported settings type", environmentKey)
+		}
+		managed[jsonKey] = true
+	}
+	return managed, nil
+}
+
+func restoreManagedFields(target *Settings, base Settings, managed map[string]bool) {
+	targetValue := reflect.ValueOf(target).Elem()
+	baseValue := reflect.ValueOf(base)
+	typeOf := targetValue.Type()
+	for i := 0; i < targetValue.NumField(); i++ {
+		jsonKey := strings.Split(typeOf.Field(i).Tag.Get("json"), ",")[0]
+		if managed[jsonKey] {
+			targetValue.Field(i).Set(baseValue.Field(i))
+		}
+	}
+}
+
+func camelToEnvironment(value string) string {
+	var out strings.Builder
+	for i, r := range value {
+		if i > 0 && r >= 'A' && r <= 'Z' {
+			out.WriteByte('_')
+		}
+		if r >= 'a' && r <= 'z' {
+			r -= 'a' - 'A'
+		}
+		out.WriteRune(r)
+	}
+	return out.String()
 }
 func mergeSecrets(next *Settings, old Settings) {
 	if next.FileListPasskey == "" {

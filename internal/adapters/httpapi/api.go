@@ -92,7 +92,8 @@ func New(service *application.Service, settings *config.Store, log *slog.Logger,
 	return recoverer(log, access(log, trusted(settings, mux)))
 }
 func (a *API) info(w http.ResponseWriter, r *http.Request) {
-	write(w, 200, map[string]any{"name": "FileList Streaming", "version": a.version, "apiVersion": "v1", "configured": configured(a.settings.Get()), "capabilities": []string{"catalog", "canonicalCatalog", "metadata", "artworkProxy", "qbittorrent", "rangeStreaming", "browserAudioSelection", "mediaInfo", "settingsFile", "householdState", "canonicalFavorites", "persistentJobs", "subtitles"}})
+	settings := a.settings.Get()
+	write(w, 200, map[string]any{"name": "FileList Streaming", "instanceName": settings.InstanceName, "version": a.version, "apiVersion": "v1", "configured": configured(settings), "capabilities": []string{"catalog", "canonicalCatalog", "metadata", "artworkProxy", "qbittorrent", "rangeStreaming", "browserAudioSelection", "mediaInfo", "settingsFile", "householdState", "canonicalFavorites", "persistentJobs", "subtitles", "serverDiscovery"}})
 }
 
 func (a *API) clientDiagnostic(w http.ResponseWriter, r *http.Request) {
@@ -152,7 +153,8 @@ func (a *API) putSettings(w http.ResponseWriter, r *http.Request) {
 		problem(w, 400, err)
 		return
 	}
-	restart := old.ListenAddress != v.ListenAddress || old.DatabasePath != v.DatabasePath || old.MaxConcurrentJobs != v.MaxConcurrentJobs || old.TitleRefreshTimeoutMinutes != v.TitleRefreshTimeoutMinutes
+	current := a.settings.Get()
+	restart := old.ListenAddress != current.ListenAddress || old.DatabasePath != current.DatabasePath || old.MaxConcurrentJobs != current.MaxConcurrentJobs || old.TitleRefreshTimeoutMinutes != current.TitleRefreshTimeoutMinutes
 	write(w, 200, map[string]any{"saved": true, "restartRequired": restart})
 }
 func (a *API) settingsSchema(w http.ResponseWriter, r *http.Request) {
@@ -164,8 +166,10 @@ func (a *API) settingsSchema(w http.ResponseWriter, r *http.Request) {
 		TVVisible       bool   `json:"tvVisible"`
 		Sensitive       bool   `json:"sensitive"`
 		RestartRequired bool   `json:"restartRequired"`
+		ReadOnly        bool   `json:"readOnly"`
 	}
 	fields := []field{
+		{Key: "instanceName", Label: "Server name", Help: "Friendly name shown when a television discovers this server on the local network."},
 		{Key: "fileListUrl", Label: "FileList URL", Help: "Address of the private tracker API. The default works unless FileList changes domain.", TVVisible: false},
 		{Key: "fileListUsername", Label: "FileList username", Help: "Account name used with your passkey for API requests.", Obtain: "Use the username shown on your FileList profile.", Sensitive: true},
 		{Key: "fileListPasskey", Label: "FileList passkey", Help: "Private API credential used to search and download torrent metadata. Treat it like a password.", Obtain: "Open your FileList profile and copy the passkey, not your login password.", Sensitive: true},
@@ -192,6 +196,12 @@ func (a *API) settingsSchema(w http.ResponseWriter, r *http.Request) {
 		{Key: "listenAddress", Label: "Listen address", Help: "Network address and port used by the server. Changing it requires restart.", RestartRequired: true},
 		{Key: "databasePath", Label: "Database path", Help: "SQLite catalog and household-state file. Changing it requires restart.", RestartRequired: true},
 		{Key: "trustedCidrs", Label: "Trusted CIDRs", Help: "Private network ranges allowed to use the unauthenticated server."},
+	}
+	for i := range fields {
+		fields[i].ReadOnly = a.settings.EnvironmentManaged(fields[i].Key)
+		if fields[i].ReadOnly {
+			fields[i].Help += " This value is managed by the server environment and is read-only here."
+		}
 	}
 	write(w, http.StatusOK, map[string]any{"items": fields})
 }

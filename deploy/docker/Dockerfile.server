@@ -18,9 +18,18 @@ COPY --from=frontend /src/internal/adapters/httpapi/static ./internal/adapters/h
 ARG VERSION=dev
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X github.com/mihaiflorentin88/filelist-streaming-service/internal/composition.Version=${VERSION}" -o /out/filelist-streaming ./cmd/server
 
-FROM gcr.io/distroless/static-debian12:nonroot@sha256:f5b485ea962d9bd1186b2f6b3a061191539b905b82ec395de78cbfae51f20e35
+FROM debian:bookworm-slim
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl ffmpeg python3 \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 filelist \
+    && useradd --uid 10001 --gid 10001 --home-dir /var/lib/filelist-streaming --shell /usr/sbin/nologin filelist
 WORKDIR /var/lib/filelist-streaming
 COPY --from=build /out/filelist-streaming /usr/local/bin/filelist-streaming
+COPY tools/progressive_stream_smoke.py /usr/local/bin/progressive_stream_smoke.py
+RUN mkdir -p /var/lib/filelist-streaming/data && chown -R filelist:filelist /var/lib/filelist-streaming
+USER filelist:filelist
 EXPOSE 8097
 VOLUME ["/var/lib/filelist-streaming"]
+HEALTHCHECK --interval=10s --timeout=4s --start-period=20s --retries=12 CMD curl -fsS http://127.0.0.1:8097/api/v1/system/info >/dev/null || exit 1
 ENTRYPOINT ["/usr/local/bin/filelist-streaming"]

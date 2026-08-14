@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import http.cookiejar
 import json
+import os
 import subprocess
 import time
 import urllib.error
@@ -29,8 +30,9 @@ def json_request(url: str, *, method: str = "GET", data: bytes | None = None) ->
 
 def qb_opener(settings: dict) -> tuple[urllib.request.OpenerDirector, str]:
     base = settings["qbittorrentUrl"].rstrip("/")
+    jar = http.cookiejar.CookieJar()
     opener = urllib.request.build_opener(
-        urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar())
+        urllib.request.HTTPCookieProcessor(jar)
     )
     login = urllib.parse.urlencode(
         {
@@ -38,8 +40,12 @@ def qb_opener(settings: dict) -> tuple[urllib.request.OpenerDirector, str]:
             "password": settings["qbittorrentPassword"],
         }
     ).encode()
-    with opener.open(base + "/api/v2/auth/login", login, timeout=45) as response:
-        if response.read(32).strip().lower() != b"ok.":
+    request = urllib.request.Request(
+        base + "/api/v2/auth/login", login, headers={"Referer": base}
+    )
+    with opener.open(request, timeout=45) as response:
+        response.read(32)
+        if response.status // 100 != 2 or not list(jar):
             raise RuntimeError("qBittorrent rejected the configured credentials")
     return opener, base
 
@@ -48,9 +54,17 @@ def qb_form(
     opener: urllib.request.OpenerDirector, base: str, endpoint: str, values: dict
 ) -> None:
     data = urllib.parse.urlencode(values).encode()
-    with opener.open(base + endpoint, data, timeout=45) as response:
+    request = urllib.request.Request(
+        base + endpoint, data, headers={"Referer": base}
+    )
+    with opener.open(request, timeout=45) as response:
         if response.status // 100 != 2:
             raise RuntimeError(f"qBittorrent {endpoint} returned HTTP {response.status}")
+
+
+def qb_json(opener: urllib.request.OpenerDirector, base: str, endpoint: str) -> object:
+    with opener.open(base + endpoint, timeout=45) as response:
+        return json.loads(response.read())
 
 
 def read_range(url: str, start: int, end: int) -> dict:
@@ -86,15 +100,26 @@ def delete_with_retry(base: str, download_id: str) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--release-id", required=True)
-    parser.add_argument("--settings", required=True)
+    parser.add_argument("--settings")
     parser.add_argument("--base-url", default="http://127.0.0.1:8097")
     parser.add_argument("--limit-bytes", type=int, default=2 * 1024 * 1024)
     parser.add_argument("--ffprobe", action="store_true")
     args = parser.parse_args()
 
     base = args.base_url.rstrip("/")
-    with open(args.settings, encoding="utf-8") as handle:
-        settings = json.load(handle)
+    settings: dict = {}
+    if args.settings:
+        with open(args.settings, encoding="utf-8") as handle:
+            settings = json.load(handle)
+    settings.update(
+        {
+            "qbittorrentUrl": os.environ.get("FILELIST_STREAMING_QBITTORRENT_URL", settings.get("qbittorrentUrl", "")),
+            "qbittorrentUsername": os.environ.get("FILELIST_STREAMING_QBITTORRENT_USERNAME", settings.get("qbittorrentUsername", "")),
+            "qbittorrentPassword": os.environ.get("FILELIST_STREAMING_QBITTORRENT_PASSWORD", settings.get("qbittorrentPassword", "")),
+        }
+    )
+    if not all(settings.values()):
+        raise RuntimeError("qBittorrent URL, username, and password are required")
 
     existing = json_request(base + "/api/v1/downloads").get("items", [])
     if any(str(item.get("releaseId")) == args.release_id for item in existing):
@@ -121,6 +146,15 @@ def main() -> int:
             "/api/v2/torrents/setDownloadLimit",
             {"hashes": torrent_hash, "limit": str(args.limit_bytes)},
         )
+        torrent_info = qb_json(
+            opener,
+            qb_base,
+            "/api/v2/torrents/info?hashes=" + urllib.parse.quote(torrent_hash),
+        )
+        if not isinstance(torrent_info, list) or not torrent_info:
+            raise RuntimeError("qBittorrent did not return the prepared torrent")
+        if not torrent_info[0].get("seq_dl") or not torrent_info[0].get("f_l_piece_prio"):
+            raise RuntimeError("qBittorrent progressive scheduling flags are not enabled")
 
         stream_url = base + prepared["streamUrl"]
         size = int(prepared["sizeBytes"])
@@ -128,6 +162,8 @@ def main() -> int:
         result = {
             "downloadId": prepared["id"],
             "preparedProgress": prepared["progress"],
+            "sequentialDownload": True,
+            "firstLastPiecePriority": True,
             "startup": read_range(stream_url, 0, chunk - 1),
             "tail": read_range(stream_url, size - chunk, size - 1),
         }

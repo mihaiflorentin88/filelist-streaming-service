@@ -2,6 +2,8 @@
 
 Configuration is managed in the browser and persisted to `data/settings.json`. The server can start unconfigured so the first-run settings page is always available.
 
+Every JSON setting can also be supplied as an uppercase `FILELIST_STREAMING_...` environment variable; camel-case boundaries become underscores (for example, `instanceName` becomes `FILELIST_STREAMING_INSTANCE_NAME`). `FILELIST_STREAMING_SETTINGS_PATH` selects the settings file itself. Environment values are authoritative, are marked read-only in browser Settings, and are never copied back into that file. Docker Compose uses this mechanism so one private `.env.docker` remains the source of truth.
+
 ## Required dependencies
 
 - FileList URL, username, and passkey. Never enter the account password.
@@ -50,6 +52,8 @@ The optional TMDB API key is entered in browser settings and stored only in `dat
 ## Network boundary
 
 The initial listener is `:8097`; requests are accepted only from loopback and RFC1918 private network ranges. Narrow the trusted CIDRs to the actual LAN when practical. Keep the service behind the home firewall and never port-forward it. Changing the listener requires restart.
+
+`instanceName` identifies the server in Tizen discovery results. Choose a short household-friendly name when more than one server exists on the LAN. Discovery validates `/api/v1/system/info`; it does not broadcast credentials or settings.
 
 ## Logs
 

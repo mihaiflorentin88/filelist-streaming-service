@@ -3,8 +3,9 @@ export interface Release{id:string;name:string;category:string;sizeBytes:number;
 export type MediaKind='movie'|'series'
 export interface ParsedRelease{title:string;sortTitle:string;kind:MediaKind;year?:number;seasonStart?:number;seasonEnd?:number;episodeStart?:number;episodeEnd?:number;episodeTitle?:string;resolution?:string;source?:string;videoCodec?:string;audio?:string;hdr?:string;edition?:string;releaseGroup?:string}
 export type DownloadState='none'|'queued'|'downloading'|'partial'|'downloaded'|'error'
+export type TransferState='idle'|'queued'|'active'|'paused'|'complete'|'error'
 export type WatchState='unwatched'|'inProgress'|'partial'|'watched'
-export interface MediaState{downloadState:DownloadState;watchState:WatchState;downloadId?:string;progress?:number;positionMs?:number;durationMs?:number}
+export interface MediaState{downloadState:DownloadState;transferState?:TransferState;watchState:WatchState;downloadId?:string;progress?:number;positionMs?:number;durationMs?:number}
 export interface CatalogSource{release:Release;parsed:ParsedRelease;fileIndex?:number;filePath?:string;fileSizeBytes?:number;libraryState?:MediaState}
 export interface CatalogTitle{id:string;title:string;originalTitle?:string;kind:MediaKind;year?:number;imdbId?:string;overview?:string;posterUrl?:string;backdropUrl?:string;rating?:number;ratingVotes?:number;ratingProvider?:string;categories:string[];resolutions:string[];sourceCount:number;seasonCount?:number;episodeCount?:number;bestSeeders:number;largestSizeBytes:number;newestUpload?:string;sources?:CatalogSource[];libraryState?:MediaState}
 export interface CatalogEpisode{number:number;title:string;season:number;sourceCount:number;sources:CatalogSource[];libraryState?:MediaState}
@@ -21,7 +22,7 @@ export function orderDownloadIDs(items:Download[],sort:DownloadSort):string[]{re
 export interface Job{id:string;kind:string;state:string;label:string;dedupeKey:string;progress:number;attempt:number;error?:string;retryable:boolean;nextAttemptAt?:string;createdAt:string;updatedAt:string}
 export interface JobLog{id:number;jobId:string;attempt:number;level:string;phase:string;message:string;context?:Record<string,unknown>;createdAt:string}
 export interface SearchResult extends Page<CatalogTitle>{job:Job}
-export interface SettingsField{key:string;label:string;help:string;obtain?:string;tvVisible:boolean;sensitive:boolean;restartRequired:boolean}
+export interface SettingsField{key:string;label:string;help:string;obtain?:string;tvVisible:boolean;sensitive:boolean;restartRequired:boolean;readOnly?:boolean}
 export interface PlaybackState{profileId:string;sourceId:string;releaseId:string;fileIndex:number;filePath:string;positionMs:number;durationMs:number;watched:boolean;updatedAt:string}
 export interface PlaybackPreferences{profileId?:string;sourceId?:string;audioLanguage:string;audioTrackIndex:number;subtitleLanguage:string;subtitleProvider?:string;subtitleCandidateId?:string;subtitleMode:'auto'|'off'|'selected';updatedAt?:string}
 export function normalizedLanguage(value=''):string{const language=value.trim().toLocaleLowerCase();if(/^(en|eng)(-|$)/.test(language))return'en';if(/^(ro|ron|rum)(-|$)/.test(language))return'ro';return language.split('-')[0]}
@@ -34,7 +35,7 @@ export function resumeForTitle(items:HouseholdItem[],titleId:string):HouseholdIt
 function formatResumeTime(milliseconds:number):string{const total=Math.max(0,Math.floor(milliseconds/1000));const hours=Math.floor(total/3600);const minutes=Math.floor(total%3600/60);const seconds=total%60;return hours?`${hours}:${String(minutes).padStart(2,'0')}:${String(seconds).padStart(2,'0')}`:`${minutes}:${String(seconds).padStart(2,'0')}`}
 export function resumeActionLabel(item:HouseholdItem,kind:MediaKind):string{if(kind!=='series')return'Resume';return item.seasonNumber&&item.episodeNumber?`Resume S${String(item.seasonNumber).padStart(2,'0')}E${String(item.episodeNumber).padStart(2,'0')}`:'Resume episode'}
 export function resumeSummary(item:HouseholdItem,kind:MediaKind):string{const episode=kind==='series'&&item.seasonNumber&&item.episodeNumber?`S${String(item.seasonNumber).padStart(2,'0')}E${String(item.episodeNumber).padStart(2,'0')}`:'';return[episode,`Continue at ${formatResumeTime(item.positionMs)}`,item.filePath||item.release.name].filter(Boolean).join(' · ')}
-export function seasonPackActionLabel(state?:MediaState):string{switch(state?.downloadState){case'downloaded':return'Downloaded';case'error':return'Retry season download';case'downloading':return`Downloading ${Math.round((state.progress||0)*100)}%`;case'queued':return'Queued';case'partial':return'Continue season download';default:return'Download season'}}
+export function seasonPackActionLabel(state?:MediaState):string{if(state?.transferState==='paused')return`Paused at ${Math.round((state.progress||0)*100)}%`;switch(state?.downloadState){case'downloaded':return'Downloaded';case'error':return'Retry season download';case'downloading':return`Downloading ${Math.round((state.progress||0)*100)}%`;case'queued':return'Queued';case'partial':return'Continue season download';default:return'Download season'}}
 export interface LibraryCategory{name:string;count:number}
 export interface SubtitleCandidate{id:string;provider:string;providerLabel?:string;language:string;title:string;fileName?:string;releaseName?:string;format?:string;uploader?:string;hearingImpaired?:boolean;description?:string;score:number;cached:boolean}
 export interface SubtitleWarning{provider:string;message:string}
@@ -45,7 +46,7 @@ export class API {
   base:string;
   constructor(base:string){this.base=base.replace(/\/$/,'')}
   async call<T>(path:string,init?:RequestInit):Promise<T>{const r=await fetch(`${this.base}/api/v1${path}`,{headers:{'Content-Type':'application/json'},...init});if(!r.ok){const p=await r.json().catch(()=>({detail:r.statusText}));throw new Error(p.detail||r.statusText)}if(r.status===204)return undefined as T;return r.json()}
-  info(){return this.call<{name:string;version:string;configured:boolean}>('/system/info')}
+  info(){return this.call<{name:string;instanceName?:string;version:string;apiVersion?:string;configured:boolean;capabilities?:string[]}>('/system/info')}
   latest(category=''){return this.call<Page<Release>>('/catalog/latest?category='+encodeURIComponent(category))}
   search(q:string){return this.call<Page<Release>>('/catalog/search?query='+encodeURIComponent(q))}
   searchTitles(query:string){return this.call<SearchResult>('/catalog/search',{method:'POST',body:JSON.stringify({query})})}

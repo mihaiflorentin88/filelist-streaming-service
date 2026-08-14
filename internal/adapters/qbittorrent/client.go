@@ -56,6 +56,7 @@ func (c *Client) login(ctx context.Context) error {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"api/v2/auth/login", strings.NewReader(form.Encode()))
 		if err == nil {
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			req.Header.Set("Referer", strings.TrimRight(c.base, "/"))
 		}
 		return req, err
 	}, outbound.Policy{Provider: "qBittorrent", Attempts: 3, MaxInlineDelay: 10 * time.Second})
@@ -64,7 +65,11 @@ func (c *Client) login(ctx context.Context) error {
 	}
 	defer r.Body.Close()
 	b, _ := io.ReadAll(io.LimitReader(r.Body, 1024))
-	if r.StatusCode/100 != 2 || !strings.Contains(strings.ToLower(string(b)), "ok") {
+	authenticated := strings.Contains(strings.ToLower(string(b)), "ok")
+	if parsed, parseErr := url.Parse(c.base); parseErr == nil && len(c.http.Jar.Cookies(parsed)) > 0 {
+		authenticated = true
+	}
+	if r.StatusCode/100 != 2 || !authenticated {
 		return fmt.Errorf("qBittorrent rejected URL or credentials")
 	}
 	c.logged = true
@@ -88,10 +93,14 @@ func (c *Client) do(ctx context.Context, method, path string, body io.Reader, co
 			reader = bytes.NewReader(data)
 		}
 		r, e := http.NewRequestWithContext(ctx, method, c.base+path, reader)
+		if e != nil {
+			return nil, e
+		}
 		if contentType != "" {
 			r.Header.Set("Content-Type", contentType)
 		}
-		return r, e
+		r.Header.Set("Referer", strings.TrimRight(c.base, "/"))
+		return r, nil
 	}
 	resp, err := outbound.Do(ctx, c.http, makeReq, outbound.Policy{Provider: "qBittorrent", Attempts: 3, MaxInlineDelay: 10 * time.Second})
 	if err != nil {

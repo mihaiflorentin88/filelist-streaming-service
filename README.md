@@ -1,12 +1,64 @@
 # FileList Streaming Service
 
-Standalone Go server and Samsung Tizen client for browsing FileList and playing media managed by qBittorrent. Tizen uses direct AVPlay; desktop browsers can use an audio-only AAC compatibility stream while video remains untouched. Progressive HTTP Range playback from an incomplete qBittorrent download is server-verified; physical Samsung AVPlay verification remains pending.
+A self-hosted Go media server, responsive web application, and Samsung Tizen TV client for browsing FileList and playing media managed by qBittorrent. It is designed for a trusted private LAN and a small server such as a Raspberry Pi 4.
 
-See the [complete installation and upgrade guide](docs/INSTALLATION.md) for fresh-server automation, routine Raspberry Pi deployment, precompiled GitHub releases, manual installation, configuration, backups, and Tizen setup.
+Version **0.2.7** adds one-command Docker deployment, safe complete-season controls, and automatic Tizen server discovery. Progressive HTTP Range playback from an incomplete qBittorrent download is server-verified; physical Samsung AVPlay verification below 100% remains pending.
 
-## Current milestone
+## Features
 
-The vertical slice provides browser-managed file-backed settings, FileList latest/search, durable ownership of qBittorrent downloads, per-episode whole-season management, live download filtering, household favorites/history/resume and automatic next-episode state, piece-aware HTTP Range streaming, and file-cached Romanian/English subtitle preferences for torrent-contained, embedded, and SubDL sources. The Tizen client and release hardening remain under active development; see [architecture](docs/ARCHITECTURE.md), [subtitle playback](docs/SUBTITLES.md), [known issues](docs/KNOWN_ISSUES.md), and [development](docs/DEVELOPMENT.md).
+- Browse the locally cached FileList catalog by dashboard, recent additions, category, filter, sort, pagination, or explicit tracker search without making routine pages depend on FileList availability.
+- Canonical movie and series pages group seasons and episodes instead of scattering duplicate episode cards across dashboards.
+- Complete-season releases expand before any action is taken. Download, pause, resume, retry, and protected deletion happen from explicit controls, while each downloaded pack file appears under its matching episode.
+- Download management shows accurate selected-file and complete-torrent sizes, live progress/speed/peer state, stable in-place updates, search, filters, sorting, and one action that removes the torrent and its files.
+- A playback strategy automatically chooses a completed local file or an incomplete qBittorrent-backed progressive stream. Existing local playback does not require another FileList lookup.
+- qBittorrent sequential download and first/last-piece priority are applied per managed incomplete torrent. No production or global download speed cap is configured.
+- Resume a movie or series at the saved episode and position, then automatically advance to the next episode. Favorites, history, progress, and watched state are shared between web and TV.
+- Prefer English audio and Romanian subtitles with English fallback. Track choices are remembered per file; embedded/torrent subtitles and cached SubDL downloads are reused.
+- Browser playback exposes audio selection and can convert audio to AAC while copying video unchanged. Tizen uses native AVPlay direct playback, so the Raspberry Pi never transcodes video.
+- TV-first spatial navigation covers dialogs, season packs, download controls, settings, and playback. First launch can discover compatible servers on the local subnet or retain a manually entered address.
+- Run the server and qBittorrent in isolated ARM64-compatible containers. The wrapper preserves existing qBittorrent credentials, backs up its config on every start, and merges only credential-free storage/streaming policy.
+- Deploy from source, a precompiled GitHub release, Docker Compose, or the remembered Raspberry Pi deployment workflow. Normal builds install no packages on the workstation.
+
+## Screenshots
+
+Select a thumbnail to open the optimized full-size image.
+
+<table>
+  <tr>
+    <td align="center"><a href="docs/img/homepage-preview.webp"><img src="docs/img/thumbs/homepage-preview.webp" width="320" alt="Home dashboard"></a><br><sub>Home and continue watching</sub></td>
+    <td align="center"><a href="docs/img/my-lib-dashboard-preview.webp"><img src="docs/img/thumbs/my-lib-dashboard-preview.webp" width="320" alt="My Library dashboard"></a><br><sub>My Library dashboard</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><a href="docs/img/tracker-dashboard-preview.webp"><img src="docs/img/thumbs/tracker-dashboard-preview.webp" width="320" alt="Tracker dashboard"></a><br><sub>Tracker dashboard</sub></td>
+    <td align="center"><a href="docs/img/browse-preview.webp"><img src="docs/img/thumbs/browse-preview.webp" width="320" alt="Browse catalog"></a><br><sub>Browse and filter</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><a href="docs/img/tv-show-preview.webp"><img src="docs/img/thumbs/tv-show-preview.webp" width="320" alt="TV show season and episode page"></a><br><sub>Series, seasons, and episodes</sub></td>
+    <td align="center"><a href="docs/img/downloads-preview.webp"><img src="docs/img/thumbs/downloads-preview.webp" width="320" alt="Download management"></a><br><sub>Download management</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><a href="docs/img/categories-preview.webp"><img src="docs/img/thumbs/categories-preview.webp" width="320" alt="FileList categories"></a><br><sub>Categories</sub></td>
+    <td align="center"><a href="docs/img/jobs-preview.webp"><img src="docs/img/thumbs/jobs-preview.webp" width="320" alt="Background jobs"></a><br><sub>Background jobs</sub></td>
+  </tr>
+</table>
+
+The README uses 360 px WebP thumbnails and optimized WebP full views so the gallery stays lightweight while retaining readable full-size screenshots.
+
+## Documentation
+
+| Guide | Contents |
+| --- | --- |
+| [Installation and upgrades](docs/INSTALLATION.md) | Docker Compose, credential/API-key acquisition, automated and manual installs, GitHub release artifacts, Raspberry Pi deployment, backup, rollback, and Tizen installation. |
+| [User guide](docs/USER_GUIDE.md) | Browsing, season packs, downloads, playback, resume, subtitles, TV operation, and troubleshooting. |
+| [Configuration reference](docs/CONFIGURATION.md) | Settings, paths, limits, language preferences, and provider configuration. |
+| [Tizen guide](docs/TIZEN.md) | Build, signing, Developer Mode, Apps2Samsung installation, D-pad behavior, and physical-TV verification. |
+| [Subtitle architecture](docs/SUBTITLES.md) | Existing subtitle discovery, preparation, selection, storage, and playback behavior. |
+| [API reference](docs/API.md) | HTTP endpoints and response contracts for clients and integrations. |
+| [Architecture](docs/ARCHITECTURE.md) | Boundaries, domain model, adapters, storage, streaming, and client structure. |
+| [Development](docs/DEVELOPMENT.md) | Build/test workflows, integration testing, checkpoints, and implementation notes. |
+| [Known issues](docs/KNOWN_ISSUES.md) | Remaining limitations and physical-device verification items. |
+| [Maintainer notes](docs/MAINTAINER_NOTES.md) | Release, operational, dependency, security, and deployment invariants. |
+| [Security policy](SECURITY.md) | Supported versions, reporting, and deployment security boundaries. |
 
 ## Local quick start
 
@@ -21,7 +73,7 @@ The default trusted networks are loopback and RFC1918 private address ranges. Na
 
 ## Frontend and TV package
 
-`make frontend` builds and tests the browser and Tizen clients in Docker, then creates and validates the unsigned Apps2Samsung artifact at `clients/tizen/.build/artifacts/FileListTV-0.2.6.wgt`. Apps2Samsung signs it for the selected TV during installation. See [the Tizen build and installation guide](docs/TIZEN.md), including the living physical-TV verification log.
+`make frontend` builds and tests the browser and Tizen clients in Docker, then creates and validates the unsigned Apps2Samsung artifact at `clients/tizen/.build/artifacts/FileListTV-0.2.7.wgt`. Apps2Samsung signs it for the selected TV during installation. See [the Tizen build and installation guide](docs/TIZEN.md), including the living physical-TV verification log.
 
 ## Raspberry Pi deployment
 

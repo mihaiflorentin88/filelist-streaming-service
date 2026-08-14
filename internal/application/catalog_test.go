@@ -96,3 +96,14 @@ func TestSeasonPackStateUsesOnlyMatchingReleaseFiles(t *testing.T) {
 		t.Fatalf("unrelated release leaked into pack state: %#v", other)
 	}
 }
+
+func TestSourceStateReportsPausedTransferWithoutLosingDownloadState(t *testing.T) {
+	fileIndex := 2
+	index := catalogStateIndex{downloadsByRelease: map[string][]domain.Download{
+		"pack": {{ID: "download", ReleaseID: "pack", FileIndex: fileIndex, State: "pausedDL", Progress: .42}},
+	}, playbackBySource: map[string]domain.PlaybackState{}, playbackByRelease: map[string][]domain.PlaybackState{}}
+	state := index.sourceState(domain.CatalogSource{Release: domain.TorrentRelease{ID: "pack"}, FileIndex: &fileIndex})
+	if state.DownloadState != "downloading" || state.TransferState != "paused" || state.DownloadID != "download" {
+		t.Fatalf("unexpected paused media state: %#v", state)
+	}
+}

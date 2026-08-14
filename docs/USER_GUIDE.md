@@ -30,9 +30,9 @@ Progressive Range playback is verified on the Raspberry Pi while qBittorrent is 
 
 ## Samsung TV
 
-Build `clients/tizen/.build/artifacts/FileListTV-0.2.6.wgt` with `make frontend`, then install that local file through Apps2Samsung. On first launch, confirm the prefilled server address and select Connect. See [TIZEN.md](TIZEN.md) for Developer Mode, signing, compatibility, and the physical-TV verification log.
+Build `clients/tizen/.build/artifacts/FileListTV-0.2.7.wgt` with `make frontend`, then install that local file through Apps2Samsung. On first launch, select a validated server found on the local network or choose **Manual address**. A successful choice is saved and reused on later launches; failed connection attempts never replace it. See [TIZEN.md](TIZEN.md) for Developer Mode, signing, compatibility, and the physical-TV verification log.
 
-In the pending-TV-test 0.2.6 build, Left/Right while controls are hidden reveals and focuses the timeline and seeks ten seconds. Repeated Left/Right remains on the timeline; toolbar Left/Right follows the physical button row, Up reaches the timeline, Down restores the remembered toolbar control, and vertical menus use only Up/Down. Media keys work independently. Short Back closes the active dialog/player layer or toggles the main sidebar; hold Back for five seconds to exit. Record the physical result in the Tizen log after installation.
+In the pending-TV-test 0.2.7 build, Left/Right while controls are hidden reveals and focuses the timeline and seeks ten seconds. Repeated Left/Right remains on the timeline; toolbar Left/Right follows the physical button row, Up reaches the timeline, Down restores the remembered toolbar control, and vertical menus use only Up/Down. Complete-season cards are disclosures: OK expands a card, and downloading starts only after focusing and selecting its inner **Download** button. Media keys work independently. Short Back closes the active dialog/player layer or toggles the main sidebar; hold Back for five seconds to exit. Record the physical result in the Tizen log after installation.
 
 ## Troubleshooting
 

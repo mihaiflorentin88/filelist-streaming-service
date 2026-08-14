@@ -162,7 +162,7 @@ func (s *Service) catalogState(ctx context.Context) (catalogStateIndex, error) {
 }
 
 func emptyMediaState() domain.MediaState {
-	return domain.MediaState{DownloadState: "none", WatchState: "unwatched"}
+	return domain.MediaState{DownloadState: "none", TransferState: "idle", WatchState: "unwatched"}
 }
 
 func (s *Service) applyCatalogState(ctx context.Context, detail *domain.CatalogDetail) {
@@ -303,15 +303,23 @@ func (state catalogStateIndex) sourceState(source domain.CatalogSource) domain.M
 	if selected != nil {
 		result.DownloadID = selected.ID
 		result.Progress = selected.Progress
+		stateName := strings.ToLower(selected.State)
 		switch {
 		case selected.Progress >= 0.999:
 			result.DownloadState = "downloaded"
+			result.TransferState = "complete"
 		case selected.Error != "":
 			result.DownloadState = "error"
-		case strings.Contains(strings.ToLower(selected.State), "queued"):
+			result.TransferState = "error"
+		case strings.Contains(stateName, "paused") || strings.Contains(stateName, "stopped"):
+			result.DownloadState = "downloading"
+			result.TransferState = "paused"
+		case strings.Contains(stateName, "queued"):
 			result.DownloadState = "queued"
+			result.TransferState = "queued"
 		default:
 			result.DownloadState = "downloading"
+			result.TransferState = "active"
 		}
 		if playback, ok := state.playbackBySource[selected.ID]; ok {
 			applyPlaybackState(&result, playback)
@@ -393,6 +401,7 @@ func aggregateMediaStates(states []domain.MediaState, requireAll bool) domain.Me
 	}
 	downloaded, managed, watched, started := 0, 0, 0, 0
 	for _, state := range states {
+		result.TransferState = mergeTransferState(result.TransferState, state.TransferState)
 		if state.DownloadState == "downloaded" {
 			downloaded++
 		}
@@ -435,6 +444,14 @@ func aggregateMediaStates(states []domain.MediaState, requireAll bool) domain.Me
 		result.WatchState = "inProgress"
 	}
 	return result
+}
+
+func mergeTransferState(current, next string) string {
+	priority := map[string]int{"idle": 0, "complete": 1, "paused": 2, "queued": 3, "active": 4, "error": 5}
+	if priority[next] > priority[current] {
+		return next
+	}
+	return current
 }
 
 func sourcesForTitle(sources []domain.CatalogSource, titleID string) []domain.CatalogSource {

@@ -1,0 +1,13 @@
+ARG QBITTORRENT_IMAGE=qbittorrentofficial/qbittorrent-nox:5.2.3-1
+FROM ${QBITTORRENT_IMAGE}
+
+COPY tools/qbittorrent_config.py /usr/local/lib/filelist/qbittorrent_config.py
+COPY deploy/qbittorrent/qBittorrent.streaming.conf /usr/local/share/filelist/qBittorrent.streaming.conf
+COPY deploy/docker/qbittorrent_bootstrap.py /usr/local/lib/filelist/qbittorrent_bootstrap.py
+COPY deploy/docker/qbittorrent-entrypoint.sh /usr/local/bin/filelist-qbittorrent-entrypoint
+COPY deploy/docker/qbittorrent-healthcheck.sh /usr/local/bin/filelist-qbittorrent-healthcheck
+RUN chmod 0755 /usr/local/bin/filelist-qbittorrent-entrypoint /usr/local/bin/filelist-qbittorrent-healthcheck \
+    && chmod 0644 /usr/local/lib/filelist/*.py /usr/local/share/filelist/qBittorrent.streaming.conf
+
+HEALTHCHECK --interval=10s --timeout=5s --start-period=45s --retries=18 CMD ["/usr/local/bin/filelist-qbittorrent-healthcheck"]
+ENTRYPOINT ["/sbin/tini", "-g", "--", "/usr/local/bin/filelist-qbittorrent-entrypoint"]

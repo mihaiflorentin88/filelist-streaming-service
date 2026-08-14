@@ -48,3 +48,18 @@
 
 /* The browser player uses original-file time, independent of the growing fragmented MP4. */
 .video video{display:block;width:100%;height:100%;object-fit:contain;background:#000}.player-chrome{position:absolute;left:0;right:0;bottom:0;padding:110px 28px 28px;background:linear-gradient(transparent,#020609 42%);z-index:3}.player-heading{display:flex;align-items:baseline;justify-content:space-between;gap:24px;margin-bottom:14px}.player-heading strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:20px}.player-heading span{flex:none;color:var(--muted);font-size:13px}.player-scrubber>input{width:100%;height:22px;margin:0;accent-color:var(--teal);cursor:pointer}.player-scrubber>input:disabled{cursor:wait;opacity:.55}.player-scrubber>div{display:flex;justify-content:space-between;margin:2px 1px 13px;color:#d8e3e9;font-variant-numeric:tabular-nums}.player-control-row{display:flex;align-items:center;gap:8px;overflow-x:auto;padding:3px}.player-control-row button{flex:none}.player-control-row button:disabled{opacity:.5;cursor:wait}.player-play{min-width:78px;background:var(--teal);border-color:var(--teal);color:#06231b;font-weight:800}.player-volume{display:flex;align-items:center;gap:8px;padding:0 5px;color:var(--muted);font-size:13px}.player-volume input{width:105px;accent-color:var(--teal)}.video .subtitle-panel{z-index:6}.video .player-status{top:24px;bottom:auto;max-width:min(760px,80vw);margin:0;text-align:center}.video button:focus-visible,.video input:focus-visible{outline:3px solid var(--teal);outline-offset:3px}@media(max-width:760px){.player-chrome{padding:90px 14px 14px}.player-heading{align-items:flex-start;flex-direction:column;gap:3px}.player-control-row{padding-bottom:8px}.player-volume span{position:absolute;width:1px;height:1px;overflow:hidden}}
+
+/* Complete-season sources are disclosure controls: selecting a source never starts a transfer. */
+.season-pack-actions>div{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:start;gap:12px}
+.season-pack-source{min-width:0;border:1px solid var(--line);border-radius:var(--radius);background:#101a20;overflow:hidden}
+.season-pack-actions .season-pack-source{display:block;grid-template-columns:none;padding:0;text-align:initial}
+.season-pack-source.expanded{border-color:#4d7c71;background:#10221e}
+.season-pack-header{display:grid;width:100%;grid-template-columns:minmax(0,1fr) auto;align-items:stretch;gap:18px;padding:16px;border:0;border-radius:0;background:transparent;text-align:left}
+.season-pack-header:hover{background:#17262b}
+.season-pack-header:focus-visible{outline:3px solid var(--teal);outline-offset:-3px}
+.season-pack-controls{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:14px 16px 16px;border-top:1px solid var(--line)}
+.season-pack-controls progress{flex:1 0 100%;height:8px}
+.season-pack-controls button{min-width:132px}
+.season-pack-controls .danger-button{margin-left:auto}
+.settings input:disabled{opacity:.72;cursor:not-allowed;background:#0c1216;color:#b8c8cf}
+@media(max-width:760px){.season-pack-actions>div{grid-template-columns:1fr}.season-pack-header{grid-template-columns:1fr}.season-pack-state{align-items:flex-start;text-align:left}.season-pack-state>.media-badges{justify-content:flex-start}.season-pack-controls .danger-button{margin-left:0}}
