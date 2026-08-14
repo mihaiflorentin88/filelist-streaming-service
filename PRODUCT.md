@@ -27,7 +27,7 @@ The server runs on a Raspberry Pi on the private LAN alongside qBittorrent. The 
 - Preact and TypeScript clients share the server API but use platform-specific interaction models.
 - The server persists configuration and application state in local files and SQLite.
 - The application manages only torrents it added to qBittorrent.
-- Direct play is used; the server does not transcode.
+- Tizen direct-plays original media. Browser compatibility may transcode one selected audio stream to AAC stereo while always copying video unchanged; video is never transcoded.
 - Playback before torrent completion is implemented at the range/piece level but remains unreliable on the target hardware and is documented as an open defect.
 - Tizen currently exposes connection management plus playback/subtitle controls inside the player. Provider credentials, dependency diagnostics, storage, and network administration remain browser-only; TV playback-preference settings are future work.
 - No operating-system packages may be installed without explicit permission.

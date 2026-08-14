@@ -42,6 +42,16 @@ type CatalogSource struct {
 	FileIndex     *int           `json:"fileIndex,omitempty"`
 	FilePath      string         `json:"filePath,omitempty"`
 	FileSizeBytes int64          `json:"fileSizeBytes,omitempty"`
+	LibraryState  MediaState     `json:"libraryState"`
+}
+
+type MediaState struct {
+	DownloadState string  `json:"downloadState"`
+	WatchState    string  `json:"watchState"`
+	DownloadID    string  `json:"downloadId,omitempty"`
+	Progress      float64 `json:"progress,omitempty"`
+	PositionMS    int64   `json:"positionMs,omitempty"`
+	DurationMS    int64   `json:"durationMs,omitempty"`
 }
 
 type CatalogTitle struct {
@@ -66,6 +76,7 @@ type CatalogTitle struct {
 	RatingVotes      int             `json:"ratingVotes,omitempty"`
 	RatingProvider   string          `json:"ratingProvider,omitempty"`
 	Sources          []CatalogSource `json:"sources,omitempty"`
+	LibraryState     MediaState      `json:"libraryState"`
 }
 
 type CatalogQuery struct {
@@ -90,14 +101,17 @@ type CatalogSeason struct {
 	Title        string           `json:"title"`
 	EpisodeCount int              `json:"episodeCount"`
 	Episodes     []CatalogEpisode `json:"episodes"`
+	PackSources  []CatalogSource  `json:"packSources,omitempty"`
+	LibraryState MediaState       `json:"libraryState"`
 }
 
 type CatalogEpisode struct {
-	Number      int             `json:"number"`
-	Title       string          `json:"title"`
-	Season      int             `json:"season"`
-	SourceCount int             `json:"sourceCount"`
-	Sources     []CatalogSource `json:"sources,omitempty"`
+	Number       int             `json:"number"`
+	Title        string          `json:"title"`
+	Season       int             `json:"season"`
+	SourceCount  int             `json:"sourceCount"`
+	Sources      []CatalogSource `json:"sources,omitempty"`
+	LibraryState MediaState      `json:"libraryState"`
 }
 
 type CatalogDetail struct {

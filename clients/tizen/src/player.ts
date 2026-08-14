@@ -39,6 +39,14 @@ export function playerAction(key: string, keyCode: number): PlayerAction {
 
 export interface AVTrack {index:number; type:string; language:string; label:string}
 
+function trackLanguage(value:string):string {const language=value.toLowerCase();if(/^(en|eng)(-|$)/.test(language))return'en';if(/^(ro|ron|rum)(-|$)/.test(language))return'ro';return language.split('-')[0]}
+
+export function preferredAudio(tracks:AVTrack[],language:string,index:number):AVTrack|null {
+  const audio=tracks.filter(track=>track.type==='AUDIO');
+  const wanted=trackLanguage(language||'en');
+  return audio.find(track=>track.index===index&&trackLanguage(track.language)===wanted)||audio.find(track=>trackLanguage(track.language)===wanted)||audio.find(track=>trackLanguage(track.language)==='en')||audio[0]||null;
+}
+
 export function normalizeTrack(track: any): AVTrack {
   let extra: Record<string, unknown> = {};
   try {extra = typeof track.extra_info === 'string' ? JSON.parse(track.extra_info) : track.extra_info || {};} catch {}

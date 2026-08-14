@@ -18,6 +18,8 @@ The application layer declares a tracker-neutral `Tracker` port and capability d
 
 Title-expansion jobs download each unseen season-pack `.torrent`, parse bounded bencoded metainfo without adding it to qBittorrent, validate paths, and store the playable file manifest in SQLite. Detail navigation only reads those cached manifests. Episode parsing creates virtual sources carrying `fileIndex`, path, and file size so preparation selects the requested episode rather than the whole pack.
 
+Preparing a whole season enables every playable episode file in the chosen pack, retains one qBittorrent torrent, and persists one managed `downloads` row per episode. Reconciliation derives each row's byte count and progress from that selected qBittorrent file instead of the torrent-wide total. The clients can therefore list and play individual episodes while pause, resume, and deletion deliberately apply to all sibling rows sharing the engine hash.
+
 ## Runtime configuration
 
 The browser reads and updates `/api/v1/settings`. The server atomically replaces `data/settings.json` through a same-directory temporary file and enforces mode `0600`. Empty secret fields preserve an existing value. Responses never return stored secret values; they return `...Configured` booleans instead.
@@ -32,18 +34,21 @@ Adding a source creates a durable `downloads` row containing a stable source ID,
 
 The UI lists and manages these rows rather than enumerating all qBittorrent content. This prevents the application from adopting or deleting unrelated torrents. On restart, status is reconciled from qB using the persisted engine route.
 
+Preparation first resolves an existing managed row by release and explicit file index. It can also materialize a requested sibling episode directly from the file list of an already-managed qBittorrent torrent. Legacy requests without an index prefer a completed row, then the newest row for that release. Only a true managed-torrent cache miss downloads torrent metadata from FileList, so rate limiting cannot block playback of an already-downloaded source or the next episode in an active pack. Reused incomplete rows are resumed and have their streaming/file priorities reasserted. Canonical favorites likewise prefer an exact managed source when their previous playback source is unavailable.
+
 ## Progressive playback
 
-Playback does not wait for completion:
+Playback selects one of two server-side strategies and does not wait for torrent completion. Completed media is read from its persisted final path without qBittorrent or FileList; incomplete media is resumed when paused and read from qBittorrent's effective temporary path until completion moves it to the final content path.
 
 1. Download the `.torrent` metadata and calculate its canonical SHA-1 info hash.
 2. Add it to qB with sequential download and first/last-piece priority enabled.
-3. Select priority `7` for the requested video and contained subtitle files; set unrelated files to priority `0`.
-4. Re-read `seq_dl` and `f_l_piece_prio`, toggling either only when currently disabled.
+3. Select normal priority `1` for the requested video and contained subtitle files; set unrelated files to priority `0`. Maximum priority `7` is deliberately avoided because applying it to the whole media file defeats special first/last-piece priority.
+4. Re-read `seq_dl` and `f_l_piece_prio`. Reapply both off/on once after add or application restart, and after any file-priority change; later range requests leave stable settings untouched.
 5. Convert a requested HTTP file byte range into global torrent piece indexes using the file offset and qB piece size.
 6. Read `piece_size` from `torrents/properties` (qBittorrent 4.3.x does not include it in `torrents/info`) and poll `pieceStates` until only the requested pieces report state `2`, independent of overall progress.
-7. Before committing HTTP headers, verify the configured daemon account can open the growing file and read the final byte in the requested startup range. This turns mount/path/permission failures into a visible 503 diagnostic rather than a broken 206 response.
-8. Read the corresponding range from the growing file and return HTTP 206 with correct Range headers and an explicit media content type.
+7. While progress is below 100%, read qBittorrent's effective `temp_path` from `app/preferences` and resolve the selected file beneath it. At completion use `content_path`; every temporary and final candidate must remain beneath the configured download root.
+8. Before committing HTTP headers, verify the configured daemon account can open the growing file and read the final byte in the requested startup range. This turns mount/path/permission failures into a visible 503 diagnostic rather than a broken 206 response.
+9. Re-resolve the path between read-ahead chunks so qBittorrent can move completed content from temporary to final storage without breaking playback, then return HTTP 206 with correct Range headers and media type.
 
 The server waits for a maximum 128 MiB startup window or the smaller client-requested range, then uses bounded 256 MiB read-ahead windows. Multiple ranges return 416 in release 1. Disconnect cancellation is normal and releases the persisted stream lease.
 
@@ -53,7 +58,17 @@ qBittorrent 4.3.x add responses are accepted on any 2xx status unless the respon
 
 ## Household state
 
-Release 1 uses one server-side `household` profile while retaining `profile_id` for later profiles. Favorites use canonical title IDs so every release version of a movie or show stays grouped; startup migration maps older release-keyed favorites to their canonical title. Playback records retain release/file identity, exact millisecond position, duration, watched state, and update time. They intentionally outlive download rows so removing a torrent does not erase viewing history. Browser video and Tizen AVPlay update the same records approximately every ten seconds and on lifecycle boundaries; the server, not the client, applies the configured watched threshold.
+Release 1 uses one server-side `household` profile while retaining `profile_id` for later profiles. Favorites use canonical title IDs so every release version of a movie or show stays grouped; startup migration maps older release-keyed favorites to their canonical title. Playback records retain release/file identity, exact millisecond position, duration, watched state, and update time. They intentionally outlive download rows so removing a torrent does not erase viewing history. Household dashboard sections collapse those file-level records to their newest representative per canonical title before applying limits, so a series never fills a rail with episode cards; Downloads intentionally keeps every managed file. Browser video and Tizen AVPlay update the same records approximately every ten seconds and on lifecycle boundaries; the server, not the client, applies the configured watched threshold.
+
+Per-source playback preferences persist the selected audio language/index and subtitle mode/language/provider/candidate. Default selection is English audio and Romanian then English subtitles. A missing local subtitle triggers an English remote search; preparation writes the converted result to the content-addressed cache before playback. Episode completion asks the server for the immediate next cached episode, reuses an existing pack torrent when possible, and carries language intent forward while avoiding reuse of an episode-specific subtitle candidate.
+
+## Canonical library projection
+
+Library, Tracker, and category cards navigate by canonical title ID. Household rows also carry a server-derived season/episode location, so a pack file or watched episode opens its show with the correct episode selected instead of starting playback or navigating to Downloads.
+
+Catalog detail joins cached sources with managed download rows and household playback history. Each source receives ownership, progress, and watch state; episodes consider one completed version sufficient; seasons are complete only when every known episode is complete. Every season-pack source also receives an exact-release aggregate derived only from its matching episode sources, with progress weighted by selected-file size. This lets clients mark one downloaded/downloading pack without disabling alternative releases. Pack manifests keep one qBittorrent engine while their exact file indexes appear independently in the canonical episode hierarchy.
+
+Downloads polling uses immutable identity and order. The server persists fresh torrent telemetry without changing the lifecycle timestamp, and clients reconcile records by ID. Existing records keep their object identity when unchanged and their relative order when telemetry changes. Web retains the first visible row as a scroll anchor; Tizen retains both the row anchor and focused control. Stable telemetry slots prevent changing numbers or errors from shifting rows, while semantic file/torrent facts may wrap and expand instead of being clipped.
 
 ## Persistent jobs and events
 
@@ -69,4 +84,4 @@ The server writes structured JSON to both stdout/journald and `data/logs/server.
 
 Release 1 has no client login. Remote addresses must fall within the configured trusted CIDRs; forwarded-address headers are ignored. FileList passkeys, Basic headers, torrent download URLs, qB credentials, settings contents, and absolute media paths are never returned to clients or written to normal logs.
 
-All torrent paths combine qBittorrent's reported `save_path` with its file path, are resolved beneath the configured download root, and are rejected if the result escapes it. The production service runs as `filelist-streaming` with supplementary membership in the `qbittorrent` group so it can traverse and read the download tree; creating that account and group membership is approval-gated.
+Incomplete torrent paths use qBittorrent's effective `temp_path`; completed paths use `content_path`, falling back to `save_path` for older responses. Temporary and final locations must resolve beneath the configured download root or the request is rejected. The production service runs as `filelist-streaming` with supplementary membership in the `qbittorrent` group so it can traverse and read the download tree.

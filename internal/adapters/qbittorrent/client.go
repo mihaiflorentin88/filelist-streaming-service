@@ -27,6 +27,8 @@ type Client struct {
 	base     string
 	http     *http.Client
 	mu       sync.Mutex
+	prepare  sync.Map
+	ready    sync.Map
 	logged   bool
 }
 
@@ -128,6 +130,9 @@ func (c *Client) Add(ctx context.Context, reader io.Reader, savePath string) (st
 	if err != nil {
 		return "", err
 	}
+	// A torrent re-added with the same info hash must receive a fresh streaming
+	// scheduler setup even when this client prepared an earlier instance.
+	c.ready.Delete(hash)
 	var body bytes.Buffer
 	w := multipart.NewWriter(&body)
 	part, _ := w.CreateFormFile("torrents", "filelist.torrent")
@@ -171,7 +176,7 @@ func (c *Client) Files(ctx context.Context, hash string) ([]domain.TorrentFile, 
 		if v, ok := x["index"]; ok {
 			idx = int(num(v))
 		}
-		out = append(out, domain.TorrentFile{Index: idx, Path: path, SizeBytes: size, Progress: f(x, "progress"), Offset: offset, Playable: playable(path)})
+		out = append(out, domain.TorrentFile{Index: idx, Path: path, SizeBytes: size, Progress: f(x, "progress"), Priority: int(l(x, "priority")), Offset: offset, Playable: playable(path)})
 		offset += size
 	}
 	return out, nil
@@ -185,9 +190,12 @@ func (c *Client) Status(ctx context.Context, hash string) (domain.DownloadStatus
 		return domain.DownloadStatus{}, domain.ErrTorrentNotFound
 	}
 	x := rows[0]
-	total := l(x, "total_size")
+	// qBittorrent's total_size includes files that were explicitly deselected.
+	// amount_left and progress describe the selected download set, so pair them
+	// with size and only fall back to total_size for older API responses.
+	total := l(x, "size")
 	if total <= 0 {
-		total = l(x, "size")
+		total = l(x, "total_size")
 	}
 	properties, err := c.properties(ctx, hash)
 	if err != nil {
@@ -198,6 +206,13 @@ func (c *Client) Status(ctx context.Context, hash string) (domain.DownloadStatus
 		pieceSize = l(x, "piece_size")
 	}
 	d := domain.DownloadStatus{Hash: hash, State: s(x, "state"), Progress: f(x, "progress"), TotalBytes: total, DownloadedBytes: total - l(x, "amount_left"), SpeedBytesPerSecond: l(x, "dlspeed"), ETASeconds: l(x, "eta"), Peers: int(l(x, "num_leechs")), Seeds: int(l(x, "num_seeds")), PieceSize: pieceSize, Sequential: bo(x, "seq_dl"), FirstLastPriority: bo(x, "f_l_piece_prio"), SavePath: s(x, "save_path"), ContentPath: s(x, "content_path")}
+	if d.Progress < 1 {
+		var preferences map[string]any
+		if c.getJSON(ctx, "api/v2/app/preferences", &preferences) == nil {
+			d.TempPathEnabled = bo(preferences, "temp_path_enabled")
+			d.TempPath = s(preferences, "temp_path")
+		}
+	}
 	var trackers []map[string]any
 	if c.getJSON(ctx, "api/v2/torrents/trackers?hash="+url.QueryEscape(hash), &trackers) == nil {
 		for _, t := range trackers {
@@ -227,43 +242,105 @@ func (c *Client) properties(ctx context.Context, hash string) (map[string]any, e
 	return result, err
 }
 func (c *Client) PrepareFile(ctx context.Context, hash string, index int, subtitleIndices []int) error {
-	st, err := c.Status(ctx, hash)
-	if err != nil {
-		return err
-	}
-	if !st.Sequential {
-		if err := c.command(ctx, "toggleSequentialDownload", url.Values{"hashes": {hash}}); err != nil {
-			return err
-		}
-	}
-	if !st.FirstLastPriority {
-		if err := c.command(ctx, "toggleFirstLastPiecePrio", url.Values{"hashes": {hash}}); err != nil {
-			return err
-		}
-	}
+	return c.PrepareFiles(ctx, hash, []int{index}, subtitleIndices)
+}
+
+func (c *Client) PrepareFiles(ctx context.Context, hash string, indices []int, subtitleIndices []int) error {
+	lockAny, _ := c.prepare.LoadOrStore(hash, &sync.Mutex{})
+	lock := lockAny.(*sync.Mutex)
+	lock.Lock()
+	defer lock.Unlock()
 	files, err := c.Files(ctx, hash)
 	if err != nil {
 		return err
 	}
-	wanted := map[int]bool{index: true}
+	wanted := map[int]bool{}
+	media := map[int]bool{}
+	for _, index := range indices {
+		wanted[index] = true
+		media[index] = true
+	}
 	for _, i := range subtitleIndices {
 		wanted[i] = true
 	}
 	unwanted := []string{}
 	selected := []string{}
+	selectedCount := 0
+	prioritiesChanged := false
 	for _, f := range files {
 		if wanted[f.Index] {
-			selected = append(selected, strconv.Itoa(f.Index))
+			if media[f.Index] {
+				selectedCount++
+			}
+			// Keep wanted files at normal priority. Setting the whole media file
+			// to maximum priority gives every piece the same priority and defeats
+			// qBittorrent's first/last-piece scheduling.
+			if f.Priority != 1 {
+				selected = append(selected, strconv.Itoa(f.Index))
+			}
 		} else {
-			unwanted = append(unwanted, strconv.Itoa(f.Index))
+			if f.Priority != 0 {
+				unwanted = append(unwanted, strconv.Itoa(f.Index))
+			}
 		}
 	}
 	if len(unwanted) > 0 {
 		if err := c.command(ctx, "filePrio", url.Values{"hash": {hash}, "id": {strings.Join(unwanted, "|")}, "priority": {"0"}}); err != nil {
 			return err
 		}
+		prioritiesChanged = true
 	}
-	return c.command(ctx, "filePrio", url.Values{"hash": {hash}, "id": {strings.Join(selected, "|")}, "priority": {"7"}})
+	if len(media) == 0 || selectedCount != len(media) {
+		return fmt.Errorf("one or more qBittorrent selected files are unavailable")
+	}
+	if len(selected) > 0 {
+		if err := c.command(ctx, "filePrio", url.Values{"hash": {hash}, "id": {strings.Join(selected, "|")}, "priority": {"1"}}); err != nil {
+			return err
+		}
+		prioritiesChanged = true
+	}
+	_, preparedBefore := c.ready.Load(hash)
+	reapplySchedulers := prioritiesChanged || !preparedBefore
+
+	// File priority changes can flatten qBittorrent's special first/last
+	// piece priorities. qBittorrent 4.3 also sometimes reports both streaming
+	// flags after add without scheduling the edge pieces, so reapply each flag
+	// on the first preparation after add or application startup.
+	st, err := c.Status(ctx, hash)
+	if err != nil {
+		return err
+	}
+	if reapplySchedulers && st.Sequential {
+		if err := c.command(ctx, "toggleSequentialDownload", url.Values{"hashes": {hash}}); err != nil {
+			return err
+		}
+		st.Sequential = false
+	}
+	if !st.Sequential {
+		if err := c.command(ctx, "toggleSequentialDownload", url.Values{"hashes": {hash}}); err != nil {
+			return err
+		}
+	}
+	if reapplySchedulers && st.FirstLastPriority {
+		if err := c.command(ctx, "toggleFirstLastPiecePrio", url.Values{"hashes": {hash}}); err != nil {
+			return err
+		}
+		st.FirstLastPriority = false
+	}
+	if !st.FirstLastPriority {
+		if err := c.command(ctx, "toggleFirstLastPiecePrio", url.Values{"hashes": {hash}}); err != nil {
+			return err
+		}
+	}
+	verified, err := c.Status(ctx, hash)
+	if err != nil {
+		return err
+	}
+	if !verified.Sequential || !verified.FirstLastPriority {
+		return fmt.Errorf("qBittorrent did not retain progressive streaming priorities")
+	}
+	c.ready.Store(hash, struct{}{})
+	return nil
 }
 func (c *Client) Pause(ctx context.Context, hash string) error {
 	return c.command(ctx, "pause", url.Values{"hashes": {hash}})

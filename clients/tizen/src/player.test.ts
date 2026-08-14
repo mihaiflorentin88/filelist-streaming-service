@@ -1,5 +1,5 @@
 import {describe, expect, it} from 'vitest';
-import {clampSeek, formatTime, isDownloadComplete, normalizeTrack, parseVTT, playerAction, preferredSubtitle, subtitleAt} from './player';
+import {clampSeek, formatTime, isDownloadComplete, normalizeTrack, parseVTT, playerAction, preferredAudio, preferredSubtitle, subtitleAt} from './player';
 
 describe('player helpers', () => {
   it('formats player time', () => {expect(formatTime(65_400)).toBe('1:05'); expect(formatTime(3_665_000)).toBe('1:01:05');});
@@ -13,5 +13,6 @@ describe('player helpers', () => {
     expect(preferredSubtitle([english, romanian])?.index).toBe(2);
     expect(preferredSubtitle([english])?.index).toBe(1);
   });
+  it('keeps an audio index only when its saved language still matches',()=>{const english={index:1,type:'AUDIO',language:'eng',label:'English'};const romanian={index:3,type:'AUDIO',language:'ron',label:'Romanian'};expect(preferredAudio([english,romanian],'ro',3)?.index).toBe(3);expect(preferredAudio([english,romanian],'ro',1)?.index).toBe(3);expect(preferredAudio([english,romanian],'de',-1)?.index).toBe(1)});
   it('parses and displays WebVTT cues at the requested playback time',()=>{const cues=parseVTT('WEBVTT\n\n1\n00:00:01.000 --> 00:00:03.000\nSalut!\n\n00:03.500 --> 00:00:05.000\nHello');expect(cues).toHaveLength(2);expect(subtitleAt(cues,2_000)).toBe('Salut!');expect(subtitleAt(cues,4_000)).toBe('Hello');expect(subtitleAt(cues,500)).toBe('');});
 });

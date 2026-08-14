@@ -1,10 +1,12 @@
 # FileList Streaming Service
 
-Standalone Go server and Samsung Tizen client for browsing FileList and directly playing compatible media managed by qBittorrent. The server never transcodes audio or video. Playback before download completion is implemented at the HTTP-piece level but remains a documented client playback issue.
+Standalone Go server and Samsung Tizen client for browsing FileList and playing media managed by qBittorrent. Tizen uses direct AVPlay; desktop browsers can use an audio-only AAC compatibility stream while video remains untouched. Progressive HTTP Range playback from an incomplete qBittorrent download is server-verified; physical Samsung AVPlay verification remains pending.
+
+See the [complete installation and upgrade guide](docs/INSTALLATION.md) for fresh-server automation, routine Raspberry Pi deployment, precompiled GitHub releases, manual installation, configuration, backups, and Tizen setup.
 
 ## Current milestone
 
-The vertical slice provides browser-managed file-backed settings, FileList latest/search, durable ownership of qBittorrent downloads, download-management APIs and removal controls, household favorites/history/resume state, piece-aware HTTP Range streaming, and a file-cached subtitle service for torrent-contained and SubDL direct-file sources. The Tizen client and release hardening remain under active development; see [architecture](docs/ARCHITECTURE.md), [known issues](docs/KNOWN_ISSUES.md), and [development](docs/DEVELOPMENT.md).
+The vertical slice provides browser-managed file-backed settings, FileList latest/search, durable ownership of qBittorrent downloads, per-episode whole-season management, live download filtering, household favorites/history/resume and automatic next-episode state, piece-aware HTTP Range streaming, and file-cached Romanian/English subtitle preferences for torrent-contained, embedded, and SubDL sources. The Tizen client and release hardening remain under active development; see [architecture](docs/ARCHITECTURE.md), [subtitle playback](docs/SUBTITLES.md), [known issues](docs/KNOWN_ISSUES.md), and [development](docs/DEVELOPMENT.md).
 
 ## Local quick start
 
@@ -19,11 +21,11 @@ The default trusted networks are loopback and RFC1918 private address ranges. Na
 
 ## Frontend and TV package
 
-`make frontend` builds and tests the browser and Tizen clients in Docker, then creates and validates the unsigned Apps2Samsung artifact at `clients/tizen/.build/artifacts/FileListTV-0.2.0.wgt`. Apps2Samsung signs it for the selected TV during installation. See [the Tizen build and installation guide](docs/TIZEN.md), including the living physical-TV verification log.
+`make frontend` builds and tests the browser and Tizen clients in Docker, then creates and validates the unsigned Apps2Samsung artifact at `clients/tizen/.build/artifacts/FileListTV-0.2.6.wgt`. Apps2Samsung signs it for the selected TV during installation. See [the Tizen build and installation guide](docs/TIZEN.md), including the living physical-TV verification log.
 
 ## Raspberry Pi deployment
 
-`make deploy-pi PI_HOST=user@server.lan` cross-compiles the ARM64 server, copies it to the selected host, installs or updates the systemd service and logrotate policy, and restarts it. Existing browser-managed settings and the append-only catalog/download database are preserved; a failed service start restores the previous binary. The target operation uses `sudo` and therefore requires explicit approval.
+`make deploy-pi PI_HOST=user@server.lan` cross-compiles the ARM64 server, then prompts for the server and non-secret qBittorrent/application paths. Answers are remembered in ignored `deploy/.deploy.local.conf`. Every run creates a new protected qBittorrent config backup, merges only the credential-free streaming template, and restores both qBittorrent configuration and the previous application binary if deployment fails. The target operation uses `sudo` and therefore requires explicit approval.
 
 ## Server dependencies and fresh-machine setup
 
@@ -31,7 +33,7 @@ The default trusted networks are loopback and RFC1918 private address ranges. Na
 | --- | --- | --- |
 | Linux with systemd | Daemon isolation and restart | Raspberry Pi OS/Debian/Ubuntu, Fedora/RHEL/Rocky/Alma, Arch, and openSUSE package families are supported. |
 | qBittorrent-nox | Torrent ownership, priority, progress, files | Fresh setup binds the Web UI to `127.0.0.1:8080` and uses `/srv/filelist-downloads`. |
-| FFmpeg and ffprobe | Embedded subtitle probing/extraction | Subtitle-only use; the server never transcodes video or audio. Paths are browser-configurable. |
+| FFmpeg and ffprobe | Embedded subtitle probing/extraction and browser audio compatibility | Video is never transcoded. Desktop-browser fallback converts incompatible audio to AAC; Tizen stays direct-play. Paths are browser-configurable. |
 | SQLite | Catalog, jobs, playback, ratings, subtitle associations | Embedded through the pure-Go driver; no system SQLite package is required. |
 | Exact Go version in `go.mod` | Fresh-clone server build | Installed as a private verified toolchain; system Go is not replaced. |
 | CA certificates, curl, tar | Verified toolchain download | Used only for setup/build and HTTPS trust. |

@@ -1,5 +1,5 @@
 openapi: 3.1.0
-info: {title: FileList Streaming API, version: 0.2.0}
+info: {title: FileList Streaming API, version: 0.2.4}
 servers: [{url: /api/v1}]
 paths:
   /system/info:
@@ -93,8 +93,24 @@ paths:
       parameters: [{in: path, name: id, required: true, schema: {type: string}}]
       requestBody: {content: {application/json: {schema: {type: object, properties: {fileIndex: {type: integer, default: -1}}}}}}
       responses: {'202': {description: Managed download, content: {application/json: {schema: {$ref: '#/components/schemas/Download'}}}}, '502': {$ref: '#/components/responses/Problem'}}
+  /releases/{id}/prepare-season:
+    post:
+      operationId: prepareSeason
+      parameters: [{in: path, name: id, required: true, schema: {type: string}}]
+      requestBody: {required: true, content: {application/json: {schema: {type: object, required: [season], properties: {season: {type: integer, minimum: 1}}}}}}
+      responses: {'202': {description: One managed download per playable episode selected from the season pack, content: {application/json: {schema: {type: object, required: [items, total], properties: {items: {type: array, items: {$ref: '#/components/schemas/Download'}}, total: {type: integer}}}}}}, '502': {$ref: '#/components/responses/Problem'}}
   /downloads:
     get: {operationId: listDownloads, responses: {'200': {description: Managed download page}}}
+  /downloads/{id}/media-info:
+    get:
+      operationId: getDownloadMediaInfo
+      parameters: [{in: path, name: id, required: true, schema: {type: string}}]
+      responses: {'200': {description: Stable metadata probed from the original selected media, content: {application/json: {schema: {$ref: '#/components/schemas/MediaInfo'}}}}, '404': {$ref: '#/components/responses/Problem'}, '503': {description: Progressive media headers are not readable yet, headers: {Retry-After: {schema: {type: integer}}}}, '422': {$ref: '#/components/responses/Problem'}}
+  /streams/{id}/browser:
+    get:
+      operationId: streamBrowserCompatible
+      parameters: [{in: path, name: id, required: true, schema: {type: string}}, {in: query, name: audioTrack, schema: {type: integer, minimum: 0}, description: Original-file audio stream index returned by media-info}, {in: query, name: startMs, schema: {type: integer, format: int64, minimum: 0}, description: Logical seek position within the original media}]
+      responses: {'200': {description: Fragmented MP4 with copied video and AAC stereo audio for desktop-browser compatibility}, '503': {$ref: '#/components/responses/Problem'}}
   /jobs:
     get:
       operationId: listJobs
@@ -122,9 +138,19 @@ paths:
       responses: {'200': {description: Live server events with bounded journal replay only when after or Last-Event-ID is supplied, content: {text/event-stream: {schema: {type: string}}}}}
   /downloads/{id}/{action}:
     post:
-      operationId: manageDownload
-      parameters: [{in: path, name: id, required: true, schema: {type: string}}, {in: path, name: action, required: true, schema: {type: string, enum: [pause, resume, retry, remove]}}, {in: query, name: deleteFiles, schema: {type: boolean, default: false}}]
-      responses: {'204': {description: Action accepted}, '409': {$ref: '#/components/responses/Problem'}}
+      operationId: manageDownloadLegacy
+      parameters: [{in: path, name: id, required: true, schema: {type: string}}, {in: path, name: action, required: true, schema: {type: string, enum: [pause, resume, retry, remove]}}, {in: query, name: deleteFiles, schema: {type: boolean}, description: Legacy remove requests must set this true; keeping files is no longer supported}]
+      responses: {'204': {description: Action accepted}, '400': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
+  /downloads/{id}:
+    delete:
+      operationId: deleteDownload
+      parameters: [{in: path, name: id, required: true, schema: {type: string}}]
+      responses: {'204': {description: Torrent and all downloaded files deleted}, '409': {$ref: '#/components/responses/Problem'}}
+  /downloads/{id}/next-episode:
+    post:
+      operationId: prepareNextEpisode
+      parameters: [{in: path, name: id, required: true, schema: {type: string}}]
+      responses: {'200': {description: No later episode, content: {application/json: {schema: {type: 'null'}}}}, '202': {description: Prepared next episode, content: {application/json: {schema: {$ref: '#/components/schemas/Download'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /downloads/{id}/subtitles:
     get:
       operationId: searchSubtitles
@@ -147,7 +173,7 @@ paths:
       parameters: [{in: path, name: asset, required: true, schema: {type: string}}]
       responses: {'200': {description: UTF-8 WebVTT subtitle, content: {text/vtt: {schema: {type: string}}}}}
   /state:
-    get: {operationId: getHouseholdState, responses: {'200': {description: Favorites and playback collections, content: {application/json: {schema: {$ref: '#/components/schemas/HouseholdState'}}}}}}
+    get: {operationId: getHouseholdState, responses: {'200': {description: Favorites and playback collections grouped to one newest representative per canonical title, content: {application/json: {schema: {$ref: '#/components/schemas/HouseholdState'}}}}}}
   /library/{section}:
     get:
       operationId: getLibrarySection
@@ -187,6 +213,16 @@ paths:
       parameters: [{in: path, name: sourceId, required: true, schema: {type: string}}]
       requestBody: {required: true, content: {application/json: {schema: {type: object, required: [watched], properties: {watched: {type: boolean}}}}}}
       responses: {'200': {description: Saved playback state, content: {application/json: {schema: {$ref: '#/components/schemas/PlaybackState'}}}}}
+  /playback/{sourceId}/preferences:
+    get:
+      operationId: getPlaybackPreferences
+      parameters: [{in: path, name: sourceId, required: true, schema: {type: string}}]
+      responses: {'200': {description: Saved or configured default track preferences, content: {application/json: {schema: {$ref: '#/components/schemas/PlaybackPreferences'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+    put:
+      operationId: updatePlaybackPreferences
+      parameters: [{in: path, name: sourceId, required: true, schema: {type: string}}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/PlaybackPreferences'}}}}
+      responses: {'200': {description: Saved track preferences, content: {application/json: {schema: {$ref: '#/components/schemas/PlaybackPreferences'}}}}, '400': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}}
   /streams/{id}:
     get:
       operationId: streamSource
@@ -204,16 +240,20 @@ components:
     Release: {type: object, required: [id, name, category, sizeBytes, seeders, leechers], properties: {id: {type: string}, name: {type: string}, category: {type: string}, sizeBytes: {type: integer, format: int64}, imdbId: {type: string}, seeders: {type: integer}, leechers: {type: integer}, freeleech: {type: boolean}}}
     ReleasePage: {type: object, required: [items, total], properties: {items: {type: array, items: {$ref: '#/components/schemas/Release'}}, nextCursor: {type: [string, 'null']}, total: {type: integer}, stale: {type: boolean}}}
     ParsedRelease: {type: object, required: [title, sortTitle, kind], properties: {title: {type: string}, sortTitle: {type: string}, kind: {type: string, enum: [movie, series]}, year: {type: integer}, seasonStart: {type: integer}, seasonEnd: {type: integer}, episodeStart: {type: integer}, episodeEnd: {type: integer}, episodeTitle: {type: string}, resolution: {type: string}, source: {type: string}, videoCodec: {type: string}, audio: {type: string}, hdr: {type: string}, edition: {type: string}, releaseGroup: {type: string}}}
-    CatalogSource: {type: object, required: [release, parsed], properties: {release: {$ref: '#/components/schemas/Release'}, parsed: {$ref: '#/components/schemas/ParsedRelease'}, fileIndex: {type: integer}, filePath: {type: string}, fileSizeBytes: {type: integer, format: int64}}}
-    CatalogTitle: {type: object, required: [id, title, kind, categories, resolutions, sourceCount, bestSeeders, largestSizeBytes], properties: {id: {type: string}, title: {type: string}, originalTitle: {type: string}, kind: {type: string, enum: [movie, series]}, year: {type: integer}, imdbId: {type: string}, overview: {type: string}, posterUrl: {type: string}, backdropUrl: {type: string}, categories: {type: array, items: {type: string}}, resolutions: {type: array, items: {type: string}}, sourceCount: {type: integer}, seasonCount: {type: integer}, episodeCount: {type: integer}, bestSeeders: {type: integer}, largestSizeBytes: {type: integer, format: int64}, newestUpload: {type: string, format: date-time}}}
+    MediaState: {type: object, required: [downloadState, watchState], properties: {downloadState: {type: string, enum: [none, queued, downloading, partial, downloaded, error]}, watchState: {type: string, enum: [unwatched, inProgress, partial, watched]}, downloadId: {type: string}, progress: {type: number, minimum: 0, maximum: 1}, positionMs: {type: integer, format: int64}, durationMs: {type: integer, format: int64}}}
+    CatalogSource: {type: object, required: [release, parsed, libraryState], properties: {release: {$ref: '#/components/schemas/Release'}, parsed: {$ref: '#/components/schemas/ParsedRelease'}, fileIndex: {type: integer}, filePath: {type: string}, fileSizeBytes: {type: integer, format: int64}, libraryState: {$ref: '#/components/schemas/MediaState'}}}
+    CatalogTitle: {type: object, required: [id, title, kind, categories, resolutions, sourceCount, bestSeeders, largestSizeBytes, libraryState], properties: {id: {type: string}, title: {type: string}, originalTitle: {type: string}, kind: {type: string, enum: [movie, series]}, year: {type: integer}, imdbId: {type: string}, overview: {type: string}, posterUrl: {type: string}, backdropUrl: {type: string}, categories: {type: array, items: {type: string}}, resolutions: {type: array, items: {type: string}}, sourceCount: {type: integer}, seasonCount: {type: integer}, episodeCount: {type: integer}, bestSeeders: {type: integer}, largestSizeBytes: {type: integer, format: int64}, newestUpload: {type: string, format: date-time}, libraryState: {$ref: '#/components/schemas/MediaState'}}}
     CatalogTitlePage: {type: object, required: [items, total], properties: {items: {type: array, items: {$ref: '#/components/schemas/CatalogTitle'}}, nextCursor: {type: [string, 'null']}, total: {type: integer}}}
-    CatalogEpisode: {type: object, required: [number, title, season, sourceCount, sources], properties: {number: {type: integer}, title: {type: string}, season: {type: integer}, sourceCount: {type: integer}, sources: {type: array, items: {$ref: '#/components/schemas/CatalogSource'}}}}
-    CatalogSeason: {type: object, required: [number, title, episodeCount, episodes], properties: {number: {type: integer}, title: {type: string}, episodeCount: {type: integer}, episodes: {type: array, items: {$ref: '#/components/schemas/CatalogEpisode'}}}}
+    CatalogEpisode: {type: object, required: [number, title, season, sourceCount, sources, libraryState], properties: {number: {type: integer}, title: {type: string}, season: {type: integer}, sourceCount: {type: integer}, sources: {type: array, items: {$ref: '#/components/schemas/CatalogSource'}}, libraryState: {$ref: '#/components/schemas/MediaState'}}}
+    CatalogSeason: {type: object, required: [number, title, episodeCount, episodes, libraryState], properties: {number: {type: integer}, title: {type: string}, episodeCount: {type: integer}, episodes: {type: array, items: {$ref: '#/components/schemas/CatalogEpisode'}}, packSources: {type: array, items: {$ref: '#/components/schemas/CatalogSource'}}, libraryState: {$ref: '#/components/schemas/MediaState'}}}
     CatalogDetail: {type: object, required: [title, seasons, sources], properties: {title: {$ref: '#/components/schemas/CatalogTitle'}, seasons: {type: array, items: {$ref: '#/components/schemas/CatalogSeason'}}, sources: {type: array, items: {$ref: '#/components/schemas/CatalogSource'}}}}
     CatalogFacets: {type: object, required: [categories, kinds, resolutions, hdr, sources, codecs], properties: {categories: {type: array, items: {type: string}}, kinds: {type: array, items: {type: string}}, resolutions: {type: array, items: {type: string}}, hdr: {type: array, items: {type: string}}, sources: {type: array, items: {type: string}}, codecs: {type: array, items: {type: string}}}}
-    Download: {type: object, required: [id, releaseId, engineId, filePath, mimeType, sizeBytes, state, progress, streamUrl], properties: {id: {type: string}, releaseId: {type: string}, titleId: {type: string}, displayTitle: {type: string}, parsed: {$ref: '#/components/schemas/ParsedRelease'}, engineId: {type: string}, filePath: {type: string}, mimeType: {type: string}, sizeBytes: {type: integer, format: int64}, state: {type: string}, progress: {type: number}, downloadedBytes: {type: integer, format: int64}, speedBytesPerSecond: {type: integer, format: int64}, etaSeconds: {type: integer, format: int64}, peers: {type: integer}, seeds: {type: integer}, leased: {type: boolean}, error: {type: string}, streamUrl: {type: string}}}
+    Download: {type: object, required: [id, releaseId, engineId, filePath, fileIndex, mimeType, sizeBytes, state, progress, playbackMode, streamUrl], properties: {id: {type: string}, releaseId: {type: string}, releaseName: {type: string}, releaseSizeBytes: {type: integer, format: int64}, titleId: {type: string}, displayTitle: {type: string}, category: {type: string}, parsed: {$ref: '#/components/schemas/ParsedRelease'}, engineId: {type: string}, filePath: {type: string}, fileIndex: {type: integer}, mimeType: {type: string}, sizeBytes: {type: integer, format: int64}, state: {type: string}, progress: {type: number}, playbackMode: {type: string, enum: [local, progressive]}, downloadedBytes: {type: integer, format: int64}, speedBytesPerSecond: {type: integer, format: int64}, etaSeconds: {type: integer, format: int64}, peers: {type: integer}, seeds: {type: integer}, trackerSeeders: {type: integer}, leased: {type: boolean}, error: {type: string}, streamUrl: {type: string}, browserStreamUrl: {type: string}}}
+    MediaAudioTrack: {type: object, required: [streamIndex], properties: {streamIndex: {type: integer, minimum: 0}, language: {type: string}, title: {type: string}, codec: {type: string}, channels: {type: integer, minimum: 0}, default: {type: boolean}}}
+    MediaInfo: {type: object, required: [durationMs, audioTracks], properties: {durationMs: {type: integer, format: int64, minimum: 1}, audioTracks: {type: array, items: {$ref: '#/components/schemas/MediaAudioTrack'}}, probedAt: {type: string, format: date-time}}}
     Job: {type: object, required: [id, kind, state, label, dedupeKey, progress, attempt, createdAt, updatedAt], properties: {id: {type: string}, kind: {type: string}, state: {type: string, enum: [queued, running, completed, failed]}, label: {type: string}, dedupeKey: {type: string}, progress: {type: number, minimum: 0, maximum: 1}, attempt: {type: integer}, error: {type: string}, createdAt: {type: string, format: date-time}, updatedAt: {type: string, format: date-time}}}
     PlaybackState: {type: object, required: [profileId, sourceId, releaseId, fileIndex, filePath, positionMs, durationMs, watched, updatedAt], properties: {profileId: {type: string}, sourceId: {type: string}, releaseId: {type: string}, fileIndex: {type: integer}, filePath: {type: string}, positionMs: {type: integer, format: int64}, durationMs: {type: integer, format: int64}, watched: {type: boolean}, updatedAt: {type: string, format: date-time}}}
-    HouseholdItem: {allOf: [{$ref: '#/components/schemas/PlaybackState'}, {type: object, required: [release, favorite], properties: {release: {$ref: '#/components/schemas/Release'}, catalog: {$ref: '#/components/schemas/CatalogTitle'}, favorite: {type: boolean}}}]}
+    PlaybackPreferences: {type: object, required: [audioLanguage, audioTrackIndex, subtitleLanguage, subtitleMode], properties: {profileId: {type: string}, sourceId: {type: string}, audioLanguage: {type: string}, audioTrackIndex: {type: integer, minimum: -1}, subtitleLanguage: {type: string}, subtitleProvider: {type: string}, subtitleCandidateId: {type: string}, subtitleMode: {type: string, enum: [auto, 'off', selected]}, updatedAt: {type: string, format: date-time}}}
+    HouseholdItem: {allOf: [{$ref: '#/components/schemas/PlaybackState'}, {type: object, required: [release, favorite], properties: {release: {$ref: '#/components/schemas/Release'}, catalog: {$ref: '#/components/schemas/CatalogTitle'}, favorite: {type: boolean}, titleId: {type: string}, seasonNumber: {type: integer}, episodeNumber: {type: integer}}}]}
     HouseholdState: {type: object, required: [favorites, continueWatching, recent, watched], properties: {favorites: {type: array, items: {$ref: '#/components/schemas/HouseholdItem'}}, continueWatching: {type: array, items: {$ref: '#/components/schemas/HouseholdItem'}}, recent: {type: array, items: {$ref: '#/components/schemas/HouseholdItem'}}, watched: {type: array, items: {$ref: '#/components/schemas/HouseholdItem'}}}}
     Problem: {type: object, required: [title, status, detail], properties: {type: {type: string}, title: {type: string}, status: {type: integer}, detail: {type: string}}}

@@ -13,8 +13,8 @@ make frontend
 The build uses the pinned Node 24 Docker image and an ephemeral container volume for `node_modules`, so Node and frontend dependencies do not need to be installed on the host. Packaging uses only Python 3 standard-library modules. It creates:
 
 ```text
-clients/tizen/.build/artifacts/FileListTV-0.2.0.wgt
-clients/tizen/.build/artifacts/FileListTV-0.2.0.wgt.sha256
+clients/tizen/.build/artifacts/FileListTV-0.2.6.wgt
+clients/tizen/.build/artifacts/FileListTV-0.2.6.wgt.sha256
 ```
 
 The WGT is deliberately unsigned. Apps2Samsung accepts a custom `.wgt`, obtains or reuses a Samsung certificate, and re-signs the package for the selected TV during installation. Signature files from an old build are excluded to prevent a mismatched certificate from leaking into the artifact. No certificate, password, or TV DUID is stored in this repository.
@@ -34,7 +34,7 @@ Offline validation cannot prove certificate/DUID acceptance or runtime behavior.
 
 1. Put the computer and TV on the same LAN. The TV must be reachable on its internal development port (26101); that port cannot be enabled independently.
 2. On the TV, open **Apps**, then **App Settings**, enter `12345`, enable **Developer mode**, enter the IP address of the computer running Apps2Samsung, and reboot the TV. If that computer's IP changes, update this setting.
-3. Start Apps2Samsung and select the TV. Choose the custom WGT option and select `clients/tizen/.build/artifacts/FileListTV-0.2.0.wgt` from disk.
+3. Start Apps2Samsung and select the TV. Choose the custom WGT option and select `clients/tizen/.build/artifacts/FileListTV-0.2.6.wgt` from disk.
 4. Install it. Apps2Samsung can request a Samsung account login the first time it needs to create signing material; later installs reuse the certificate. Do not copy that signing material into the repository.
 5. Launch **FileList TV**, enter the server URL (for example `http://server.lan:8097`, if using the default port), and exercise the physical-TV checks above.
 
@@ -53,6 +53,18 @@ Version 0.1.4 replaces the one-button playback view with a Smart Remote player o
 Version 0.1.5 introduced downloadable subtitles through AVPlay's external SAMI path. Version 0.2.0 replaces that unreliable attachment route: the Go server returns WebVTT, the client parses bounded text cues, and an application overlay renders the active cue from AVPlay's current time. This needs no TV filesystem download or player reopen. The menu retains Off, embedded tracks, Romanian→English provider search, descriptive candidate labels, and subtitle delay.
 
 Version 0.2.0 introduces the Plex-first library shell shared with the browser: a compositor-backed left rail, Home/My Library/Tracker sections, canonical artwork cards, title → season → episode → source selection, bounded 12-card catalog pages, managed-download actions, searchable/paginated jobs, safe TV Settings, My Library categories, and manual Events. Current catalog pages are route-owned and metadata events patch matching cards instead of replacing or reordering the page. Search contacts FileList only after the focused Search button is pressed, returns cache matches immediately, and automatically refreshes when the persistent tracker job publishes completion. Inputs remain read-only during D-pad traversal; OK explicitly enters edit mode and opens the keyboard. Its focus graph uses explicit rows and columns instead of visual guesswork. Hidden-player Left/Right reveals and focuses a stateful timeline; repeated presses update a preview and commit after a short pause without losing focus. AVPlay track lists refresh after buffering and from the audio menu. The event stream closes and reconnects with bounded exponential backoff rather than remaining stuck. Short Back toggles the main rail; a five-second hold exits the app.
+
+Version 0.2.2 retains the website-authoritative datasets from 0.2.1 and adds server-selected completed/progressive playback. AVPlay retries incomplete streams as pieces become readable instead of waiting for full completion. Downloads exposes live search/filter/sort state and one D-pad-safe protected **Delete download** action that removes qBittorrent state and files. Whole-season packs appear as individually playable episode rows. Series detail resumes the unfinished episode, completion advances to the next cached episode, and per-file English-audio/Romanian-then-English subtitle preferences are shared with the browser.
+
+Version 0.2.4 adds a complete spatial-focus audit: every TV button and input has a stable region, row, column, and key. Player toolbar Left/Right follows the physical row, Up reaches the timeline, timeline Left/Right seeks, Down restores the remembered toolbar control, and vertical dialogs ignore Left/Right. Setup, protected deletion, catalog pages, series details, and player dialogs all restore a predictable launcher. Tizen AVPlay remains on the original Range stream and never uses the browser's audio-only compatibility output.
+
+Version 0.2.5 hardens the canonical resume action. A partially watched movie or series replaces Play with Resume, series labels identify the exact `SxxExx`, and the secondary line shows the saved position. Matching accepts either canonical title identity carried directly by household history or its embedded catalog title. Play and Resume share one stable row/column/key, so the Smart Remote focus graph does not change when playback state changes.
+
+Version 0.2.6 groups every household dashboard rail to one card per canonical series title and makes complete-season release alternatives explicit. Each pack card owns its exact download state; a completed version is marked without disabling other releases. The detail focus graph fixes season tabs on row 2, pack alternatives on row 3, and episodes on row 4 and below, so Down follows the screen and Left/Right selects another pack. Series detail polls cache-only state in place while the pack is registered.
+
+Current canonical navigation opens every My Library and Tracker card in title details. Episode cards expand version actions; unmanaged versions say **Play and download**, while owned versions say **Play**. Season and episode controls expose separate download/watch markers. Back collapses an expanded episode before leaving details. Starting a season pack keeps details open and updates its episode rows.
+
+Downloads telemetry is reconciled by stable download ID. Polling never invokes focus restoration or replaces existing keyed controls, existing rows retain their order, and the focused action remains attached to the same DOM node. Telemetry reserves stable lines; longer selected-file and complete-torrent facts expand instead of being clipped. New rows are allowed and the first visible row is anchored when they are inserted above it.
 
 The HTML now paints **FileList TV — Starting application…** before JavaScript runs. A successful Preact render removes it. If the bundle is missing, slow, or throws during startup, the screen remains visible and displays the failed stage or exception instead of becoming an unexplained black screen. Report the exact on-screen message when diagnosing a physical-TV failure.
 
@@ -89,24 +101,34 @@ This is the durable source of truth for device results. **Confirmed** means obse
 | 0.2.0 | Server-extracted contained/embedded WebVTT preference | Pending TV test | Backend scope tests, 16 TV tests, TypeScript/Vite build, and WGT validation pass; native AVPlay TEXT remains explicit fallback |
 | 0.2.0 | OK-expandable Job log rows | Pending TV test | Rows are structured D-pad buttons with stable focus keys and an expanded context panel; compiler/WGT validation pass |
 | 0.2.0 | First public-release candidate | Pending TV test | Unsigned Apps2Samsung WGT SHA-256 `a4d3d6c72d6242020279a0036f1a8d7bde7d575bebd446cd44adede285764adc` |
+| 0.2.1 | Full cache facets, website-equivalent household data, and offline managed playback | Server confirmed; pending TV test | Pi smoke test exposed 20 facet categories versus 5 on the startup page and reused an existing download in 2 ms; 19 Tizen tests passed; unsigned WGT SHA-256 `744967059d1536b77e8109aa064e7b9d3008663d27928876093d6c68edb7c0c7` |
+| 0.2.2 | Progressive qBittorrent Range playback and unified deletion | Server confirmed; pending TV test | At 3.387% completion, Pi returned startup and tail HTTP 206 ranges and `ffprobe` parsed the progressive Matroska stream; qB global download limit remained unlimited; 19 Tizen tests and WGT validation passed; unsigned SHA-256 `c028421d17b294f78f5cf1c5480f0d06eed94e04f7fae3a1b270ad11308199c2` |
+| 0.2.2 | Live Downloads controls, season episodes, auto-next/resume, and saved audio/subtitle preferences | Pending TV test | Browser/Tizen production builds and 19 Tizen tests passed in the pinned Raspberry Pi container; offline WGT validation passed; unsigned SHA-256 `aeb48bef082fc9fb4aa7e715fe21b57e20982bd02f551a137ed9cc8343e4857e` |
+| 0.2.3 | Canonical series navigation, stable Downloads, deduplicated categories, state markers, and filename-safe actions | Pending TV test | Browser/Tizen production builds and all 19 spatial/player/catalog Tizen tests passed in the pinned Docker build; offline validation passed; unsigned SHA-256 `5d32cc42050e8ddb85f73b17a9925c9ea06395219e63498f3c391c8d60793907` |
+| 0.2.4 | Stable browser timeline/audio selection, unclipped Downloads facts, and complete spatial player focus | Pending TV test | Browser/Tizen production builds and all 23 spatial/player/catalog Tizen tests passed in the pinned Docker build; offline validation passed; unsigned SHA-256 `55313bbf797c27b2d16d1a5731bd10b4662783e33cd98b31179c1df6e40d1a01` |
+| 0.2.5 | Canonical title-level Resume action and stable primary-action focus | Server confirmed; pending TV test | Deployed Pi reports 0.2.5; browser/Tizen production builds, 24 Tizen tests, shared selector tests, and offline validation passed; unsigned SHA-256 `0fe2436f79d2c9331151efacd8a68e1a20079586fa574b5bc782d3a4a1105e8c` |
+| 0.2.6 | Exact season-pack state, selectable alternatives, canonical dashboard grouping, and deterministic pack-row focus | Server confirmed; pending TV test | Pi reports 0.2.6; live Silo data marks the exact 1080p pack downloaded, another pack partial, and alternatives untouched; household sections contain no repeated title IDs. Browser/Tizen production builds, 26 Tizen tests, and WGT validation passed; unsigned SHA-256 `522322e24bc1350162fb03cb7a80af39f19fbbb21d9933e079f604f2c926a6e7` |
 
-After installing 0.2.0, verify in order:
+After installing 0.2.6, verify in order:
 
 1. Connect has an obvious green focus ring immediately after launch; OK connects using the prefilled address.
 2. Before connecting, focus the address without opening Samsung IME; press OK to enter edit mode, edit text, choose Done, and confirm D-pad navigation resumes.
 3. D-pad traverses header buttons, media cards, favorite/watched actions, and multiple rails without losing focus; off-screen targets scroll into view.
+   On a partially watched series, confirm the primary action reads **Resume SxxExx**, Down from Back reaches it, Right reaches Favorite, Left returns, and OK resumes the displayed episode at the displayed position.
+   On a series with complete-season sources, move Down from a season tab to the closest pack version, use Left/Right across alternatives, and move Down to the corresponding first episode. Confirm the downloaded/downloading marker belongs only to the chosen release and another release remains selectable.
 4. OK invokes only the focused action once. Connection errors remain visible and leave Connect usable.
 5. Start playback, use Back to return, and confirm the exact originating card regains focus. Back while editing closes IME first. On the main shell short Back opens/closes the rail; holding it for five seconds exits.
 6. During playback, allow the controls to hide; Left/Right must reveal the timeline and seek 10 seconds. Verify OK/Up/Down reveals controls, media keys work, and Back first closes an open menu then exits playback.
 7. Verify Restart, repeated ±10 and timeline seeks do not lose focus; then verify audio, embedded/downloadable subtitle Off/selection, Romanian→English preference, subtitle delay, aspect modes, and playback information.
-8. With an incomplete torrent, confirm a connection failure changes into live download progress and the player reopens once after completion without manually selecting the movie again.
+8. With an incomplete torrent, confirm AVPlay begins once startup pieces are readable, displays live progress during any short retry, and supports a seek after the requested pieces arrive without waiting for 100% completion.
 9. Configure and test SubDL in the browser, select **Find downloadable subtitles**, confirm results have real language/format/release labels, select one, and verify WebVTT text renders at the correct time without restarting AVPlay.
 10. Open Settings, save safe preferences, run Events, inspect/retry a completed Job, and verify live tracker search returns results outside the first screen.
-11. Update this table immediately with the tested WGT version, result, date, and any observed limitation.
+11. Confirm Home, My Library, Continue Watching, Favorites, Watched, and Tracker dashboards show one Silo card rather than one card per episode; selecting it opens the complete Silo hierarchy. Confirm Downloads still shows individual managed episode files.
+12. Update this table immediately with the tested WGT version, result, date, and any observed limitation.
 
 ## Optional manual Tizen CLI signing
 
-Apps2Samsung users do not need this path. If Tizen Studio and the Samsung TV extensions already exist, `clients/tizen/scripts/package.sh` accepts an existing certificate profile in `TIZEN_PROFILE` and creates `FileListTV-0.2.0-signed.wgt`. This separate filename prevents it from overwriting the unsigned Apps2Samsung artifact. The script never creates certificate material.
+Apps2Samsung users do not need this path. If Tizen Studio and the Samsung TV extensions already exist, `clients/tizen/scripts/package.sh` accepts an existing certificate profile in `TIZEN_PROFILE` and creates `FileListTV-0.2.6-signed.wgt`. This separate filename prevents it from overwriting the unsigned Apps2Samsung artifact. The script never creates certificate material.
 
 ## Device behavior
 

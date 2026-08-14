@@ -45,6 +45,10 @@ func TestCatalogPaginationAndDownloadPersistence(t *testing.T) {
 	if err != nil || got.EngineID != "qb:hash" {
 		t.Fatalf("download not durable: %#v %v", got, err)
 	}
+	got, err = r.FindDownload(ctx, "1", 0)
+	if err != nil || got.ID != "source" {
+		t.Fatalf("download was not found by release and file: %#v %v", got, err)
+	}
 	p := domain.PlaybackState{ProfileID: "household", SourceID: "source", ReleaseID: "1", FileIndex: 0, FilePath: "movie.mkv", PositionMS: 900, DurationMS: 1000, Watched: true, UpdatedAt: now}
 	if err = r.SavePlayback(ctx, p); err != nil {
 		t.Fatal(err)
@@ -55,6 +59,14 @@ func TestCatalogPaginationAndDownloadPersistence(t *testing.T) {
 	states, err := r.ListPlayback(ctx, "household")
 	if err != nil || len(states) != 1 || !states[0].Watched {
 		t.Fatalf("bad playback state %#v %v", states, err)
+	}
+	prefs := domain.PlaybackPreferences{ProfileID: "household", SourceID: "source", AudioLanguage: "en", AudioTrackIndex: 2, SubtitleLanguage: "ro", SubtitleProvider: "contained", SubtitleCandidateID: "4", SubtitleMode: "selected", UpdatedAt: now}
+	if err = r.SavePlaybackPreferences(ctx, prefs); err != nil {
+		t.Fatal(err)
+	}
+	savedPrefs, err := r.GetPlaybackPreferences(ctx, "household", "source")
+	if err != nil || savedPrefs.AudioTrackIndex != 2 || savedPrefs.SubtitleCandidateID != "4" || savedPrefs.SubtitleMode != "selected" {
+		t.Fatalf("bad playback preferences %#v %v", savedPrefs, err)
 	}
 	favorites, err := r.ListFavorites(ctx, "household")
 	if err != nil || len(favorites) != 1 || favorites[0].ReleaseID != "1" {

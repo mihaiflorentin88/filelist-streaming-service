@@ -33,6 +33,7 @@ type Settings struct {
 	ReserveFreeBytes           int64    `json:"reserveFreeBytes"`
 	PreferredSubtitleLanguage  string   `json:"preferredSubtitleLanguage"`
 	FallbackSubtitleLanguage   string   `json:"fallbackSubtitleLanguage"`
+	PreferredAudioLanguage     string   `json:"preferredAudioLanguage"`
 	TMDBAPIKey                 string   `json:"tmdbApiKey,omitempty"`
 	MetadataLanguage           string   `json:"metadataLanguage"`
 	MetadataFallbackLanguage   string   `json:"metadataFallbackLanguage"`
@@ -54,7 +55,7 @@ func Defaults() Settings {
 		ListenAddress: ":8097", TrustedCIDRs: []string{"127.0.0.0/8", "::1/128", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"}, DatabasePath: "data/filelist.db",
 		DownloadRoot: "/srv/filelist-downloads", FileListURL: "https://filelist.io", QBittorrentURL: "http://127.0.0.1:8080",
 		InitialBufferBytes: 128 << 20, ReadAheadBytes: 256 << 20, PieceWaitTimeoutSeconds: 600, CatalogMaxAgeHours: 24,
-		MaximumDownloadBytes: 15 << 30, ReserveFreeBytes: 8 << 30, PreferredSubtitleLanguage: "ro", FallbackSubtitleLanguage: "en",
+		MaximumDownloadBytes: 15 << 30, ReserveFreeBytes: 8 << 30, PreferredSubtitleLanguage: "ro", FallbackSubtitleLanguage: "en", PreferredAudioLanguage: "en",
 		MetadataLanguage: "ro-RO", MetadataFallbackLanguage: "en-US", ArtworkCachePath: "data/artwork", ArtworkCacheMaxBytes: 512 << 20,
 		SubDLURL: "https://api.subdl.com", MaxConcurrentJobs: 10, TitleRefreshTimeoutMinutes: 30,
 		SubtitleCachePath: "data/subtitles", SubtitleCacheMaxBytes: 256 << 20,
@@ -78,6 +79,9 @@ func Load() (*Store, error) {
 		}
 		if s.value.WatchedThresholdPercent == 0 {
 			s.value.WatchedThresholdPercent = 90
+		}
+		if s.value.PreferredAudioLanguage == "" {
+			s.value.PreferredAudioLanguage = "en"
 		}
 		if s.value.MetadataLanguage == "" {
 			s.value.MetadataLanguage = "ro-RO"

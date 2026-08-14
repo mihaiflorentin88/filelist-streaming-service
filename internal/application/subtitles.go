@@ -191,13 +191,14 @@ func (s *Service) PrepareSubtitle(ctx context.Context, downloadID, providerName,
 		if selected.SizeBytes <= 0 || selected.SizeBytes > maxSubtitleSourceBytes {
 			return domain.SubtitleAsset{}, fmt.Errorf("subtitle size is outside the supported range")
 		}
-		path, pathErr := safeQBPath(s.settings.Get().DownloadRoot, status.SavePath, selected.Path)
+		path, pathErr := safeQBContentPath(s.settings.Get().DownloadRoot, status, selected.Path)
 		if pathErr != nil {
 			return domain.SubtitleAsset{}, pathErr
 		}
 		subDownload := d
 		subDownload.FilePath, subDownload.AbsolutePath, subDownload.FileOffset, subDownload.SizeBytes = selected.Path, path, selected.Offset, selected.SizeBytes
-		if err = s.WaitReadableRange(ctx, subDownload, 0, selected.SizeBytes); err != nil {
+		path, err = s.ReadableRangePath(ctx, subDownload, 0, selected.SizeBytes)
+		if err != nil {
 			return domain.SubtitleAsset{}, err
 		}
 		data, readErr := os.ReadFile(path)

@@ -36,6 +36,7 @@ type TorrentEngine interface {
 	Status(context.Context, string) (domain.DownloadStatus, error)
 	Pieces(context.Context, string) (domain.PieceMap, error)
 	PrepareFile(context.Context, string, int, []int) error
+	PrepareFiles(context.Context, string, []int, []int) error
 	Pause(context.Context, string) error
 	Resume(context.Context, string) error
 	Remove(context.Context, string, bool) error
@@ -62,6 +63,7 @@ type MetadataProvider interface {
 	OpenArtwork(context.Context, string, string) (io.ReadCloser, string, error)
 }
 type MediaProbe interface {
+	ProbeMedia(context.Context, string) (domain.MediaInfo, error)
 	ProbeSubtitles(context.Context, string) ([]domain.MediaSubtitleTrack, error)
 	ExtractSubtitle(context.Context, string, int, string) error
 }
@@ -82,6 +84,7 @@ type Repository interface {
 	SaveDownload(context.Context, domain.Download) error
 	DeleteDownload(context.Context, string) error
 	GetDownload(context.Context, string) (domain.Download, error)
+	FindDownload(context.Context, string, int) (domain.Download, error)
 	ListDownloads(context.Context) ([]domain.Download, error)
 	SetLease(context.Context, string, bool) error
 	SaveJob(context.Context, domain.Job) error
@@ -100,6 +103,8 @@ type Repository interface {
 	SavePlayback(context.Context, domain.PlaybackState) error
 	GetPlayback(context.Context, string, string) (domain.PlaybackState, error)
 	ListPlayback(context.Context, string) ([]domain.PlaybackState, error)
+	SavePlaybackPreferences(context.Context, domain.PlaybackPreferences) error
+	GetPlaybackPreferences(context.Context, string, string) (domain.PlaybackPreferences, error)
 	SetFavorite(context.Context, string, string, bool) error
 	ListFavorites(context.Context, string) ([]domain.Favorite, error)
 	SaveSubtitleAsset(context.Context, domain.SubtitleAsset) error

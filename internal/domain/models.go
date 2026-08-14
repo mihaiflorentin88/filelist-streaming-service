@@ -36,6 +36,7 @@ type TorrentFile struct {
 	Path      string  `json:"path"`
 	SizeBytes int64   `json:"sizeBytes"`
 	Progress  float64 `json:"progress"`
+	Priority  int     `json:"priority"`
 	Offset    int64   `json:"offset"`
 	Playable  bool    `json:"playable"`
 }
@@ -54,7 +55,8 @@ type DownloadStatus struct {
 	Peers, Seeds                                                 int
 	PieceSize                                                    int64
 	Sequential, FirstLastPriority                                bool
-	SavePath, ContentPath                                        string
+	SavePath, ContentPath, TempPath                              string
+	TempPathEnabled                                              bool
 	Trackers                                                     []TrackerStatus
 }
 type Download struct {
@@ -122,6 +124,18 @@ type PlaybackState struct {
 	UpdatedAt  time.Time `json:"updatedAt"`
 }
 
+type PlaybackPreferences struct {
+	ProfileID           string    `json:"profileId"`
+	SourceID            string    `json:"sourceId"`
+	AudioLanguage       string    `json:"audioLanguage"`
+	AudioTrackIndex     int       `json:"audioTrackIndex"`
+	SubtitleLanguage    string    `json:"subtitleLanguage"`
+	SubtitleProvider    string    `json:"subtitleProvider,omitempty"`
+	SubtitleCandidateID string    `json:"subtitleCandidateId,omitempty"`
+	SubtitleMode        string    `json:"subtitleMode"`
+	UpdatedAt           time.Time `json:"updatedAt,omitempty"`
+}
+
 type Favorite struct {
 	ProfileID string    `json:"profileId"`
 	TitleID   string    `json:"titleId"`
@@ -133,7 +147,10 @@ type HouseholdItem struct {
 	Release TorrentRelease `json:"release"`
 	Catalog *CatalogTitle  `json:"catalog,omitempty"`
 	PlaybackState
-	Favorite bool `json:"favorite"`
+	Favorite      bool   `json:"favorite"`
+	TitleID       string `json:"titleId,omitempty"`
+	SeasonNumber  int    `json:"seasonNumber,omitempty"`
+	EpisodeNumber int    `json:"episodeNumber,omitempty"`
 }
 
 type HouseholdState struct {
@@ -199,4 +216,22 @@ type MediaSubtitleTrack struct {
 	Forced          bool      `json:"forced,omitempty"`
 	HearingImpaired bool      `json:"hearingImpaired,omitempty"`
 	ProbedAt        time.Time `json:"probedAt,omitempty"`
+}
+
+// MediaInfo describes the original selected media file. Its duration and
+// stream indexes must never be derived from a generated compatibility stream,
+// whose fragmented container grows while FFmpeg is running.
+type MediaInfo struct {
+	DurationMS  int64             `json:"durationMs"`
+	AudioTracks []MediaAudioTrack `json:"audioTracks"`
+	ProbedAt    time.Time         `json:"probedAt,omitempty"`
+}
+
+type MediaAudioTrack struct {
+	Index    int    `json:"streamIndex"`
+	Language string `json:"language,omitempty"`
+	Title    string `json:"title,omitempty"`
+	Codec    string `json:"codec,omitempty"`
+	Channels int    `json:"channels,omitempty"`
+	Default  bool   `json:"default,omitempty"`
 }

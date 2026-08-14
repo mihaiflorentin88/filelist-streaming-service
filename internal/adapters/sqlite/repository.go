@@ -79,7 +79,11 @@ CREATE TABLE IF NOT EXISTS subtitle_assets(
  id TEXT PRIMARY KEY,source_id TEXT NOT NULL,provider TEXT NOT NULL,candidate_id TEXT NOT NULL,name TEXT NOT NULL DEFAULT '',language TEXT NOT NULL DEFAULT '',
  format TEXT NOT NULL,mime_type TEXT NOT NULL,path TEXT NOT NULL,created_at INTEGER NOT NULL,last_used_at INTEGER NOT NULL,
  UNIQUE(source_id,provider,candidate_id,format));
-CREATE INDEX IF NOT EXISTS subtitle_assets_source ON subtitle_assets(source_id,last_used_at DESC);`)
+CREATE INDEX IF NOT EXISTS subtitle_assets_source ON subtitle_assets(source_id,last_used_at DESC);
+CREATE TABLE IF NOT EXISTS playback_preferences(
+ profile_id TEXT NOT NULL DEFAULT 'household',source_id TEXT NOT NULL,audio_language TEXT NOT NULL DEFAULT 'en',audio_track_index INTEGER NOT NULL DEFAULT -1,
+ subtitle_language TEXT NOT NULL DEFAULT 'ro',subtitle_provider TEXT NOT NULL DEFAULT '',subtitle_candidate_id TEXT NOT NULL DEFAULT '',
+ subtitle_mode TEXT NOT NULL DEFAULT 'auto',updated_at INTEGER NOT NULL,PRIMARY KEY(profile_id,source_id));`)
 	}
 	if err != nil {
 		return err
@@ -512,8 +516,18 @@ func (r *Repository) DeleteDownload(ctx context.Context, id string) error {
 func (r *Repository) GetDownload(ctx context.Context, id string) (domain.Download, error) {
 	return scanDownload(r.db.QueryRowContext(ctx, `SELECT id,release_id,engine_id,file_index,file_path,absolute_path,size_bytes,file_offset,piece_size,state,progress,downloaded_bytes,speed_bytes_per_second,eta_seconds,peers,seeds,buffered_bytes,leased,error,created_at,updated_at FROM downloads WHERE id=?`, id))
 }
+func (r *Repository) FindDownload(ctx context.Context, releaseID string, fileIndex int) (domain.Download, error) {
+	query := `SELECT id,release_id,engine_id,file_index,file_path,absolute_path,size_bytes,file_offset,piece_size,state,progress,downloaded_bytes,speed_bytes_per_second,eta_seconds,peers,seeds,buffered_bytes,leased,error,created_at,updated_at FROM downloads WHERE release_id=?`
+	args := []any{releaseID}
+	if fileIndex >= 0 {
+		query += ` AND file_index=?`
+		args = append(args, fileIndex)
+	}
+	query += ` ORDER BY CASE WHEN progress>=1 THEN 0 ELSE 1 END,updated_at DESC LIMIT 1`
+	return scanDownload(r.db.QueryRowContext(ctx, query, args...))
+}
 func (r *Repository) ListDownloads(ctx context.Context) ([]domain.Download, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id,release_id,engine_id,file_index,file_path,absolute_path,size_bytes,file_offset,piece_size,state,progress,downloaded_bytes,speed_bytes_per_second,eta_seconds,peers,seeds,buffered_bytes,leased,error,created_at,updated_at FROM downloads ORDER BY updated_at DESC`)
+	rows, err := r.db.QueryContext(ctx, `SELECT id,release_id,engine_id,file_index,file_path,absolute_path,size_bytes,file_offset,piece_size,state,progress,downloaded_bytes,speed_bytes_per_second,eta_seconds,peers,seeds,buffered_bytes,leased,error,created_at,updated_at FROM downloads ORDER BY created_at DESC,id ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -868,6 +882,21 @@ func scanPlayback(s scanner) (domain.PlaybackState, error) {
 	var p domain.PlaybackState
 	var updated int64
 	err := s.Scan(&p.ProfileID, &p.SourceID, &p.ReleaseID, &p.FileIndex, &p.FilePath, &p.PositionMS, &p.DurationMS, &p.Watched, &updated)
+	p.UpdatedAt = time.Unix(updated, 0).UTC()
+	return p, err
+}
+func (r *Repository) SavePlaybackPreferences(ctx context.Context, p domain.PlaybackPreferences) error {
+	_, err := r.db.ExecContext(ctx, `INSERT INTO playback_preferences(profile_id,source_id,audio_language,audio_track_index,subtitle_language,subtitle_provider,subtitle_candidate_id,subtitle_mode,updated_at)
+VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(profile_id,source_id) DO UPDATE SET audio_language=excluded.audio_language,audio_track_index=excluded.audio_track_index,
+subtitle_language=excluded.subtitle_language,subtitle_provider=excluded.subtitle_provider,subtitle_candidate_id=excluded.subtitle_candidate_id,subtitle_mode=excluded.subtitle_mode,updated_at=excluded.updated_at`,
+		p.ProfileID, p.SourceID, p.AudioLanguage, p.AudioTrackIndex, p.SubtitleLanguage, p.SubtitleProvider, p.SubtitleCandidateID, p.SubtitleMode, p.UpdatedAt.Unix())
+	return err
+}
+func (r *Repository) GetPlaybackPreferences(ctx context.Context, profileID, sourceID string) (domain.PlaybackPreferences, error) {
+	var p domain.PlaybackPreferences
+	var updated int64
+	err := r.db.QueryRowContext(ctx, `SELECT profile_id,source_id,audio_language,audio_track_index,subtitle_language,subtitle_provider,subtitle_candidate_id,subtitle_mode,updated_at
+FROM playback_preferences WHERE profile_id=? AND source_id=?`, profileID, sourceID).Scan(&p.ProfileID, &p.SourceID, &p.AudioLanguage, &p.AudioTrackIndex, &p.SubtitleLanguage, &p.SubtitleProvider, &p.SubtitleCandidateID, &p.SubtitleMode, &updated)
 	p.UpdatedAt = time.Unix(updated, 0).UTC()
 	return p, err
 }

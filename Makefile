@@ -1,7 +1,7 @@
 .PHONY: check test build build-arm64 frontend tizen-wgt validate-tizen-wgt deploy-pi bootstrap-server-dry-run
 
 VERSION ?= $(shell tr -d '[:space:]' < VERSION)
-PI_HOST ?= user@server.lan
+PI_HOST ?=
 TIZEN_VERSION ?= $(VERSION)
 TIZEN_TARGET ?= 7.0
 TIZEN_WGT := clients/tizen/.build/artifacts/FileListTV-$(TIZEN_VERSION).wgt
@@ -43,7 +43,7 @@ validate-tizen-wgt:
 		--target-tizen "$(TIZEN_TARGET)"
 
 deploy-pi: build-arm64
-	sh deploy/pi-deploy.sh "$(PI_HOST)" "$(CURDIR)/bin/filelist-streaming-linux-arm64" "$(CURDIR)/deploy/systemd/filelist-streaming.service" "$(CURDIR)/deploy/systemd/filelist-streaming.logrotate"
+	PI_HOST="$(PI_HOST)" sh deploy/pi-deploy.sh "$(CURDIR)/bin/filelist-streaming-linux-arm64" "$(CURDIR)/deploy/systemd/filelist-streaming.service" "$(CURDIR)/deploy/systemd/filelist-streaming.logrotate"
 
 bootstrap-server-dry-run:
 	@echo "Review only; this target does not install packages."

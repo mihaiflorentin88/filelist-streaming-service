@@ -30,7 +30,14 @@ func (s *Service) CatalogTitles(ctx context.Context, q domain.CatalogQuery) (dom
 	byID := make(map[string]domain.CatalogTitle, len(grouped))
 	for i := range grouped {
 		s.applyMetadataOnly(&grouped[i])
+		grouped[i].LibraryState = emptyMediaState()
 		byID[grouped[i].ID] = grouped[i]
+	}
+	if state, stateErr := s.catalogState(ctx); stateErr == nil {
+		for i := range grouped {
+			grouped[i].LibraryState = state.sourcesState(sourcesForTitle(sources, grouped[i].ID))
+			byID[grouped[i].ID] = grouped[i]
+		}
 	}
 	items := make([]domain.CatalogTitle, 0, len(ids.Items))
 	for _, id := range ids.Items {
@@ -54,6 +61,7 @@ func (s *Service) CatalogDetail(ctx context.Context, id string) (domain.CatalogD
 	detail := domain.CatalogDetail{Title: title, Seasons: []domain.CatalogSeason{}, Sources: []domain.CatalogSource{}}
 	if title.Kind == domain.MediaMovie {
 		detail.Sources = matched
+		s.applyCatalogState(ctx, &detail)
 		return detail, nil
 	}
 	type episodeKey struct{ season, episode int }
@@ -67,8 +75,7 @@ func (s *Service) CatalogDetail(ctx context.Context, id string) (domain.CatalogD
 			continue
 		}
 		if source.Release.FileCount > 1 {
-			if manifest, manifestErr := s.repo.GetTorrentManifest(ctx, source.Release.ID); manifestErr == nil {
-				expanded := false
+			if manifest, manifestErr := s.catalogTorrentManifest(ctx, source.Release.ID); manifestErr == nil {
 				for _, file := range manifest.Files {
 					if !file.Playable {
 						continue
@@ -76,11 +83,7 @@ func (s *Service) CatalogDetail(ctx context.Context, id string) (domain.CatalogD
 					if virtual, ok := episodeSource(source, file); ok {
 						key := episodeKey{virtual.Parsed.SeasonStart, virtual.Parsed.EpisodeStart}
 						episodes[key] = append(episodes[key], virtual)
-						expanded = true
 					}
-				}
-				if expanded {
-					continue
 				}
 			}
 		}
@@ -105,7 +108,7 @@ func (s *Service) CatalogDetail(ctx context.Context, id string) (domain.CatalogD
 	}
 	sort.Ints(numbers)
 	for _, number := range numbers {
-		season := domain.CatalogSeason{Number: number, Title: fmt.Sprintf("Season %d", number), Episodes: []domain.CatalogEpisode{}}
+		season := domain.CatalogSeason{Number: number, Title: fmt.Sprintf("Season %d", number), Episodes: []domain.CatalogEpisode{}, PackSources: seasonPacks[number]}
 		keys := []episodeKey{}
 		for key := range episodes {
 			if key.season == number {
@@ -122,12 +125,356 @@ func (s *Service) CatalogDetail(ctx context.Context, id string) (domain.CatalogD
 			season.Episodes = append(season.Episodes, domain.CatalogEpisode{Number: key.episode, Season: number, Title: name, SourceCount: len(items), Sources: items})
 		}
 		season.EpisodeCount = len(season.Episodes)
-		if len(seasonPacks[number]) > 0 && len(season.Episodes) == 0 {
-			season.Episodes = append(season.Episodes, domain.CatalogEpisode{Season: number, Title: "Complete season", SourceCount: len(seasonPacks[number]), Sources: seasonPacks[number]})
-		}
 		detail.Seasons = append(detail.Seasons, season)
 	}
+	s.applyCatalogState(ctx, &detail)
 	return detail, nil
+}
+
+type catalogStateIndex struct {
+	downloadsByRelease map[string][]domain.Download
+	playbackBySource   map[string]domain.PlaybackState
+	playbackByRelease  map[string][]domain.PlaybackState
+}
+
+func (s *Service) catalogState(ctx context.Context) (catalogStateIndex, error) {
+	downloads, err := s.repo.ListDownloads(ctx)
+	if err != nil {
+		return catalogStateIndex{}, err
+	}
+	playback, err := s.repo.ListPlayback(ctx, householdProfile)
+	if err != nil {
+		return catalogStateIndex{}, err
+	}
+	state := catalogStateIndex{
+		downloadsByRelease: map[string][]domain.Download{},
+		playbackBySource:   map[string]domain.PlaybackState{},
+		playbackByRelease:  map[string][]domain.PlaybackState{},
+	}
+	for _, item := range downloads {
+		state.downloadsByRelease[item.ReleaseID] = append(state.downloadsByRelease[item.ReleaseID], item)
+	}
+	for _, item := range playback {
+		state.playbackBySource[item.SourceID] = item
+		state.playbackByRelease[item.ReleaseID] = append(state.playbackByRelease[item.ReleaseID], item)
+	}
+	return state, nil
+}
+
+func emptyMediaState() domain.MediaState {
+	return domain.MediaState{DownloadState: "none", WatchState: "unwatched"}
+}
+
+func (s *Service) applyCatalogState(ctx context.Context, detail *domain.CatalogDetail) {
+	detail.Title.LibraryState = emptyMediaState()
+	for i := range detail.Title.Sources {
+		detail.Title.Sources[i].LibraryState = emptyMediaState()
+	}
+	for i := range detail.Sources {
+		detail.Sources[i].LibraryState = emptyMediaState()
+	}
+	for seasonIndex := range detail.Seasons {
+		season := &detail.Seasons[seasonIndex]
+		season.LibraryState = emptyMediaState()
+		for i := range season.PackSources {
+			season.PackSources[i].LibraryState = emptyMediaState()
+		}
+		for episodeIndex := range season.Episodes {
+			episode := &season.Episodes[episodeIndex]
+			episode.LibraryState = emptyMediaState()
+			for sourceIndex := range episode.Sources {
+				episode.Sources[sourceIndex].LibraryState = emptyMediaState()
+			}
+		}
+	}
+	state, err := s.catalogState(ctx)
+	if err != nil {
+		return
+	}
+	for i := range detail.Title.Sources {
+		detail.Title.Sources[i].LibraryState = state.sourceState(detail.Title.Sources[i])
+	}
+	for i := range detail.Sources {
+		detail.Sources[i].LibraryState = state.sourceState(detail.Sources[i])
+	}
+	for seasonIndex := range detail.Seasons {
+		season := &detail.Seasons[seasonIndex]
+		for episodeIndex := range season.Episodes {
+			episode := &season.Episodes[episodeIndex]
+			for sourceIndex := range episode.Sources {
+				episode.Sources[sourceIndex].LibraryState = state.sourceState(episode.Sources[sourceIndex])
+			}
+			episode.LibraryState = aggregateSourceState(episode.Sources)
+		}
+		for i := range season.PackSources {
+			season.PackSources[i].LibraryState = packSourceState(season.PackSources[i].Release.ID, season.Episodes)
+		}
+		season.LibraryState = aggregateEpisodeState(season.Episodes)
+	}
+	if detail.Title.Kind == domain.MediaMovie {
+		detail.Title.LibraryState = aggregateSourceState(detail.Sources)
+	} else {
+		detail.Title.LibraryState = aggregateSeasonState(detail.Seasons)
+	}
+}
+
+func packSourceState(releaseID string, episodes []domain.CatalogEpisode) domain.MediaState {
+	states := make([]domain.MediaState, 0, len(episodes))
+	weights := make([]int64, 0, len(episodes))
+	for _, episode := range episodes {
+		for _, source := range episode.Sources {
+			if source.Release.ID != releaseID {
+				continue
+			}
+			states = append(states, source.LibraryState)
+			weight := source.FileSizeBytes
+			if weight <= 0 {
+				weight = 1
+			}
+			weights = append(weights, weight)
+		}
+	}
+	if len(states) == 0 {
+		return emptyMediaState()
+	}
+	result := aggregateMediaStates(states, true)
+	downloaded, managed, downloading, queued, failed := 0, 0, 0, 0, 0
+	var weightedProgress float64
+	var totalWeight int64
+	for i, item := range states {
+		weight := weights[i]
+		totalWeight += weight
+		weightedProgress += item.Progress * float64(weight)
+		if item.DownloadID != "" && (result.DownloadID == "" || item.Progress >= result.Progress) {
+			result.DownloadID = item.DownloadID
+		}
+		switch item.DownloadState {
+		case "downloaded":
+			downloaded++
+			managed++
+		case "error":
+			failed++
+			managed++
+		case "downloading":
+			downloading++
+			managed++
+		case "queued":
+			queued++
+			managed++
+		case "partial":
+			managed++
+		}
+	}
+	if totalWeight > 0 {
+		result.Progress = weightedProgress / float64(totalWeight)
+	}
+	switch {
+	case downloaded == len(states):
+		result.DownloadState = "downloaded"
+	case failed > 0:
+		result.DownloadState = "error"
+	case downloading > 0:
+		result.DownloadState = "downloading"
+	case queued > 0:
+		result.DownloadState = "queued"
+	case managed > 0:
+		result.DownloadState = "partial"
+	default:
+		result.DownloadState = "none"
+	}
+	return result
+}
+
+func (state catalogStateIndex) sourceState(source domain.CatalogSource) domain.MediaState {
+	result := emptyMediaState()
+	var selected *domain.Download
+	for i := range state.downloadsByRelease[source.Release.ID] {
+		download := &state.downloadsByRelease[source.Release.ID][i]
+		if source.FileIndex != nil && download.FileIndex != *source.FileIndex {
+			continue
+		}
+		if source.FileIndex == nil && source.Release.FileCount > 1 {
+			continue
+		}
+		if selected == nil || download.Progress > selected.Progress || (download.Progress == selected.Progress && download.CreatedAt.After(selected.CreatedAt)) {
+			selected = download
+		}
+	}
+	if selected != nil {
+		result.DownloadID = selected.ID
+		result.Progress = selected.Progress
+		switch {
+		case selected.Progress >= 0.999:
+			result.DownloadState = "downloaded"
+		case selected.Error != "":
+			result.DownloadState = "error"
+		case strings.Contains(strings.ToLower(selected.State), "queued"):
+			result.DownloadState = "queued"
+		default:
+			result.DownloadState = "downloading"
+		}
+		if playback, ok := state.playbackBySource[selected.ID]; ok {
+			applyPlaybackState(&result, playback)
+		}
+	}
+	if result.WatchState == "unwatched" {
+		for _, playback := range state.playbackByRelease[source.Release.ID] {
+			if source.FileIndex != nil && playback.FileIndex != *source.FileIndex {
+				continue
+			}
+			applyPlaybackState(&result, playback)
+			if result.WatchState == "watched" {
+				break
+			}
+		}
+	}
+	return result
+}
+
+func (state catalogStateIndex) sourcesState(sources []domain.CatalogSource) domain.MediaState {
+	projected := make([]domain.CatalogSource, len(sources))
+	copy(projected, sources)
+	for i := range projected {
+		projected[i].LibraryState = state.sourceState(projected[i])
+	}
+	result := aggregateSourceState(projected)
+	if result.DownloadState == "none" {
+		for _, source := range sources {
+			for _, download := range state.downloadsByRelease[source.Release.ID] {
+				result.DownloadState = "partial"
+				result.DownloadID = download.ID
+				result.Progress = max(result.Progress, download.Progress)
+			}
+		}
+	}
+	return result
+}
+
+func applyPlaybackState(state *domain.MediaState, playback domain.PlaybackState) {
+	if playback.Watched {
+		state.WatchState = "watched"
+	} else if playback.PositionMS > 0 && state.WatchState != "watched" {
+		state.WatchState = "inProgress"
+	}
+	if playback.UpdatedAt.After(time.Unix(0, 0)) && (state.PositionMS == 0 || playback.Watched) {
+		state.PositionMS = playback.PositionMS
+		state.DurationMS = playback.DurationMS
+	}
+}
+
+func aggregateSourceState(sources []domain.CatalogSource) domain.MediaState {
+	states := make([]domain.MediaState, 0, len(sources))
+	for _, source := range sources {
+		states = append(states, source.LibraryState)
+	}
+	return aggregateMediaStates(states, false)
+}
+
+func aggregateEpisodeState(episodes []domain.CatalogEpisode) domain.MediaState {
+	states := make([]domain.MediaState, 0, len(episodes))
+	for _, episode := range episodes {
+		states = append(states, episode.LibraryState)
+	}
+	return aggregateMediaStates(states, true)
+}
+
+func aggregateSeasonState(seasons []domain.CatalogSeason) domain.MediaState {
+	states := make([]domain.MediaState, 0, len(seasons))
+	for _, season := range seasons {
+		states = append(states, season.LibraryState)
+	}
+	return aggregateMediaStates(states, true)
+}
+
+func aggregateMediaStates(states []domain.MediaState, requireAll bool) domain.MediaState {
+	result := emptyMediaState()
+	if len(states) == 0 {
+		return result
+	}
+	downloaded, managed, watched, started := 0, 0, 0, 0
+	for _, state := range states {
+		if state.DownloadState == "downloaded" {
+			downloaded++
+		}
+		if state.DownloadState != "none" {
+			managed++
+		}
+		if state.WatchState == "watched" {
+			watched++
+		}
+		if state.WatchState != "unwatched" {
+			started++
+		}
+		if state.Progress > result.Progress {
+			result.Progress, result.DownloadID = state.Progress, state.DownloadID
+		}
+	}
+	if requireAll {
+		switch {
+		case downloaded == len(states):
+			result.DownloadState = "downloaded"
+		case managed > 0:
+			result.DownloadState = "partial"
+		}
+		switch {
+		case watched == len(states):
+			result.WatchState = "watched"
+		case started > 0:
+			result.WatchState = "partial"
+		}
+		return result
+	}
+	if downloaded > 0 {
+		result.DownloadState = "downloaded"
+	} else if managed > 0 {
+		result.DownloadState = "downloading"
+	}
+	if watched > 0 {
+		result.WatchState = "watched"
+	} else if started > 0 {
+		result.WatchState = "inProgress"
+	}
+	return result
+}
+
+func sourcesForTitle(sources []domain.CatalogSource, titleID string) []domain.CatalogSource {
+	out := make([]domain.CatalogSource, 0)
+	for _, source := range sources {
+		if domain.CatalogTitleID(source.Release, source.Parsed) == titleID {
+			out = append(out, source)
+		}
+	}
+	return out
+}
+
+func (s *Service) catalogTorrentManifest(ctx context.Context, releaseID string) (domain.TorrentManifest, error) {
+	manifest, err := s.repo.GetTorrentManifest(ctx, releaseID)
+	if err == nil || err != sql.ErrNoRows || s.engine == nil {
+		return manifest, err
+	}
+	downloads, listErr := s.repo.ListDownloads(ctx)
+	if listErr != nil {
+		return domain.TorrentManifest{}, listErr
+	}
+	for _, download := range downloads {
+		if download.ReleaseID != releaseID {
+			continue
+		}
+		hash, ok := engineHash(download.EngineID)
+		if !ok {
+			continue
+		}
+		files, filesErr := s.engine.Files(ctx, hash)
+		if filesErr != nil || len(files) == 0 {
+			continue
+		}
+		manifest = domain.TorrentManifest{ReleaseID: releaseID, Files: files, FetchedAt: time.Now().UTC()}
+		if saveErr := s.repo.SaveTorrentManifest(ctx, manifest); saveErr != nil {
+			return domain.TorrentManifest{}, saveErr
+		}
+		return manifest, nil
+	}
+	return domain.TorrentManifest{}, sql.ErrNoRows
 }
 
 func (s *Service) applyMetadataOnly(title *domain.CatalogTitle) {

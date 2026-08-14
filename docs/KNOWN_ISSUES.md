@@ -1,18 +1,18 @@
 # Known issues
 
-## Tizen 0.2.0 navigation, reconnection, and performance need physical-TV verification
+## Tizen 0.2.2 navigation, progressive playback, and performance need physical-TV verification
 
-The 0.1.3 Smart Remote input path is confirmed on the target S90C. Version 0.2.0 replaces nearest-geometry navigation with explicit regions, rows, columns, and stable focus keys. Vertical movement stays in the closest column, Left from the first content column opens the sidebar, Right returns to the exact content control, and player dialogs restore their launcher. The rail moves with a short compositor transform, card focus no longer scales heavy artwork, and each catalog page is limited to 12 cards with targeted metadata patching. Inputs open Samsung IME only after OK enters edit mode. SSE reconnect now uses bounded exponential backoff and can report failures to the daemon log. The Docker test/build passes, but smoothness, reconnection, and revised behavior still need confirmation on the physical TV.
+The 0.1.3 Smart Remote input path is confirmed on the target S90C. Version 0.2.0 replaced nearest-geometry navigation with explicit regions, rows, columns, and stable focus keys. Version 0.2.1 additionally aligns TV categories and household sections with the browser's cache-backed APIs. Vertical movement stays in the closest column, Left from the first content column opens the sidebar, Right returns to the exact content control, and player dialogs restore their launcher. The rail moves with a short compositor transform, card focus no longer scales heavy artwork, and each catalog page is limited to 12 cards with targeted metadata patching. Inputs open Samsung IME only after OK enters edit mode. SSE reconnect uses bounded exponential backoff and can report failures to the daemon log. The Docker test/build passes, but smoothness, reconnection, data parity, and revised behavior still need confirmation on the physical TV.
 
-## Playback before torrent completion
+## Progressive playback still needs physical-client verification
 
-The server maps HTTP byte ranges to qBittorrent pieces and does not intentionally wait for the whole torrent. On the current Raspberry Pi, however, browser and Tizen playback are only verified reliably after qBittorrent reports the selected file complete. Playback before completion remains an open phase-3 defect.
+The Raspberry Pi server now maps HTTP byte ranges to qBittorrent pieces, reasserts sequential and first/last scheduling, and reads incomplete content from qBittorrent's effective temporary path. A throttled live test returned valid startup and tail HTTP 206 responses at 3.39% completion, and the Pi's existing `ffprobe` parsed that same progressive URL as Matroska with the expected duration. The server-side phase-3 defect is resolved.
 
-The recovery introduced in Tizen 0.1.5 and retained in 0.2.0 attempts progressive playback first. If AVPlay reports a connection/preparation failure while the managed download is incomplete, the player closes the failed AVPlay session, displays live qBittorrent progress, and retries exactly once when completion is reported. This is recovery, not a claim that streaming while downloading is fixed. A future fix must demonstrate a valid HTTP 206 and actual client playback while progress is below 100%.
+Browser video and Tizen AVPlay now retry incomplete streams as requested pieces become readable instead of waiting for 100% completion. Actual browser decoding and physical S90C AVPlay/remote behavior below 100% still need observation; server `ffprobe` is not a substitute for that client/device test.
 
 ## Direct-play compatibility
 
-The server does not transcode. A source whose container, video, audio, profile, or subtitle format is unsupported by the browser or TV may still fail after download; compatibility probing and source ranking remain later work.
+The server never transcodes video. The browser can convert the selected original audio track to AAC stereo while copying video, but an unsupported video codec/profile may still fail. Tizen remains direct-play through AVPlay, so unsupported TV video or audio formats require choosing another source.
 
 ## Catalog metadata coverage
 

@@ -15,6 +15,10 @@ Settings also contains **Fetch latest data** and **Rebuild cache**. Both are app
 
 ## Streaming defaults
 
+Routine Pi deployment prompts for the SSH target, qBittorrent service/config path, application download root, incomplete-download path, protected backup directory, and application binary path. The last non-secret answers are stored in ignored `deploy/.deploy.local.conf` and offered as defaults next time. Credentials and tokens are never prompted or stored there.
+
+The sanitized qBittorrent template enables its incomplete directory, disables preallocation and the `.!qB` suffix, and contains no WebUI or tracker credentials. It does not set global, alternative, or per-torrent speed limits. The production default is `/mnt/sda1/torrent/.incomplete/`, inside the download root on the large disk. Every deployment stops qBittorrent, creates a new mode-`0600` timestamped config backup, merges only those four download keys, and rolls back on failure. Existing credentials, tokens, ports, bindings, save paths, and unknown settings are preserved.
+
 | Setting | Default |
 | --- | ---: |
 | Initial buffer | 128 MiB |
@@ -24,6 +28,9 @@ Settings also contains **Fetch latest data** and **Rebuild cache**. Both are app
 | Free-space reserve (reserved; not yet enforced) | 8 GiB |
 | Catalog maximum age | 24 hours |
 | Watched threshold | 90% |
+| Preferred audio language | `en` |
+| Preferred subtitle language | `ro` |
+| Fallback subtitle language | `en` |
 | Metadata language | `ro-RO` |
 | Metadata fallback language | `en-US` |
 | Artwork cache | `data/artwork` |

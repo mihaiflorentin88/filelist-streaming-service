@@ -9,15 +9,18 @@ This file records constraints and invariants that must survive context resets an
 - Raspberry Pi integration testing and deployment must use an explicitly supplied `PI_HOST`; never commit a private username, hostname, IP address, SSH key, provider credential, Tizen certificate, database, log, media file, or generated binary.
 - `deploy/bootstrap-server.sh` is for a newly cloned Linux server only. Never run it on a workstation. Routine `make deploy-pi` installs no packages.
 - `.env` is a local diagnostic aid only. The daemon must remain browser-configured and persist settings atomically in `data/settings.json` with restrictive permissions.
+- Routine deployment stores only non-secret prompt defaults in ignored `deploy/.deploy.local.conf`. Every deployment creates a new protected qBittorrent config backup and may merge only the four keys in the sanitized streaming template; never copy a live config or backup into Git.
 
 ## Data and provider invariants
 
 - The observed tracker cache is append-only: upsert newer values, but never invalidate or remove older cached releases during refresh or rebuild.
 - Normal browsing, library pages, categories, sorting, filters, and pagination read the local cache. FileList is contacted only by an explicit search or a scheduled/manual event job.
+- Preparing a source must reuse an exact managed release/file before opening torrent metadata. Household favorites prefer a still-managed playback/download source so provider limits cannot block local media.
+- Completed playback must not depend on qBittorrent. Incomplete playback must keep selected files at normal priority, reapply sequential/first-last scheduling once, and resolve qBittorrent's effective `temp_path` beneath the configured root between read-ahead chunks.
 - A title-expansion request is suppressed when the title was refreshed less than one hour ago. FileList requests remain serialized even when the global background worker limit is higher.
 - Metadata is queued only for visible/searched media and patches clients through SSE. A parsed movie/series kind is a preference during TMDB lookup, not authority; the Find API may return the valid record in the other bucket.
 - SubDL has a limited daily quota. Automatic playback searches only torrent-contained and server-probed embedded subtitles. Online provider search requires the explicit **Find online subtitles** action. Prepared subtitle assets are persisted and reused.
-- Never claim progressive playback is fixed until a browser and the physical TV have played a valid HTTP 206 response while qBittorrent reports less than 100% completion.
+- Server-side progressive playback is confirmed only by a below-100% HTTP 206 plus media parsing. Keep browser and physical-TV playback status separate until each client is observed below 100%.
 
 ## TV interaction invariants
 
@@ -37,7 +40,7 @@ This file records constraints and invariants that must survive context resets an
 
 ## Next verification/implementation checkpoints
 
-1. Install the new `0.2.0` WGT and confirm contained/embedded server WebVTT subtitles render on the physical TV. Confirm native AVPlay tracks remain selectable only as fallback.
+1. Install the new `0.2.2` WGT and confirm progressive playback below 100%, completed playback during FileList/qBittorrent failure, unified deletion, data parity, and contained/embedded server WebVTT subtitles on the physical TV.
 2. On the TV Jobs detail page, D-pad to several log entries, press OK repeatedly to expand/collapse them, inspect long context, load older logs, and return without losing focus.
 3. Deploy the matcher fix, retry representative TMDB failures, and confirm valid cross-kind results complete while genuine people/episode/unlisted IDs retain informative result-count errors.
 4. Continue the remaining items in `KNOWN_ISSUES.md` and the implementation plan, preserving confirmed UX and data invariants above.

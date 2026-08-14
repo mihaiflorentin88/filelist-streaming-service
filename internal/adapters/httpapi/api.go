@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
+	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
@@ -58,7 +59,11 @@ func New(service *application.Service, settings *config.Store, log *slog.Logger,
 	mux.HandleFunc("GET /api/v1/catalog/facets", a.catalogFacets)
 	mux.HandleFunc("GET /api/v1/artwork/{titleId}/{kind}", a.artwork)
 	mux.HandleFunc("POST /api/v1/releases/{id}/prepare", a.prepare)
+	mux.HandleFunc("POST /api/v1/releases/{id}/prepare-season", a.prepareSeason)
 	mux.HandleFunc("GET /api/v1/downloads", a.downloads)
+	mux.HandleFunc("GET /api/v1/downloads/{id}/media-info", a.mediaInfo)
+	mux.HandleFunc("DELETE /api/v1/downloads/{id}", a.deleteDownload)
+	mux.HandleFunc("POST /api/v1/downloads/{id}/next-episode", a.nextEpisode)
 	mux.HandleFunc("GET /api/v1/jobs", a.jobs)
 	mux.HandleFunc("GET /api/v1/jobs/{id}", a.job)
 	mux.HandleFunc("GET /api/v1/jobs/{id}/logs", a.jobLogs)
@@ -76,15 +81,18 @@ func New(service *application.Service, settings *config.Store, log *slog.Logger,
 	mux.HandleFunc("DELETE /api/v1/favorites/{releaseId}", a.favorite)
 	mux.HandleFunc("GET /api/v1/playback/{sourceId}", a.getPlayback)
 	mux.HandleFunc("PUT /api/v1/playback/{sourceId}", a.putPlayback)
+	mux.HandleFunc("GET /api/v1/playback/{sourceId}/preferences", a.getPlaybackPreferences)
+	mux.HandleFunc("PUT /api/v1/playback/{sourceId}/preferences", a.putPlaybackPreferences)
 	mux.HandleFunc("PUT /api/v1/playback/{sourceId}/watched", a.putWatched)
 	mux.HandleFunc("GET /api/v1/streams/{id}", a.stream)
 	mux.HandleFunc("HEAD /api/v1/streams/{id}", a.stream)
+	mux.HandleFunc("GET /api/v1/streams/{id}/browser", a.browserStream)
 	sub, _ := fs.Sub(static, "static")
 	mux.Handle("/", http.FileServer(http.FS(sub)))
 	return recoverer(log, access(log, trusted(settings, mux)))
 }
 func (a *API) info(w http.ResponseWriter, r *http.Request) {
-	write(w, 200, map[string]any{"name": "FileList Streaming", "version": a.version, "apiVersion": "v1", "configured": configured(a.settings.Get()), "capabilities": []string{"catalog", "canonicalCatalog", "metadata", "artworkProxy", "qbittorrent", "rangeStreaming", "settingsFile", "householdState", "canonicalFavorites", "persistentJobs", "subtitles"}})
+	write(w, 200, map[string]any{"name": "FileList Streaming", "version": a.version, "apiVersion": "v1", "configured": configured(a.settings.Get()), "capabilities": []string{"catalog", "canonicalCatalog", "metadata", "artworkProxy", "qbittorrent", "rangeStreaming", "browserAudioSelection", "mediaInfo", "settingsFile", "householdState", "canonicalFavorites", "persistentJobs", "subtitles"}})
 }
 
 func (a *API) clientDiagnostic(w http.ResponseWriter, r *http.Request) {
@@ -171,9 +179,10 @@ func (a *API) settingsSchema(w http.ResponseWriter, r *http.Request) {
 		{Key: "subtitleCachePath", Label: "Subtitle cache path", Help: "Server directory containing prepared WebVTT and SAMI subtitle files."},
 		{Key: "subtitleCacheMaxBytes", Label: "Subtitle cache maximum bytes", Help: "Maximum disk space used by prepared and downloaded subtitle files."},
 		{Key: "ffprobePath", Label: "ffprobe path", Help: "Absolute path to ffprobe. It reads embedded subtitle language, title, codec and disposition metadata without transcoding.", Obtain: "Install the FFmpeg package on the server; ffprobe is normally /usr/bin/ffprobe."},
-		{Key: "ffmpegPath", Label: "FFmpeg path", Help: "Absolute path to FFmpeg. It extracts only the selected embedded subtitle stream to WebVTT; video and audio are never transcoded.", Obtain: "Install the FFmpeg package on the server; FFmpeg is normally /usr/bin/ffmpeg."},
+		{Key: "ffmpegPath", Label: "FFmpeg path", Help: "Absolute path to FFmpeg. It extracts embedded subtitles and provides desktop browsers with AAC audio compatibility while copying video unchanged. Tizen remains direct-play.", Obtain: "Install the FFmpeg package on the server; FFmpeg is normally /usr/bin/ffmpeg."},
 		{Key: "preferredSubtitleLanguage", Label: "Preferred subtitle language", Help: "ISO language code selected first for automatic subtitles, for example ro.", TVVisible: true},
 		{Key: "fallbackSubtitleLanguage", Label: "Fallback subtitle language", Help: "Language used when no suitable preferred-language subtitle exists.", TVVisible: true},
+		{Key: "preferredAudioLanguage", Label: "Preferred audio language", Help: "ISO language code selected first when a media file contains multiple audio tracks, for example en.", TVVisible: true},
 		{Key: "initialBufferBytes", Label: "Initial buffer bytes", Help: "Amount that must be readable before playback begins. Larger values improve reliability but delay startup.", TVVisible: true},
 		{Key: "readAheadBytes", Label: "Read-ahead bytes", Help: "Range prioritized ahead of the current playback position.", TVVisible: true},
 		{Key: "pieceWaitTimeoutSeconds", Label: "Piece timeout seconds", Help: "Maximum wait for qBittorrent pieces before a stream request fails.", TVVisible: true},
@@ -431,6 +440,29 @@ func (a *API) prepare(w http.ResponseWriter, r *http.Request) {
 	}
 	write(w, 202, downloadDTO(d))
 }
+func (a *API) prepareSeason(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Season int `json:"season"`
+	}
+	if err := decode(r, &body); err != nil {
+		problem(w, http.StatusBadRequest, err)
+		return
+	}
+	if body.Season <= 0 {
+		problem(w, http.StatusBadRequest, fmt.Errorf("season must be greater than zero"))
+		return
+	}
+	items, err := a.service.PrepareSeason(r.Context(), r.PathValue("id"), body.Season)
+	if err != nil {
+		problem(w, http.StatusBadGateway, err)
+		return
+	}
+	out := make([]any, len(items))
+	for i, item := range items {
+		out[i] = downloadDTO(item)
+	}
+	write(w, http.StatusAccepted, map[string]any{"items": out, "nextCursor": nil, "total": len(out)})
+}
 func (a *API) downloads(w http.ResponseWriter, r *http.Request) {
 	items, err := a.service.Downloads(r.Context())
 	if err != nil {
@@ -442,6 +474,18 @@ func (a *API) downloads(w http.ResponseWriter, r *http.Request) {
 		out[i] = downloadDTO(x)
 	}
 	write(w, 200, map[string]any{"items": out, "nextCursor": nil, "total": len(out)})
+}
+func (a *API) nextEpisode(w http.ResponseWriter, r *http.Request) {
+	next, err := a.service.NextEpisode(r.Context(), r.PathValue("id"))
+	if err != nil {
+		problem(w, http.StatusConflict, err)
+		return
+	}
+	if next == nil {
+		write(w, http.StatusOK, nil)
+		return
+	}
+	write(w, http.StatusAccepted, downloadDTO(*next))
 }
 func (a *API) jobs(w http.ResponseWriter, r *http.Request) {
 	offset, decodeErr := sqlite.DecodeCursor(r.URL.Query().Get("cursor"))
@@ -553,11 +597,23 @@ func (a *API) events(w http.ResponseWriter, r *http.Request) {
 }
 func (a *API) manage(w http.ResponseWriter, r *http.Request) {
 	deleteFiles := r.URL.Query().Get("deleteFiles") == "true"
+	if r.PathValue("action") == "remove" && !deleteFiles {
+		problem(w, http.StatusBadRequest, fmt.Errorf("torrent removal must also delete downloaded files; use DELETE /downloads/{id}"))
+		return
+	}
 	if err := a.service.Manage(r.Context(), r.PathValue("id"), r.PathValue("action"), deleteFiles); err != nil {
 		problem(w, 409, err)
 		return
 	}
 	w.WriteHeader(204)
+}
+
+func (a *API) deleteDownload(w http.ResponseWriter, r *http.Request) {
+	if err := a.service.Manage(r.Context(), r.PathValue("id"), "remove", true); err != nil {
+		problem(w, http.StatusConflict, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (a *API) searchSubtitles(w http.ResponseWriter, r *http.Request) {
@@ -658,14 +714,21 @@ func (a *API) library(w http.ResponseWriter, r *http.Request) {
 		bySource := map[string]domain.HouseholdItem{}
 		for _, group := range [][]domain.HouseholdItem{state.Favorites, state.ContinueWatching, state.Watched, state.Recent} {
 			for _, item := range group {
-				key := item.SourceID
-				if key == "" && item.Catalog != nil {
-					key = "title:" + item.Catalog.ID
+				titleID := item.TitleID
+				if titleID == "" && item.Catalog != nil {
+					titleID = item.Catalog.ID
 				}
-				if key == "" {
+				key := ""
+				if titleID != "" {
+					key = "title:" + titleID + "|category:" + strings.ToLower(item.Release.Category)
+				} else if item.SourceID != "" {
+					key = "source:" + item.SourceID
+				} else {
 					key = "release:" + item.Release.ID
 				}
-				bySource[key] = item
+				if current, exists := bySource[key]; !exists || item.UpdatedAt.After(current.UpdatedAt) {
+					bySource[key] = item
+				}
 			}
 		}
 		selected := strings.TrimSpace(r.URL.Query().Get("category"))
@@ -750,6 +813,27 @@ func (a *API) putPlayback(w http.ResponseWriter, r *http.Request) {
 	}
 	write(w, 200, p)
 }
+func (a *API) getPlaybackPreferences(w http.ResponseWriter, r *http.Request) {
+	p, err := a.service.PlaybackPreferences(r.Context(), r.PathValue("sourceId"))
+	if err != nil {
+		problem(w, http.StatusInternalServerError, err)
+		return
+	}
+	write(w, http.StatusOK, p)
+}
+func (a *API) putPlaybackPreferences(w http.ResponseWriter, r *http.Request) {
+	var input domain.PlaybackPreferences
+	if err := decode(r, &input); err != nil {
+		problem(w, http.StatusBadRequest, err)
+		return
+	}
+	p, err := a.service.UpdatePlaybackPreferences(r.Context(), r.PathValue("sourceId"), input)
+	if err != nil {
+		problem(w, http.StatusConflict, err)
+		return
+	}
+	write(w, http.StatusOK, p)
+}
 func (a *API) putWatched(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Watched bool `json:"watched"`
@@ -764,6 +848,23 @@ func (a *API) putWatched(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	write(w, 200, p)
+}
+func (a *API) mediaInfo(w http.ResponseWriter, r *http.Request) {
+	info, complete, err := a.service.MediaInfo(r.Context(), r.PathValue("id"))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			problem(w, http.StatusNotFound, err)
+			return
+		}
+		if !complete {
+			w.Header().Set("Retry-After", "2")
+			problem(w, http.StatusServiceUnavailable, err)
+			return
+		}
+		problem(w, http.StatusUnprocessableEntity, fmt.Errorf("read original media details: %w", err))
+		return
+	}
+	write(w, http.StatusOK, info)
 }
 func (a *API) stream(w http.ResponseWriter, r *http.Request) {
 	d, err := a.service.Acquire(r.Context(), r.PathValue("id"))
@@ -787,10 +888,13 @@ func (a *API) stream(w http.ResponseWriter, r *http.Request) {
 		problem(w, 409, err)
 		return
 	}
+	currentPath := d.AbsolutePath
 	if r.Method != http.MethodHead {
 		waitStarted := time.Now()
-		if err := a.service.WaitReadableRange(r.Context(), d, start, firstChunk); err != nil {
+		currentPath, err = a.service.ReadableRangePath(r.Context(), d, start, firstChunk)
+		if err != nil {
 			a.log.Warn("stream preflight failed", "sourceId", d.ID, "rangeStart", start, "rangeBytes", firstChunk, "waitMs", time.Since(waitStarted).Milliseconds(), "error", err)
+			w.Header().Set("Retry-After", "2")
 			problem(w, 503, err)
 			return
 		}
@@ -820,12 +924,13 @@ func (a *API) stream(w http.ResponseWriter, r *http.Request) {
 			chunk = remaining
 		}
 		if !first {
-			if err := a.service.WaitReadableRange(r.Context(), d, position, chunk); err != nil {
+			currentPath, err = a.service.ReadableRangePath(r.Context(), d, position, chunk)
+			if err != nil {
 				a.log.Warn("stream range wait stopped", "sourceId", d.ID, "rangeStart", position, "rangeBytes", chunk, "error", err)
 				return
 			}
 		}
-		if err := copyRange(r.Context(), w, d.AbsolutePath, position, chunk); err != nil {
+		if err := copyRange(r.Context(), w, currentPath, position, chunk); err != nil {
 			if !errors.Is(err, context.Canceled) {
 				a.log.Warn("stream read stopped", "sourceId", d.ID, "error", err)
 			}
@@ -837,6 +942,116 @@ func (a *API) stream(w http.ResponseWriter, r *http.Request) {
 			f.Flush()
 		}
 	}
+}
+
+// browserStream preserves the original video while converting browser-hostile
+// audio (for example E-AC-3 in an MKV release) to AAC in a fragmented MP4.
+// FFmpeg reads through the ordinary range-aware stream, so the same local vs.
+// progressive playback strategy remains authoritative while a torrent grows.
+func (a *API) browserStream(w http.ResponseWriter, r *http.Request) {
+	settings := a.settings.Get()
+	_, port, err := net.SplitHostPort(settings.ListenAddress)
+	if err != nil || port == "" {
+		problem(w, http.StatusInternalServerError, fmt.Errorf("invalid listen address for browser audio compatibility"))
+		return
+	}
+	info, complete, err := a.service.MediaInfo(r.Context(), r.PathValue("id"))
+	if err != nil {
+		if !complete {
+			w.Header().Set("Retry-After", "2")
+			problem(w, http.StatusServiceUnavailable, err)
+		} else {
+			problem(w, http.StatusUnprocessableEntity, err)
+		}
+		return
+	}
+	input := "http://127.0.0.1:" + port + "/api/v1/streams/" + r.PathValue("id")
+	args, _, err := browserStreamArgs(input, info, r.URL.Query().Get("audioTrack"), r.URL.Query().Get("startMs"))
+	if err != nil {
+		problem(w, http.StatusBadRequest, err)
+		return
+	}
+	cmd := exec.CommandContext(r.Context(), settings.FFmpegPath, args...)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		problem(w, http.StatusInternalServerError, err)
+		return
+	}
+	cmd.Stderr = io.Discard
+	if err = cmd.Start(); err != nil {
+		problem(w, http.StatusServiceUnavailable, fmt.Errorf("start browser audio compatibility stream: %w", err))
+		return
+	}
+	w.Header().Set("Content-Type", "video/mp4")
+	w.Header().Set("Content-Disposition", "inline")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, copyErr := io.Copy(w, stdout)
+	waitErr := cmd.Wait()
+	if copyErr != nil && !errors.Is(copyErr, context.Canceled) {
+		a.log.Warn("browser compatibility stream stopped", "sourceId", r.PathValue("id"), "error", copyErr)
+	} else if waitErr != nil && r.Context().Err() == nil {
+		a.log.Warn("browser compatibility transcode stopped", "sourceId", r.PathValue("id"), "error", waitErr)
+	}
+}
+
+func browserStreamArgs(input string, info domain.MediaInfo, requestedTrack, requestedStart string) ([]string, domain.MediaAudioTrack, error) {
+	if len(info.AudioTracks) == 0 {
+		return nil, domain.MediaAudioTrack{}, fmt.Errorf("the original media has no audio track")
+	}
+	track := info.AudioTracks[0]
+	for _, candidate := range info.AudioTracks {
+		if candidate.Default {
+			track = candidate
+			break
+		}
+	}
+	for _, candidate := range info.AudioTracks {
+		language := strings.ToLower(candidate.Language)
+		if strings.HasPrefix(language, "en") || strings.HasPrefix(language, "eng") {
+			track = candidate
+			break
+		}
+	}
+	if requestedTrack != "" {
+		index, err := strconv.Atoi(requestedTrack)
+		if err != nil || index < 0 {
+			return nil, domain.MediaAudioTrack{}, fmt.Errorf("audioTrack must be an original audio stream index")
+		}
+		found := false
+		for _, candidate := range info.AudioTracks {
+			if candidate.Index == index {
+				track, found = candidate, true
+				break
+			}
+		}
+		if !found {
+			return nil, domain.MediaAudioTrack{}, fmt.Errorf("audioTrack %d is not an audio stream in the original media", index)
+		}
+	}
+	startMS := int64(0)
+	if requestedStart != "" {
+		value, err := strconv.ParseInt(requestedStart, 10, 64)
+		if err != nil || value < 0 || info.DurationMS <= 0 || value >= info.DurationMS {
+			return nil, domain.MediaAudioTrack{}, fmt.Errorf("startMs must be between 0 and the original duration")
+		}
+		startMS = value
+	}
+	args := []string{"-nostdin", "-hide_banner", "-loglevel", "error"}
+	if startMS > 0 {
+		args = append(args, "-ss", strconv.FormatFloat(float64(startMS)/1000, 'f', 3, 64))
+	}
+	args = append(args,
+		"-i", input,
+		"-map", "0:v:0", "-map", "0:"+strconv.Itoa(track.Index),
+		// Raspberry Pi safety invariant: video is always copied. Only the selected
+		// audio stream is transcoded for browser compatibility.
+		"-c:v", "copy", "-c:a", "aac", "-ac", "2", "-b:a", "192k",
+		"-map_metadata", "-1", "-avoid_negative_ts", "make_zero",
+		"-movflags", "frag_keyframe+empty_moov+default_base_moof",
+		"-f", "mp4", "pipe:1",
+	)
+	return args, track, nil
 }
 func copyRange(ctx context.Context, w io.Writer, path string, offset, count int64) error {
 	f, err := os.Open(path)
@@ -873,7 +1088,12 @@ func copyRange(ctx context.Context, w io.Writer, path string, offset, count int6
 	return nil
 }
 func downloadDTO(d domain.Download) map[string]any {
-	return map[string]any{"id": d.ID, "releaseId": d.ReleaseID, "titleId": d.TitleID, "displayTitle": d.DisplayTitle, "releaseName": d.ReleaseName, "category": d.Category, "releaseSizeBytes": d.ReleaseSizeBytes, "trackerSeeders": d.TrackerSeeders, "rating": d.Rating, "ratingVotes": d.RatingVotes, "ratingProvider": d.RatingProvider, "parsed": d.Parsed, "engineId": d.EngineID, "fileIndex": d.FileIndex, "filePath": d.FilePath, "mimeType": contentType(d.FilePath), "sizeBytes": d.SizeBytes, "state": d.State, "progress": d.Progress, "downloadedBytes": d.DownloadedBytes, "speedBytesPerSecond": d.SpeedBytesPerSecond, "etaSeconds": d.ETASeconds, "peers": d.Peers, "seeds": d.Seeds, "bufferedBytes": d.BufferedBytes, "leased": d.Leased, "error": d.Error, "createdAt": d.CreatedAt, "updatedAt": d.UpdatedAt, "streamUrl": "/api/v1/streams/" + d.ID}
+	playbackMode := "progressive"
+	state := strings.ToLower(d.State)
+	if d.Progress >= 1 || strings.HasSuffix(state, "up") || state == "completed" {
+		playbackMode = "local"
+	}
+	return map[string]any{"id": d.ID, "releaseId": d.ReleaseID, "titleId": d.TitleID, "displayTitle": d.DisplayTitle, "releaseName": d.ReleaseName, "category": d.Category, "releaseSizeBytes": d.ReleaseSizeBytes, "trackerSeeders": d.TrackerSeeders, "rating": d.Rating, "ratingVotes": d.RatingVotes, "ratingProvider": d.RatingProvider, "parsed": d.Parsed, "engineId": d.EngineID, "fileIndex": d.FileIndex, "filePath": d.FilePath, "mimeType": contentType(d.FilePath), "sizeBytes": d.SizeBytes, "state": d.State, "progress": d.Progress, "playbackMode": playbackMode, "downloadedBytes": d.DownloadedBytes, "speedBytesPerSecond": d.SpeedBytesPerSecond, "etaSeconds": d.ETASeconds, "peers": d.Peers, "seeds": d.Seeds, "bufferedBytes": d.BufferedBytes, "leased": d.Leased, "error": d.Error, "createdAt": d.CreatedAt, "updatedAt": d.UpdatedAt, "streamUrl": "/api/v1/streams/" + d.ID, "browserStreamUrl": "/api/v1/streams/" + d.ID + "/browser"}
 }
 func parseRange(h string, length int64) (int64, int64, bool, bool) {
 	if length <= 0 {

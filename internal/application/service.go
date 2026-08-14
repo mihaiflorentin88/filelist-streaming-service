@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -39,6 +40,13 @@ type Service struct {
 	trackerSlots     chan struct{}
 	pendingMu        sync.Mutex
 	pendingMetadata  map[string]bool
+	mediaInfoMu      sync.Mutex
+	mediaInfoCache   map[string]cachedMediaInfo
+}
+
+type cachedMediaInfo struct {
+	identity string
+	info     domain.MediaInfo
 }
 
 type metadataRequest struct {
@@ -55,7 +63,7 @@ func NewService(c CatalogSource, e TorrentEngine, r Repository, s *config.Store,
 	if limit < 1 {
 		limit = 10
 	}
-	service := &Service{catalog: c, engine: e, repo: r, settings: s, subtitles: subtitles, eventSubscribers: map[chan domain.Event]struct{}{}, refreshQueue: make(chan titleRefreshRequest, 256), searchQueue: make(chan trackerSearchRequest, 256), jobSlots: make(chan struct{}, limit), trackerSlots: make(chan struct{}, 1), pendingMetadata: map[string]bool{}}
+	service := &Service{catalog: c, engine: e, repo: r, settings: s, subtitles: subtitles, eventSubscribers: map[chan domain.Event]struct{}{}, refreshQueue: make(chan titleRefreshRequest, 256), searchQueue: make(chan trackerSearchRequest, 256), jobSlots: make(chan struct{}, limit), trackerSlots: make(chan struct{}, 1), pendingMetadata: map[string]bool{}, mediaInfoCache: map[string]cachedMediaInfo{}}
 	go service.titleRefreshWorker()
 	go service.trackerSearchWorker()
 	return service
@@ -791,6 +799,17 @@ func (s *Service) Prepare(ctx context.Context, releaseID string, fileIndex int) 
 	if err != nil {
 		return domain.Download{}, err
 	}
+	if existing, existingErr := s.repo.FindDownload(ctx, releaseID, fileIndex); existingErr == nil {
+		s.enrichDownload(ctx, &existing, release)
+		return s.prepareManagedDownload(ctx, existing)
+	} else if !errors.Is(existingErr, sql.ErrNoRows) {
+		return domain.Download{}, existingErr
+	}
+	if existing, reuseErr := s.prepareExistingTorrentFile(ctx, release, fileIndex); reuseErr == nil {
+		return existing, nil
+	} else if !errors.Is(reuseErr, sql.ErrNoRows) {
+		return domain.Download{}, reuseErr
+	}
 	torrent, err := s.catalog.OpenTorrent(ctx, release.ID)
 	if err != nil {
 		return domain.Download{}, err
@@ -834,7 +853,8 @@ func (s *Service) Prepare(ctx context.Context, releaseID string, fileIndex int) 
 		return domain.Download{}, fmt.Errorf("selected file is not playable")
 	}
 	fileIndex = selected.Index
-	if err = s.engine.PrepareFile(ctx, hash, fileIndex, subs); err != nil {
+	indices := s.managedTorrentIndices(ctx, "qb:"+hash, files, fileIndex)
+	if err = s.engine.PrepareFiles(ctx, hash, indices, subs); err != nil {
 		return domain.Download{}, err
 	}
 	status, err := s.engine.Status(ctx, hash)
@@ -847,7 +867,8 @@ func (s *Service) Prepare(ctx context.Context, releaseID string, fileIndex int) 
 	}
 	id := sourceID(releaseID, selected.Path)
 	now := time.Now().UTC()
-	d := domain.Download{ID: id, ReleaseID: releaseID, EngineID: "qb:" + hash, FileIndex: fileIndex, FilePath: selected.Path, AbsolutePath: abs, SizeBytes: selected.SizeBytes, FileOffset: selected.Offset, PieceSize: status.PieceSize, State: status.State, Progress: status.Progress, DownloadedBytes: status.DownloadedBytes, SpeedBytesPerSecond: status.SpeedBytesPerSecond, ETASeconds: status.ETASeconds, Peers: status.Peers, Seeds: status.Seeds, Error: trackerError(status), CreatedAt: now, UpdatedAt: now}
+	d := domain.Download{ID: id, ReleaseID: releaseID, EngineID: "qb:" + hash, FileIndex: fileIndex, FilePath: selected.Path, AbsolutePath: abs, SizeBytes: selected.SizeBytes, FileOffset: selected.Offset, CreatedAt: now, UpdatedAt: now}
+	applyDownloadStatus(&d, status, selected)
 	if old, e := s.repo.GetDownload(ctx, id); e == nil {
 		d.CreatedAt = old.CreatedAt
 	}
@@ -857,11 +878,346 @@ func (s *Service) Prepare(ctx context.Context, releaseID string, fileIndex int) 
 	s.enrichDownload(ctx, &d, release)
 	return d, nil
 }
+
+func (s *Service) prepareExistingTorrentFile(ctx context.Context, release domain.TorrentRelease, fileIndex int) (domain.Download, error) {
+	downloads, err := s.repo.ListDownloads(ctx)
+	if err != nil {
+		return domain.Download{}, err
+	}
+	for _, managed := range downloads {
+		if managed.ReleaseID != release.ID {
+			continue
+		}
+		hash, ok := engineHash(managed.EngineID)
+		if !ok {
+			continue
+		}
+		files, filesErr := s.engine.Files(ctx, hash)
+		if filesErr != nil {
+			return domain.Download{}, filesErr
+		}
+		var selected *domain.TorrentFile
+		for i := range files {
+			if files[i].Index == fileIndex {
+				selected = &files[i]
+			}
+			if fileIndex < 0 && files[i].Playable && (selected == nil || files[i].SizeBytes > selected.SizeBytes) {
+				selected = &files[i]
+			}
+		}
+		if selected == nil || !selected.Playable {
+			return domain.Download{}, fmt.Errorf("selected file is not playable")
+		}
+		status, statusErr := s.engine.Status(ctx, hash)
+		if statusErr != nil {
+			return domain.Download{}, statusErr
+		}
+		abs, pathErr := safeQBPath(s.settings.Get().DownloadRoot, status.SavePath, selected.Path)
+		if pathErr != nil {
+			return domain.Download{}, pathErr
+		}
+		now := time.Now().UTC()
+		download := domain.Download{ID: sourceID(release.ID, selected.Path), ReleaseID: release.ID, EngineID: managed.EngineID, FileIndex: selected.Index, FilePath: selected.Path, AbsolutePath: abs, SizeBytes: selected.SizeBytes, FileOffset: selected.Offset, CreatedAt: now, UpdatedAt: now}
+		applyDownloadStatus(&download, status, selected)
+		if old, oldErr := s.repo.GetDownload(ctx, download.ID); oldErr == nil {
+			download.CreatedAt = old.CreatedAt
+		}
+		if saveErr := s.repo.SaveDownload(ctx, download); saveErr != nil {
+			return domain.Download{}, saveErr
+		}
+		s.enrichDownload(ctx, &download, release)
+		return s.prepareManagedDownload(ctx, download)
+	}
+	return domain.Download{}, sql.ErrNoRows
+}
+
+func (s *Service) NextEpisode(ctx context.Context, sourceID string) (*domain.Download, error) {
+	current, err := s.repo.GetDownload(ctx, sourceID)
+	if err != nil {
+		return nil, err
+	}
+	release, err := s.repo.GetRelease(ctx, current.ReleaseID)
+	if err != nil {
+		return nil, err
+	}
+	parsed := domain.ParseRelease(release)
+	if parsed.Kind != domain.MediaSeries {
+		return nil, nil
+	}
+	detail, err := s.CatalogDetail(ctx, domain.CatalogTitleID(release, parsed))
+	if err != nil {
+		return nil, err
+	}
+	type episodeKey struct{ season, episode int }
+	currentKey := episodeKey{parsed.SeasonStart, parsed.EpisodeStart}
+	for _, season := range detail.Seasons {
+		for _, episode := range season.Episodes {
+			for _, source := range episode.Sources {
+				if source.Release.ID == current.ReleaseID && ((source.FileIndex != nil && *source.FileIndex == current.FileIndex) || (source.FileIndex == nil && release.FileCount <= 1)) {
+					currentKey = episodeKey{season.Number, episode.Number}
+				}
+			}
+		}
+	}
+	if currentKey.episode == 0 {
+		return nil, nil
+	}
+	var candidates []domain.CatalogSource
+	nextKey := episodeKey{}
+	for _, season := range detail.Seasons {
+		for _, episode := range season.Episodes {
+			key := episodeKey{season.Number, episode.Number}
+			if key.season < currentKey.season || (key.season == currentKey.season && key.episode <= currentKey.episode) {
+				continue
+			}
+			if nextKey.episode == 0 || key.season < nextKey.season || (key.season == nextKey.season && key.episode < nextKey.episode) {
+				nextKey, candidates = key, append([]domain.CatalogSource(nil), episode.Sources...)
+			}
+		}
+	}
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		iSame, jSame := candidates[i].Release.ID == current.ReleaseID, candidates[j].Release.ID == current.ReleaseID
+		if iSame != jSame {
+			return iSame
+		}
+		return candidates[i].Release.Seeders > candidates[j].Release.Seeders
+	})
+	fileIndex := -1
+	if candidates[0].FileIndex != nil {
+		fileIndex = *candidates[0].FileIndex
+	}
+	next, err := s.Prepare(ctx, candidates[0].Release.ID, fileIndex)
+	if err != nil {
+		return nil, err
+	}
+	return &next, nil
+}
+
+func (s *Service) PrepareSeason(ctx context.Context, releaseID string, season int) ([]domain.Download, error) {
+	key := releaseID + ":season:" + fmt.Sprint(season)
+	lockAny, _ := s.locks.LoadOrStore(key, &sync.Mutex{})
+	lock := lockAny.(*sync.Mutex)
+	lock.Lock()
+	defer lock.Unlock()
+
+	release, err := s.repo.GetRelease(ctx, releaseID)
+	if err != nil {
+		return nil, err
+	}
+	parsed := domain.ParseRelease(release)
+	if parsed.Kind != domain.MediaSeries || release.FileCount <= 1 {
+		return nil, fmt.Errorf("release is not a multi-file series pack")
+	}
+	if season <= 0 {
+		season = parsed.SeasonStart
+	}
+	if season <= 0 {
+		season = 1
+	}
+
+	engineID, hash := "", ""
+	if managed, listErr := s.repo.ListDownloads(ctx); listErr == nil {
+		for _, download := range managed {
+			if download.ReleaseID == releaseID {
+				if existingHash, ok := engineHash(download.EngineID); ok {
+					engineID, hash = download.EngineID, existingHash
+					break
+				}
+			}
+		}
+	}
+	settings := s.settings.Get()
+	if hash == "" {
+		torrent, openErr := s.catalog.OpenTorrent(ctx, release.ID)
+		if openErr != nil {
+			return nil, openErr
+		}
+		defer torrent.Close()
+		hash, err = s.engine.Add(ctx, torrent, settings.DownloadRoot)
+		if err != nil {
+			return nil, err
+		}
+		engineID = "qb:" + hash
+	}
+
+	var files []domain.TorrentFile
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		files, err = s.engine.Files(ctx, hash)
+		if err == nil && len(files) > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("qBittorrent metadata unavailable: %w", err)
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+
+	base := domain.CatalogSource{Release: release, Parsed: parsed}
+	selected := make([]domain.TorrentFile, 0)
+	subs := make([]int, 0)
+	for _, file := range files {
+		if subtitle(file.Path) {
+			subs = append(subs, file.Index)
+		}
+		if !file.Playable {
+			continue
+		}
+		virtual, ok := episodeSource(base, file)
+		if ok && virtual.Parsed.SeasonStart == season {
+			selected = append(selected, file)
+		}
+	}
+	if len(selected) == 0 && (parsed.SeasonStart == 0 || (parsed.SeasonStart <= season && season <= max(parsed.SeasonStart, parsed.SeasonEnd))) {
+		for _, file := range files {
+			if file.Playable {
+				selected = append(selected, file)
+			}
+		}
+	}
+	if len(selected) == 0 {
+		return nil, fmt.Errorf("season %d has no playable episode files", season)
+	}
+	extra := make([]int, 0, len(selected))
+	for _, file := range selected {
+		extra = append(extra, file.Index)
+	}
+	indices := s.managedTorrentIndices(ctx, engineID, files, extra...)
+	if err = s.engine.PrepareFiles(ctx, hash, indices, subs); err != nil {
+		return nil, err
+	}
+	status, err := s.engine.Status(ctx, hash)
+	if err != nil {
+		return nil, err
+	}
+	manifest := domain.TorrentManifest{ReleaseID: releaseID, Files: files, FetchedAt: time.Now().UTC()}
+	_ = s.repo.SaveTorrentManifest(ctx, manifest)
+	now := time.Now().UTC()
+	out := make([]domain.Download, 0, len(selected))
+	for i := range selected {
+		file := &selected[i]
+		abs, pathErr := safeQBPath(settings.DownloadRoot, status.SavePath, file.Path)
+		if pathErr != nil {
+			return nil, pathErr
+		}
+		download := domain.Download{ID: sourceID(releaseID, file.Path), ReleaseID: releaseID, EngineID: engineID, FileIndex: file.Index, FilePath: file.Path, AbsolutePath: abs, SizeBytes: file.SizeBytes, FileOffset: file.Offset, CreatedAt: now, UpdatedAt: now}
+		applyDownloadStatus(&download, status, file)
+		if old, oldErr := s.repo.GetDownload(ctx, download.ID); oldErr == nil {
+			download.CreatedAt = old.CreatedAt
+		}
+		if saveErr := s.repo.SaveDownload(ctx, download); saveErr != nil {
+			return nil, saveErr
+		}
+		s.enrichDownload(ctx, &download, release)
+		out = append(out, download)
+	}
+	return out, nil
+}
+
+func (s *Service) managedTorrentIndices(ctx context.Context, engineID string, files []domain.TorrentFile, extra ...int) []int {
+	available := map[int]bool{}
+	for _, file := range files {
+		if file.Playable {
+			available[file.Index] = true
+		}
+	}
+	wanted := map[int]bool{}
+	for _, index := range extra {
+		if available[index] {
+			wanted[index] = true
+		}
+	}
+	if downloads, err := s.repo.ListDownloads(ctx); err == nil {
+		for _, download := range downloads {
+			if download.EngineID == engineID && available[download.FileIndex] {
+				wanted[download.FileIndex] = true
+			}
+		}
+	}
+	indices := make([]int, 0, len(wanted))
+	for index := range wanted {
+		indices = append(indices, index)
+	}
+	sort.Ints(indices)
+	return indices
+}
+
+func (s *Service) prepareManagedDownload(ctx context.Context, d domain.Download) (domain.Download, error) {
+	if completedLocalFile(d) {
+		return d, nil
+	}
+	hash, ok := engineHash(d.EngineID)
+	if !ok {
+		return d, fmt.Errorf("unsupported engine route")
+	}
+	lockAny, _ := s.locks.LoadOrStore("stream:"+hash, &sync.Mutex{})
+	lock := lockAny.(*sync.Mutex)
+	lock.Lock()
+	defer lock.Unlock()
+
+	status, err := s.engine.Status(ctx, hash)
+	if err != nil {
+		// A completed local file remains playable even when qBittorrent is down.
+		if completedLocalFile(d) {
+			return d, nil
+		}
+		return d, err
+	}
+	if strings.HasPrefix(strings.ToLower(status.State), "paused") {
+		if err = s.engine.Resume(ctx, hash); err != nil {
+			return d, fmt.Errorf("resume torrent for playback: %w", err)
+		}
+	}
+	files, err := s.engine.Files(ctx, hash)
+	if err != nil {
+		return d, err
+	}
+	subs := make([]int, 0)
+	var selected *domain.TorrentFile
+	for _, file := range files {
+		if file.Index == d.FileIndex {
+			copy := file
+			selected = &copy
+		}
+		if subtitle(file.Path) {
+			subs = append(subs, file.Index)
+		}
+	}
+	if selected == nil {
+		return d, fmt.Errorf("selected torrent file is no longer available")
+	}
+	indices := s.managedTorrentIndices(ctx, d.EngineID, files, d.FileIndex)
+	if err = s.engine.PrepareFiles(ctx, hash, indices, subs); err != nil {
+		return d, err
+	}
+	status, err = s.engine.Status(ctx, hash)
+	if err != nil {
+		return d, err
+	}
+	if !status.Sequential || !status.FirstLastPriority {
+		return d, fmt.Errorf("qBittorrent did not enable progressive streaming priorities")
+	}
+	applyDownloadStatus(&d, status, selected)
+	d.UpdatedAt = time.Now().UTC()
+	if err = s.repo.SaveDownload(ctx, d); err != nil {
+		return d, err
+	}
+	return d, nil
+}
+
 func (s *Service) Downloads(ctx context.Context) ([]domain.Download, error) {
 	items, err := s.repo.ListDownloads(ctx)
 	if err != nil {
 		return nil, err
 	}
+	items = dedupeManagedDownloads(items)
 	for i := range items {
 		if release, releaseErr := s.repo.GetRelease(ctx, items[i].ReleaseID); releaseErr == nil {
 			s.enrichDownload(ctx, &items[i], release)
@@ -871,30 +1227,96 @@ func (s *Service) Downloads(ctx context.Context) ([]domain.Download, error) {
 			continue
 		}
 		st, e := s.engine.Status(ctx, hash)
-		items[i].UpdatedAt = time.Now().UTC()
 		if e != nil {
 			items[i].Error = e.Error()
 			items[i].State = "unavailable"
 		} else {
-			items[i].State = st.State
-			items[i].Progress = st.Progress
-			items[i].PieceSize = st.PieceSize
-			items[i].DownloadedBytes = st.DownloadedBytes
-			items[i].SpeedBytesPerSecond = st.SpeedBytesPerSecond
-			items[i].ETASeconds = st.ETASeconds
-			items[i].Peers = st.Peers
-			items[i].Seeds = st.Seeds
-			items[i].Error = trackerError(st)
+			var selected *domain.TorrentFile
+			if files, filesErr := s.engine.Files(ctx, hash); filesErr == nil {
+				for _, file := range files {
+					if file.Index == items[i].FileIndex {
+						copy := file
+						selected = &copy
+						break
+					}
+				}
+			}
+			applyDownloadStatus(&items[i], st, selected)
 		}
+		// Telemetry refreshes must not make an existing row look newly added.
+		// Keep UpdatedAt stable so clients can patch progress in place without
+		// the server changing the collection order on every poll.
 		_ = s.repo.SaveDownload(ctx, items[i])
 	}
 	return items, nil
 }
 
+func dedupeManagedDownloads(items []domain.Download) []domain.Download {
+	out := make([]domain.Download, 0, len(items))
+	seen := make(map[string]bool, len(items))
+	for _, item := range items {
+		key := item.ID
+		if item.EngineID != "" {
+			// A qBittorrent file is uniquely identified by its torrent plus file
+			// index. Keep separate season episodes, but collapse legacy rows that
+			// point at the exact same underlying file. ListDownloads is newest-first,
+			// so the current row wins.
+			key = strings.ToLower(item.EngineID) + ":" + fmt.Sprint(item.FileIndex)
+		}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, item)
+	}
+	return out
+}
+
+func applyDownloadStatus(download *domain.Download, status domain.DownloadStatus, selected *domain.TorrentFile) {
+	download.State = status.State
+	download.PieceSize = status.PieceSize
+	download.SpeedBytesPerSecond = status.SpeedBytesPerSecond
+	download.ETASeconds = status.ETASeconds
+	download.Peers = status.Peers
+	download.Seeds = status.Seeds
+	download.Error = trackerError(status)
+	progress := status.Progress
+	if selected != nil {
+		progress = selected.Progress
+		if selected.SizeBytes > 0 {
+			download.SizeBytes = selected.SizeBytes
+		}
+		download.FileOffset = selected.Offset
+	}
+	progress = max(0, min(1, progress))
+	download.Progress = progress
+	if download.SizeBytes > 0 {
+		download.DownloadedBytes = int64(float64(download.SizeBytes) * progress)
+	} else {
+		download.DownloadedBytes = status.DownloadedBytes
+	}
+}
+
 func (s *Service) enrichDownload(ctx context.Context, download *domain.Download, release domain.TorrentRelease) {
-	download.Parsed = domain.ParseRelease(release)
-	download.TitleID = domain.CatalogTitleID(release, download.Parsed)
-	download.DisplayTitle = download.Parsed.Title
+	baseParsed := domain.ParseRelease(release)
+	download.Parsed = baseParsed
+	download.TitleID = domain.CatalogTitleID(release, baseParsed)
+	download.DisplayTitle = baseParsed.Title
+	if baseParsed.Kind == domain.MediaSeries && download.FilePath != "" {
+		base := domain.CatalogSource{Release: release, Parsed: baseParsed}
+		file := domain.TorrentFile{Index: download.FileIndex, Path: download.FilePath, SizeBytes: download.SizeBytes, Playable: true}
+		if episode, ok := episodeSource(base, file); ok {
+			download.Parsed = episode.Parsed
+			label := fmt.Sprintf("S%02dE%02d", episode.Parsed.SeasonStart, episode.Parsed.EpisodeStart)
+			if episode.Parsed.EpisodeEnd > episode.Parsed.EpisodeStart {
+				label += fmt.Sprintf("-E%02d", episode.Parsed.EpisodeEnd)
+			}
+			download.DisplayTitle = baseParsed.Title + " · " + label
+			if episode.Parsed.EpisodeTitle != "" {
+				download.DisplayTitle += " · " + episode.Parsed.EpisodeTitle
+			}
+		}
+	}
 	download.ReleaseName = release.Name
 	download.Category = release.Category
 	download.ReleaseSizeBytes = release.SizeBytes
@@ -903,7 +1325,7 @@ func (s *Service) enrichDownload(ctx context.Context, download *domain.Download,
 		download.Rating, download.RatingVotes, download.RatingProvider = metadata.Rating, metadata.RatingVotes, metadata.RatingProvider
 	}
 }
-func (s *Service) Manage(ctx context.Context, id, action string, deleteFiles bool) error {
+func (s *Service) Manage(ctx context.Context, id, action string, _ bool) error {
 	d, err := s.repo.GetDownload(ctx, id)
 	if err != nil {
 		return err
@@ -918,20 +1340,44 @@ func (s *Service) Manage(ctx context.Context, id, action string, deleteFiles boo
 	case "resume", "retry":
 		err = s.engine.Resume(ctx, hash)
 	case "remove":
-		if d.Leased {
-			return fmt.Errorf("cannot remove an actively streamed download")
+		managed, listErr := s.repo.ListDownloads(ctx)
+		if listErr != nil {
+			return listErr
 		}
-		err = s.engine.Remove(ctx, hash, deleteFiles)
+		for _, item := range managed {
+			if item.EngineID == d.EngineID && item.Leased {
+				return fmt.Errorf("cannot remove an actively streamed download")
+			}
+		}
+		err = s.engine.Remove(ctx, hash, true)
 		if err == nil || errors.Is(err, domain.ErrTorrentNotFound) {
-			return s.repo.DeleteDownload(ctx, id)
+			for _, item := range managed {
+				if item.EngineID == d.EngineID {
+					if deleteErr := s.repo.DeleteDownload(ctx, item.ID); deleteErr != nil {
+						return deleteErr
+					}
+				}
+			}
+			return nil
 		}
 	default:
 		return fmt.Errorf("unknown download action")
 	}
 	if err == nil {
-		d.State = action
-		d.UpdatedAt = time.Now().UTC()
-		err = s.repo.SaveDownload(ctx, d)
+		managed, listErr := s.repo.ListDownloads(ctx)
+		if listErr != nil {
+			return listErr
+		}
+		for _, item := range managed {
+			if item.EngineID != d.EngineID {
+				continue
+			}
+			item.State = action
+			item.UpdatedAt = time.Now().UTC()
+			if saveErr := s.repo.SaveDownload(ctx, item); saveErr != nil {
+				return saveErr
+			}
+		}
 	}
 	return err
 }
@@ -940,6 +1386,49 @@ const householdProfile = "household"
 
 func (s *Service) Playback(ctx context.Context, sourceID string) (domain.PlaybackState, error) {
 	return s.repo.GetPlayback(ctx, householdProfile, sourceID)
+}
+
+func (s *Service) PlaybackPreferences(ctx context.Context, sourceID string) (domain.PlaybackPreferences, error) {
+	p, err := s.repo.GetPlaybackPreferences(ctx, householdProfile, sourceID)
+	if errors.Is(err, sql.ErrNoRows) {
+		settings := s.settings.Get()
+		return domain.PlaybackPreferences{ProfileID: householdProfile, SourceID: sourceID, AudioLanguage: settings.PreferredAudioLanguage, AudioTrackIndex: -1, SubtitleLanguage: settings.PreferredSubtitleLanguage, SubtitleMode: "auto"}, nil
+	}
+	return p, err
+}
+
+func (s *Service) UpdatePlaybackPreferences(ctx context.Context, sourceID string, value domain.PlaybackPreferences) (domain.PlaybackPreferences, error) {
+	if _, err := s.repo.GetDownload(ctx, sourceID); err != nil {
+		return domain.PlaybackPreferences{}, err
+	}
+	value.AudioLanguage = strings.ToLower(strings.TrimSpace(value.AudioLanguage))
+	value.SubtitleLanguage = strings.ToLower(strings.TrimSpace(value.SubtitleLanguage))
+	value.SubtitleProvider = strings.ToLower(strings.TrimSpace(value.SubtitleProvider))
+	value.SubtitleCandidateID = strings.TrimSpace(value.SubtitleCandidateID)
+	value.SubtitleMode = strings.ToLower(strings.TrimSpace(value.SubtitleMode))
+	if value.AudioLanguage == "" {
+		value.AudioLanguage = s.settings.Get().PreferredAudioLanguage
+	}
+	if value.SubtitleLanguage == "" {
+		value.SubtitleLanguage = s.settings.Get().PreferredSubtitleLanguage
+	}
+	if value.AudioTrackIndex < -1 {
+		return domain.PlaybackPreferences{}, fmt.Errorf("audioTrackIndex cannot be below -1")
+	}
+	if value.SubtitleMode == "" {
+		value.SubtitleMode = "auto"
+	}
+	if value.SubtitleMode != "auto" && value.SubtitleMode != "off" && value.SubtitleMode != "selected" {
+		return domain.PlaybackPreferences{}, fmt.Errorf("subtitleMode must be auto, off, or selected")
+	}
+	if value.SubtitleMode == "selected" && (value.SubtitleProvider == "" || value.SubtitleCandidateID == "") {
+		return domain.PlaybackPreferences{}, fmt.Errorf("selected subtitles require provider and candidate id")
+	}
+	value.ProfileID, value.SourceID, value.UpdatedAt = householdProfile, sourceID, time.Now().UTC()
+	if err := s.repo.SavePlaybackPreferences(ctx, value); err != nil {
+		return domain.PlaybackPreferences{}, err
+	}
+	return value, nil
 }
 
 func (s *Service) UpdatePlayback(ctx context.Context, sourceID string, positionMS, durationMS int64) (domain.PlaybackState, error) {
@@ -1029,11 +1518,17 @@ func (s *Service) HouseholdState(ctx context.Context) (domain.HouseholdState, er
 	if err != nil {
 		return domain.HouseholdState{}, err
 	}
+	downloads, _ := s.repo.ListDownloads(ctx)
 	state := domain.HouseholdState{Favorites: []domain.HouseholdItem{}, ContinueWatching: []domain.HouseholdItem{}, Recent: []domain.HouseholdItem{}, Watched: []domain.HouseholdItem{}}
-	releaseIDs := make([]string, 0, len(playback))
+	releaseIDs := make([]string, 0, len(playback)+len(downloads))
 	for _, p := range playback {
 		if p.ReleaseID != "" {
 			releaseIDs = append(releaseIDs, p.ReleaseID)
+		}
+	}
+	for _, download := range downloads {
+		if download.ReleaseID != "" {
+			releaseIDs = append(releaseIDs, download.ReleaseID)
 		}
 	}
 	releaseTitle, _ := s.repo.CatalogTitleIDsForReleases(ctx, releaseIDs)
@@ -1057,23 +1552,56 @@ func (s *Service) HouseholdState(ctx context.Context) (domain.HouseholdState, er
 		titleSources[domain.CatalogTitleID(source.Release, source.Parsed)] = append(titleSources[domain.CatalogTitleID(source.Release, source.Parsed)], source)
 	}
 	favoriteSet := map[string]bool{}
-	latestByRelease := map[string]domain.PlaybackState{}
+	playbackBySource := map[string]domain.PlaybackState{}
+	latestByTitle := map[string]domain.PlaybackState{}
+	downloadByID := map[string]domain.Download{}
+	downloadByTitle := map[string]domain.Download{}
+	recentTitles := map[string]bool{}
+	watchedTitles := map[string]bool{}
+	continueTitles := map[string]bool{}
+	for _, download := range downloads {
+		downloadByID[download.ID] = download
+		titleID := releaseTitle[download.ReleaseID]
+		if titleID == "" {
+			continue
+		}
+		current, exists := downloadByTitle[titleID]
+		if !exists || betterHouseholdDownload(download, current) {
+			downloadByTitle[titleID] = download
+		}
+	}
 	for _, p := range playback {
-		if _, exists := latestByRelease[p.ReleaseID]; !exists {
-			latestByRelease[p.ReleaseID] = p
+		playbackBySource[p.SourceID] = p
+		if titleID := releaseTitle[p.ReleaseID]; titleID != "" {
+			if _, exists := latestByTitle[titleID]; !exists {
+				latestByTitle[titleID] = p
+			}
 		}
 		item, ok := s.householdItem(ctx, p, false, titleSources[releaseTitle[p.ReleaseID]])
 		if !ok {
 			continue
 		}
-		if len(state.Recent) < 30 {
+		key := item.TitleID
+		if key == "" && item.Catalog != nil {
+			key = item.Catalog.ID
+		}
+		if key == "" {
+			key = item.SourceID
+		}
+		if key == "" {
+			key = item.Release.ID
+		}
+		if len(state.Recent) < 30 && !recentTitles[key] {
 			state.Recent = append(state.Recent, item)
+			recentTitles[key] = true
 		}
-		if p.Watched && len(state.Watched) < 50 {
+		if p.Watched && len(state.Watched) < 50 && !watchedTitles[key] {
 			state.Watched = append(state.Watched, item)
+			watchedTitles[key] = true
 		}
-		if !p.Watched && p.PositionMS > 0 && len(state.ContinueWatching) < 50 {
+		if !p.Watched && p.PositionMS > 0 && len(state.ContinueWatching) < 50 && !continueTitles[key] {
 			state.ContinueWatching = append(state.ContinueWatching, item)
+			continueTitles[key] = true
 		}
 	}
 	for _, f := range favorites {
@@ -1082,12 +1610,18 @@ func (s *Service) HouseholdState(ctx context.Context) (domain.HouseholdState, er
 		if len(sources) == 0 {
 			continue
 		}
-		releaseID := sources[0].Release.ID
-		p := latestByRelease[releaseID]
-		p.ProfileID = householdProfile
-		p.ReleaseID = releaseID
-		if p.SourceID == "" {
-			p.FileIndex = -1
+		p, hasPlayback := latestByTitle[f.TitleID]
+		_, playbackDownloadExists := downloadByID[p.SourceID]
+		if download, exists := downloadByTitle[f.TitleID]; exists && (!hasPlayback || !playbackDownloadExists) {
+			if saved, ok := playbackBySource[download.ID]; ok {
+				p = saved
+			} else {
+				p = domain.PlaybackState{ProfileID: householdProfile, SourceID: download.ID, ReleaseID: download.ReleaseID, FileIndex: download.FileIndex, FilePath: download.FilePath}
+			}
+			hasPlayback = true
+		}
+		if !hasPlayback {
+			p = domain.PlaybackState{ProfileID: householdProfile, ReleaseID: sources[0].Release.ID, FileIndex: -1}
 		}
 		item, ok := s.householdItem(ctx, p, true, sources)
 		if ok {
@@ -1095,15 +1629,22 @@ func (s *Service) HouseholdState(ctx context.Context) (domain.HouseholdState, er
 		}
 	}
 	for i := range state.Recent {
-		state.Recent[i].Favorite = favoriteSet[releaseTitle[state.Recent[i].Release.ID]]
+		state.Recent[i].Favorite = favoriteSet[state.Recent[i].TitleID]
 	}
 	for i := range state.Watched {
-		state.Watched[i].Favorite = favoriteSet[releaseTitle[state.Watched[i].Release.ID]]
+		state.Watched[i].Favorite = favoriteSet[state.Watched[i].TitleID]
 	}
 	for i := range state.ContinueWatching {
-		state.ContinueWatching[i].Favorite = favoriteSet[releaseTitle[state.ContinueWatching[i].Release.ID]]
+		state.ContinueWatching[i].Favorite = favoriteSet[state.ContinueWatching[i].TitleID]
 	}
 	return state, nil
+}
+
+func betterHouseholdDownload(candidate, current domain.Download) bool {
+	if (candidate.Progress >= 1) != (current.Progress >= 1) {
+		return candidate.Progress >= 1
+	}
+	return candidate.UpdatedAt.After(current.UpdatedAt)
 }
 
 func (s *Service) householdItem(ctx context.Context, p domain.PlaybackState, favorite bool, sources []domain.CatalogSource) (domain.HouseholdItem, bool) {
@@ -1111,16 +1652,33 @@ func (s *Service) householdItem(ctx context.Context, p domain.PlaybackState, fav
 	if err != nil {
 		return domain.HouseholdItem{}, false
 	}
-	item := domain.HouseholdItem{Release: release, PlaybackState: p, Favorite: favorite}
+	parsed := domain.ParseRelease(release)
+	item := domain.HouseholdItem{Release: release, PlaybackState: p, Favorite: favorite, TitleID: domain.CatalogTitleID(release, parsed), SeasonNumber: parsed.SeasonStart, EpisodeNumber: parsed.EpisodeStart}
+	if parsed.Kind == domain.MediaSeries && p.FilePath != "" {
+		base := domain.CatalogSource{Release: release, Parsed: parsed}
+		file := domain.TorrentFile{Index: p.FileIndex, Path: p.FilePath, Playable: true}
+		if episode, ok := episodeSource(base, file); ok {
+			item.SeasonNumber = episode.Parsed.SeasonStart
+			item.EpisodeNumber = episode.Parsed.EpisodeStart
+		}
+	}
 	if len(sources) > 0 {
 		title := groupCatalog(sources, false)[0]
 		s.applyCachedMetadata(&title)
+		if state, stateErr := s.catalogState(ctx); stateErr == nil {
+			title.LibraryState = state.sourcesState(sources)
+		}
 		item.Catalog = &title
+		item.TitleID = title.ID
 	}
 	return item, true
 }
 func (s *Service) Acquire(ctx context.Context, id string) (domain.Download, error) {
 	d, err := s.repo.GetDownload(ctx, id)
+	if err != nil {
+		return d, err
+	}
+	d, err = s.prepareManagedDownload(ctx, d)
 	if err != nil {
 		return d, err
 	}
@@ -1178,32 +1736,8 @@ func (s *Service) WaitRange(ctx context.Context, d domain.Download, start, count
 	}
 }
 func (s *Service) WaitReadableRange(ctx context.Context, d domain.Download, start, count int64) error {
-	if err := s.ValidateSourcePath(d); err != nil {
-		return err
-	}
-	if err := s.WaitRange(ctx, d, start, count); err != nil {
-		return err
-	}
-	deadline := time.NewTimer(3 * time.Second)
-	defer deadline.Stop()
-	for {
-		f, err := os.Open(d.AbsolutePath)
-		if err == nil {
-			var one [1]byte
-			_, err = f.ReadAt(one[:], start+count-1)
-			_ = f.Close()
-		}
-		if err == nil {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-deadline.C:
-			return fmt.Errorf("downloaded pieces are not readable from storage: %w", err)
-		case <-time.After(100 * time.Millisecond):
-		}
-	}
+	_, err := s.ReadableRangePath(ctx, d, start, count)
+	return err
 }
 func (s *Service) ValidateSourcePath(d domain.Download) error {
 	root, err := filepath.Abs(s.settings.Get().DownloadRoot)

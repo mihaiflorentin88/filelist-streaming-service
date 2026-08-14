@@ -54,3 +54,45 @@ func TestReadBencodedTorrentFiles(t *testing.T) {
 		t.Fatalf("unexpected files: %#v", files)
 	}
 }
+
+func TestCatalogStateAggregatesEpisodeAndSeasonCoverage(t *testing.T) {
+	episodeOne := domain.CatalogEpisode{LibraryState: domain.MediaState{DownloadState: "downloaded", WatchState: "watched"}}
+	episodeTwo := domain.CatalogEpisode{LibraryState: domain.MediaState{DownloadState: "downloading", WatchState: "inProgress"}}
+	partial := aggregateEpisodeState([]domain.CatalogEpisode{episodeOne, episodeTwo})
+	if partial.DownloadState != "partial" || partial.WatchState != "partial" {
+		t.Fatalf("expected partial season state, got %#v", partial)
+	}
+	episodeTwo.LibraryState = domain.MediaState{DownloadState: "downloaded", WatchState: "watched"}
+	complete := aggregateEpisodeState([]domain.CatalogEpisode{episodeOne, episodeTwo})
+	if complete.DownloadState != "downloaded" || complete.WatchState != "watched" {
+		t.Fatalf("expected complete season state, got %#v", complete)
+	}
+}
+
+func TestCatalogEpisodeNeedsOnlyOneDownloadedVersion(t *testing.T) {
+	ready := domain.CatalogSource{LibraryState: domain.MediaState{DownloadState: "downloaded", WatchState: "watched"}}
+	remote := domain.CatalogSource{LibraryState: domain.MediaState{DownloadState: "none", WatchState: "unwatched"}}
+	state := aggregateSourceState([]domain.CatalogSource{remote, ready})
+	if state.DownloadState != "downloaded" || state.WatchState != "watched" {
+		t.Fatalf("one playable downloaded version should complete the episode: %#v", state)
+	}
+}
+
+func TestSeasonPackStateUsesOnlyMatchingReleaseFiles(t *testing.T) {
+	packAOne := domain.CatalogSource{Release: domain.TorrentRelease{ID: "pack-a"}, FileSizeBytes: 100, LibraryState: domain.MediaState{DownloadState: "downloaded", DownloadID: "a1", Progress: 1, WatchState: "watched"}}
+	packATwo := domain.CatalogSource{Release: domain.TorrentRelease{ID: "pack-a"}, FileSizeBytes: 300, LibraryState: domain.MediaState{DownloadState: "downloading", DownloadID: "a2", Progress: .5, WatchState: "inProgress"}}
+	packBOne := domain.CatalogSource{Release: domain.TorrentRelease{ID: "pack-b"}, FileSizeBytes: 100, LibraryState: domain.MediaState{DownloadState: "downloaded", DownloadID: "b1", Progress: 1, WatchState: "unwatched"}}
+	packBTwo := domain.CatalogSource{Release: domain.TorrentRelease{ID: "pack-b"}, FileSizeBytes: 100, LibraryState: domain.MediaState{DownloadState: "downloaded", DownloadID: "b2", Progress: 1, WatchState: "unwatched"}}
+	episodes := []domain.CatalogEpisode{{Sources: []domain.CatalogSource{packAOne, packBOne}}, {Sources: []domain.CatalogSource{packATwo, packBTwo}}}
+	a := packSourceState("pack-a", episodes)
+	if a.DownloadState != "downloading" || a.Progress != .625 || a.WatchState != "partial" {
+		t.Fatalf("unexpected pack-a state: %#v", a)
+	}
+	b := packSourceState("pack-b", episodes)
+	if b.DownloadState != "downloaded" || b.Progress != 1 {
+		t.Fatalf("unexpected pack-b state: %#v", b)
+	}
+	if other := packSourceState("other-season-pack", episodes); other.DownloadState != "none" {
+		t.Fatalf("unrelated release leaked into pack state: %#v", other)
+	}
+}
