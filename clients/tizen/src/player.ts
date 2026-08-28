@@ -37,6 +37,17 @@ export function playerAction(key: string, keyCode: number): PlayerAction {
   return null;
 }
 
+export type HiddenKeyRoute = 'scrub-left'|'scrub-right'|'refocus'|'route';
+
+/** Decision for the centralized key handler while the controls are hidden: every recognized remote key reveals the controls first; directional keys then scrub or restore control focus, and the remaining media/back keys fall through to their normal routing. */
+export function hiddenKeyRoute(action: PlayerAction): HiddenKeyRoute | null {
+  if (!action) return null;
+  if (action === 'left') return 'scrub-left';
+  if (action === 'right') return 'scrub-right';
+  if (action === 'up' || action === 'down' || action === 'enter') return 'refocus';
+  return 'route';
+}
+
 export interface AVTrack {index:number; type:string; language:string; label:string}
 
 export function preferredAudio(tracks:AVTrack[],language:string,index:number):AVTrack|null {

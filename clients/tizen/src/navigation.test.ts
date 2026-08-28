@@ -52,6 +52,18 @@ describe('chooseStructuredTarget', () => {
   it('navigates season tabs, pack alternatives, expanded controls, and episodes in visual order',()=>{const seasonOne=item(2,0);const seasonTwo=item(2,1);const packA=item(3,0);const packB=item(3,1);const pause=item(4,0);const remove=item(4,1);const episode=item(10,0);const elements=[seasonOne,seasonTwo,packA,packB,pause,remove,episode];expect(chooseStructuredTarget(seasonOne,elements,'right')).toBe(seasonTwo);expect(chooseStructuredTarget(seasonTwo,elements,'down')).toBe(packB);expect(chooseStructuredTarget(packB,elements,'left')).toBe(packA);expect(chooseStructuredTarget(packA,elements,'down')).toBe(pause);expect(chooseStructuredTarget(pause,elements,'right')).toBe(remove);expect(chooseStructuredTarget(remove,elements,'down')).toBe(episode);expect(chooseStructuredTarget(episode,elements,'up')).toBe(pause)});
 });
 
+describe('player toolbar focus grid', () => {
+  const control = (row:number,col:number) => ({dataset:{focusRegion:'player-controls',focusRow:String(row),focusCol:String(col)}} as unknown as HTMLElement);
+  const timeline = control(0,0);
+  const toolbar = [0,1,2,3,4,5,6,7,8].map(col => control(1,col));
+  it('keeps the hide cell reachable at the end of the button row and the timeline above', () => {
+    expect(chooseStructuredTarget(toolbar[7], toolbar, 'right')).toBe(toolbar[8]);
+    expect(chooseStructuredTarget(toolbar[8], toolbar, 'left')).toBe(toolbar[7]);
+    expect(chooseStructuredTarget(toolbar[8], [timeline, ...toolbar], 'up')).toBe(timeline);
+    expect(chooseStructuredTarget(timeline, [timeline, ...toolbar], 'down')).toBe(toolbar[0]);
+  });
+});
+
 describe('remoteAction', () => {
   it('normalizes remote and keyboard navigation keys', () => {
     expect(remoteAction('ArrowLeft', 0)).toBe('left');

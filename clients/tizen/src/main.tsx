@@ -2,7 +2,7 @@ import {Fragment, render} from 'preact';
 import {useEffect, useMemo, useRef, useState} from 'preact/hooks';
 import {API, canonicalHouseholdItems, canonicalLanguage, ControlsVisibility, subtitleRank, CatalogDetail, CatalogFacets, CatalogSource, CatalogTitle, Download, DownloadSort, formatBytes, HouseholdItem, HouseholdState, Job, JobLog, LibraryCategory, MediaState, orderDownloadIDs, PlaybackPreferences, reconcileDownloads, Release, resumeActionLabel, resumeForTitle, resumeSummary, seasonPackActionLabel, SettingsField, SubtitleCandidate, subtitleItemLabel, subtitleMenuGroups} from '@filelist/shared';
 import {chooseStructuredTarget, focusElement, remoteAction, useTVNavigation} from './navigation';
-import {AVTrack, clampSeek, formatTime, isDownloadComplete, normalizeTrack, parseVTT, playerAction, preferredAudio, SubtitleCue, subtitleAt} from './player';
+import {AVTrack, clampSeek, formatTime, hiddenKeyRoute, isDownloadComplete, normalizeTrack, parseVTT, playerAction, preferredAudio, SubtitleCue, subtitleAt} from './player';
 import {householdSections,trackerCategories} from './catalog-data';
 import {discoverServers, DiscoveredServer, normalizeServerURL} from './discovery';
 import './tv.css';
@@ -94,6 +94,11 @@ function Player({api, download, resumeMs, preferences, onClose, onStateChanged, 
     controlsVisibleRef.current = true;
     setControlsVisible(true);
     controls.reveal(sticky);
+  }
+  function hideControls() {
+    controlsVisibleRef.current = false;
+    setControlsVisible(false);
+    controls.hide();
   }
 
   function showTransientMessage(value:string, duration=3000) {
@@ -237,19 +242,19 @@ function Player({api, download, resumeMs, preferences, onClose, onStateChanged, 
       const action = playerAction(event.key, event.keyCode);
       if (!action) return;
       event.preventDefault();
+      if (!controlsVisibleRef.current && !menuRef.current) {
+        const hiddenRoute = hiddenKeyRoute(action);
+        if (hiddenRoute === 'scrub-left') {revealControls(); scrub(-10_000); return;}
+        if (hiddenRoute === 'scrub-right') {revealControls(); scrub(10_000); return;}
+        if (hiddenRoute === 'refocus') {revealControls(); focusControl(); return;}
+        revealControls();
+      }
       if (action === 'back' || action === 'stop') {if (menuRef.current) closeMenu(); else {save(); onClose();} return;}
       if (action === 'play') {togglePlayback(true); return;}
       if (action === 'pause') {togglePlayback(false); return;}
       if (action === 'play-pause') {togglePlayback(); return;}
       if (action === 'rewind' || action === 'previous') {scrub(-10_000); return;}
       if (action === 'fast-forward' || action === 'next') {scrub(10_000); return;}
-      if (!controlsVisibleRef.current && !menuRef.current) {
-        revealControls();
-        if (action === 'left' || action === 'right') {
-          scrub(action === 'left' ? -10_000 : 10_000);
-        } else focusControl();
-        return;
-      }
       revealControls(menuRef.current !== null);
       const selector = menuRef.current ? '.player-dialog button' : '[data-player-control]';
       const elements = Array.from(document.querySelectorAll<HTMLElement>(selector)).filter(element => element.offsetWidth > 0);
@@ -318,7 +323,7 @@ function Player({api, download, resumeMs, preferences, onClose, onStateChanged, 
         <button data-player-control="restart" data-focus-region="player-controls" data-focus-row="1" data-focus-col="0" data-focus-key="player-restart" onClick={() => keepControl('restart',()=>seek(0))}>Restart</button><button data-player-control="back-10" data-focus-region="player-controls" data-focus-row="1" data-focus-col="1" data-focus-key="player-back-10" onClick={() => keepControl('back-10',()=>seek(current.current - 10_000))}>−10s</button>
         <button data-player-control="play" data-focus-region="player-controls" data-focus-row="1" data-focus-col="2" data-focus-key="player-play" class="primary" onClick={() => keepControl('play',()=>togglePlayback())}>{playing.current ? 'Pause' : 'Play'}</button><button data-player-control="forward-10" data-focus-region="player-controls" data-focus-row="1" data-focus-col="3" data-focus-key="player-forward-10" onClick={() => keepControl('forward-10',()=>seek(current.current + 10_000))}>+10s</button>
         <button data-player-control="audio" data-focus-region="player-controls" data-focus-row="1" data-focus-col="4" data-focus-key="player-audio" onClick={() => openMenu('audio', 'audio')}>Audio ({audioTracks.length})</button><button data-player-control="subtitles" data-focus-region="player-controls" data-focus-row="1" data-focus-col="5" data-focus-key="player-subtitles" onClick={() => {openMenu('subtitles','subtitles');void findSubtitles(false,'local')}}>Subtitles ({subtitleTracks.length+subtitleCandidates.length})</button>
-        <button data-player-control="options" data-focus-region="player-controls" data-focus-row="1" data-focus-col="6" data-focus-key="player-options" onClick={() => openMenu('options', 'options')}>Options</button><button data-player-control="back" data-focus-region="player-controls" data-focus-row="1" data-focus-col="7" data-focus-key="player-back" onClick={() => {save(); onClose();}}>Back</button>
+        <button data-player-control="options" data-focus-region="player-controls" data-focus-row="1" data-focus-col="6" data-focus-key="player-options" onClick={() => openMenu('options', 'options')}>Options</button><button data-player-control="back" data-focus-region="player-controls" data-focus-row="1" data-focus-col="7" data-focus-key="player-back" onClick={() => {save(); onClose();}}>Back</button><button data-player-control="hide" data-focus-region="player-controls" data-focus-row="1" data-focus-col="8" data-focus-key="player-hide" onClick={hideControls}>Hide</button>
       </div>
       {phase === 'failed' && <button class="player-retry" data-player-control="retry" data-focus-region="player-controls" data-focus-row="2" data-focus-col="2" data-focus-key="player-retry" onClick={() => {completedRetryUsed.current = false; openPlayer(current.current);}}>Retry playback</button>}
     </div>
