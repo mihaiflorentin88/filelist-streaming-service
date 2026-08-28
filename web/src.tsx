@@ -1,7 +1,7 @@
 import { render } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { API, canonicalHouseholdItems, CatalogDetail, CatalogSource, CatalogTitle, ControlsVisibility, Download, DownloadSort, formatBytes, HouseholdItem, HouseholdState, Job, JobLog, languageDisplayName, LibraryCategory, logicalPlaybackPosition, MediaAudioTrack, MediaInfo, MediaState, canonicalLanguage, subtitleRank, orderDownloadIDs, PlaybackPreferences, preferredAudioTrack, reconcileDownloads, resumeActionLabel, resumeForTitle, resumeSummary, seasonPackActionLabel, SettingsField, SubtitleCandidate, subtitleItemLabel, subtitleMenuGroups, SubtitleWarning } from '@filelist/shared';
-import { AudioDecodeController, audioPlaybackRoute } from './audio-decode';
+import { API, audioPlaybackRoute, canonicalHouseholdItems, CatalogDetail, CatalogSource, CatalogTitle, ControlsVisibility, Download, DownloadSort, fallbackAudioTrack, formatBytes, HouseholdItem, HouseholdState, Job, JobLog, languageDisplayName, LibraryCategory, logicalPlaybackPosition, MediaAudioTrack, MediaInfo, MediaState, canonicalLanguage, subtitleRank, orderDownloadIDs, PlaybackPreferences, preferredAudioTrack, reconcileDownloads, resumeActionLabel, resumeForTitle, resumeSummary, seasonPackActionLabel, SettingsField, SubtitleCandidate, subtitleItemLabel, subtitleMenuGroups, SubtitleWarning } from '@filelist/shared';
+import { AudioDecodeController } from './audio-decode';
 import './style.css';
 
 const api = new API(location.origin);
@@ -54,7 +54,7 @@ function Rail({ title, children, empty, landscape = false }: { title: string; ch
 function useModalFocus(root: { current: HTMLElement | null }, onClose: () => void) { useEffect(() => { const previous = document.activeElement as HTMLElement | null; const background = Array.from(document.querySelectorAll<HTMLElement>('.sidebar,.content')); background.forEach(element => element.setAttribute('inert', '')); const focusable = () => Array.from(root.current?.querySelectorAll<HTMLElement>('button:not([disabled]),input:not([disabled]),select:not([disabled]),video[controls],[tabindex]:not([tabindex="-1"])') || []); const timer = window.setTimeout(() => focusable()[0]?.focus(), 0); const key = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); onClose(); return } if (event.key !== 'Tab') return; const items = focusable(); if (items.length === 0) return; const index = items.indexOf(document.activeElement as HTMLElement); event.preventDefault(); items[(index + (event.shiftKey ? -1 : 1) + items.length) % items.length].focus() }; document.addEventListener('keydown', key); return () => { window.clearTimeout(timer); document.removeEventListener('keydown', key); background.forEach(element => element.removeAttribute('inert')); previous?.focus() }; }, []) }
 function useOverlayFocus(active: boolean, onClose: () => void) { useEffect(() => { if (!active) return; const root = { get current() { const overlays = document.querySelectorAll<HTMLElement>('.overlay'); return overlays[overlays.length - 1] || null } }; const previous = document.activeElement as HTMLElement | null; const overlay = root.current; const background = Array.from(document.querySelectorAll<HTMLElement>('.sidebar,.content')).filter(element => !overlay || !element.contains(overlay)); background.forEach(element => element.setAttribute('inert', '')); const focusable = () => Array.from(root.current?.querySelectorAll<HTMLElement>('button:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])') || []); const timer = window.setTimeout(() => focusable()[0]?.focus(), 0); const key = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); onClose(); return } if (event.key !== 'Tab') return; const items = focusable(); if (!items.length) return; const index = items.indexOf(document.activeElement as HTMLElement); event.preventDefault(); items[(index + (event.shiftKey ? -1 : 1) + items.length) % items.length].focus() }; document.addEventListener('keydown', key); return () => { window.clearTimeout(timer); document.removeEventListener('keydown', key); background.forEach(element => element.removeAttribute('inert')); previous?.focus() }; }, [active]) }
 
-function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { active: ActivePlayer; onClose: () => void; onStateChanged: () => void; onAdvance: (preferences: PlaybackPreferences) => Promise<void> }) {
+export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { active: ActivePlayer; onClose: () => void; onStateChanged: () => void; onAdvance: (preferences: PlaybackPreferences) => Promise<void> }) {
   const defaults: PlaybackPreferences = { audioLanguage: 'en', audioTrackIndex: -1, subtitleLanguage: 'ro', subtitleMode: 'auto' };
   const video = useRef<HTMLVideoElement>(null);
   const root = useRef<HTMLDivElement>(null);
@@ -79,6 +79,9 @@ function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { active:
   const [audioOpen, setAudioOpen] = useState(false);
   const decoderRef = useRef<AudioDecodeController | null>(null);
   const decodeFailed = useRef(false);
+  // Stream indexes whose decode already failed this playback; the fallback chooser
+  // excludes all of them so repeated failures walk forward instead of looping.
+  const failedAudio = useRef<number[]>([]);
   const [selectedSubtitle, setSelectedSubtitle] = useState('off');
   const [controlsVisible, setControlsVisible] = useState(true);
   const controls = useMemo(() => new ControlsVisibility({ policy: { armWhilePaused: true, statusHolds: true, manualHideSuppressionMs: 500 }, onChange: setControlsVisible }), []);
@@ -100,6 +103,7 @@ function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { active:
         const [saved, info] = await Promise.all([active.preferences ? Promise.resolve(active.preferences) : api.playbackPreferences(active.download.id).catch(() => defaults), api.mediaInfo(active.download.id)]);
         if (cancelled) return;
         preferenceRef.current = saved;
+        failedAudio.current = [];
         durationRef.current = info.durationMs;
         const track = preferredAudioTrack(info.audioTracks, saved);
         const initial = Math.min(Math.max(0, active.resumeMs), Math.max(0, info.durationMs - 1000));
@@ -123,11 +127,25 @@ function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { active:
   useEffect(() => {
     const track = mediaInfo?.audioTracks.find(item => item.streamIndex === selectedAudio);
     const element = video.current;
-    if (!mediaInfo || !playbackURL || !element || !track) return; const ordinal = Math.max(0, mediaInfo.audioTracks.findIndex(item => item.streamIndex === selectedAudio)); const route = audioPlaybackRoute(track.codec); const multiTrackSwitch = mediaInfo.audioTracks.length > 1 && !track.default; console.debug(`[audio] route=${route} reason=${route === 'decode' ? `codec "${track.codec}" is not natively decodable` : multiTrackSwitch ? 'selected track is a non-default track in a multi-track file' : `codec "${track.codec}" plays through the element`} (track ${ordinal})`); if (route !== 'decode' && !multiTrackSwitch) return;
-    let cancelled = false; decodeFailed.current = false;
+    if (!mediaInfo || !playbackURL || !element || !track) return; decodeFailed.current = false; const ordinal = Math.max(0, mediaInfo.audioTracks.findIndex(item => item.streamIndex === selectedAudio)); const route = audioPlaybackRoute(track.codec); const multiTrackSwitch = mediaInfo.audioTracks.length > 1 && !track.default; console.debug(`[audio] route=${route} reason=${route === 'decode' ? `codec "${track.codec}" is not natively decodable` : multiTrackSwitch ? 'selected track is a non-default track in a multi-track file' : `codec "${track.codec}" plays through the element`} (track ${ordinal})`); if (route !== 'decode' && !multiTrackSwitch) return;
+    let cancelled = false;
     let instance: AudioDecodeController | null = null;
     const startSec = Math.min(Math.max(0, active.resumeMs), Math.max(0, mediaInfo.durationMs - 1000)) / 1000;
-    void AudioDecodeController.create({ video: element, audioOrdinal: ordinal, url: api.streamURL(playbackURL), startSec, totalBytes: active.download.sizeBytes, durationSec: mediaInfo.durationMs / 1000, onStatus: status => { if (cancelled) return; if (status.status === 'error') { decodeFailed.current = true; decoderRef.current = null } setMessage(status.message) } }).then(value => {
+    void AudioDecodeController.create({
+      video: element, audioOrdinal: ordinal, url: api.streamURL(playbackURL), startSec, totalBytes: active.download.sizeBytes, durationSec: mediaInfo.durationMs / 1000, onStatus: status => {
+        if (cancelled) return;
+        if (status.status !== 'error') { setMessage(status.message); return }
+        decodeFailed.current = true;
+        decoderRef.current = null;
+        failedAudio.current = [...failedAudio.current, track.streamIndex];
+        const replacement = fallbackAudioTrack(mediaInfo.audioTracks, preferenceRef.current, failedAudio.current);
+        if (!replacement) { setMessage(status.message); return }
+        const replacementOrdinal = Math.max(0, mediaInfo.audioTracks.findIndex(item => item.streamIndex === replacement.streamIndex));
+        console.debug(`[audio] decode failed on track ${ordinal}; falling back to track ${replacementOrdinal} (${replacement.codec || 'unknown codec'})`);
+        setMessage('');
+        setSelectedAudio(replacement.streamIndex);
+      }
+    }).then(value => {
       if (cancelled) { value.destroy(); return }
       instance = value;
       decoderRef.current = value;
@@ -193,7 +211,7 @@ function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { active:
     video.current.currentTime = target / 1000;
     setPosition(target);
   }
-  async function chooseAudio(track: MediaAudioTrack) { setSelectedAudio(track.streamIndex); setAudioOpen(false); await savePreferences({ ...preferenceRef.current, audioTrackIndex: track.streamIndex, audioLanguage: track.language || 'en' }) }
+  async function chooseAudio(track: MediaAudioTrack) { failedAudio.current = []; setSelectedAudio(track.streamIndex); setAudioOpen(false); await savePreferences({ ...preferenceRef.current, audioTrackIndex: track.streamIndex, audioLanguage: track.language || 'en' }) }
   function togglePlayback() { const element = video.current; if (!element) return; if (element.paused) { shouldPlay.current = true; void element.play().catch(error => setMessage(`Playback could not start: ${error.message}`)) } else { shouldPlay.current = false; element.pause() } }
   function revealControls() { controls.reveal() }
   function hideControls() { controls.hide() }
@@ -369,4 +387,6 @@ function Settings({ value, fields, onSaved, onError }: { value: Record<string, u
   </>
 }
 
-render(<App />, document.getElementById('app')!);
+// Bootstrap when served from index.html; module imports (tests) skip the mount.
+const appRoot = document.getElementById('app');
+if (appRoot) render(<App />, appRoot);

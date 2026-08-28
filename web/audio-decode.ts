@@ -1,8 +1,8 @@
 // Client-side audio decode for codecs browsers cannot decode natively (AC3, DTS, ...).
 // A Web Worker fetches ranged bytes of the progressive stream and decodes moving
-// windows to raw PCM; this module owns the pure routing decision and the Web Audio
-// graph that schedules decoded buffers against the video clock. The video element
-// stays muted while a controller is alive; the native path never constructs one.
+// windows to raw PCM; this module owns the Web Audio graph that schedules decoded
+// buffers against the video clock. The video element stays muted while a controller
+// is alive; the native path never constructs one.
 export type WorkerInMessage =
   | { type: 'start'; session: number; url: string; startByte: number; totalBytes: number; bytesPerSecond: number; audioOrdinal: number }
   | { type: 'pause' }
@@ -14,12 +14,6 @@ export type WorkerOutMessage =
   | { type: 'state'; session: number; status: 'stalling' }
   | { type: 'error'; session: number; message: string };
 
-// Codec decision (pure; the seam a future test exercises directly).
-const NATIVE_AUDIO_CODECS: Record<string, true> = { aac: true, mp3: true, opus: true, flac: true, vorbis: true };
-export function audioPlaybackRoute(codec: string | undefined | null): 'native' | 'decode' {
-  const value = (codec ?? '').trim().toLowerCase();
-  return NATIVE_AUDIO_CODECS[value] ? 'native' : 'decode';
-}
 // Time→byte mapping for sessions without a container index: average file bitrate.
 export function byteOffsetForTime(seconds: number, bytesPerSecond: number, totalBytes: number): number {
   if (!(bytesPerSecond > 0) || !(totalBytes > 0)) return 0;

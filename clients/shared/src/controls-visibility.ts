@@ -30,8 +30,9 @@ export class ControlsVisibility {
   #suppressMs: number;
   #suppressUntil = 0;
   #visible = true;
-  // Pending-hide timeout id. Both consumers run under the DOM lib, where
-  // setTimeout yields a numeric id.
+  // Pending-hide timeout id, 0 when idle. Browsers hand back a numeric id; the
+  // node typings leaking into the type programs use a Timeout object, so the
+  // assignment casts back to the numeric contract.
   #hideTimer: number = 0;
 
   constructor(options: ControlsVisibilityOptions) {
@@ -104,6 +105,6 @@ export class ControlsVisibility {
       this.#hideTimer = 0;
       this.#visible = false;
       this.#onChange(false);
-    }, this.#timeoutMs);
+    }, this.#timeoutMs) as unknown as number;
   }
 }
