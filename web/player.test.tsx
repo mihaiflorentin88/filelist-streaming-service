@@ -17,15 +17,17 @@ const harness = vi.hoisted(() => {
     mediaInfo: unknown;
     preferences: unknown;
     updatePlaybackPreferences: ((value: unknown) => Promise<unknown>) | null;
-  } = { mediaInfo: null, preferences: null, updatePlaybackPreferences: null };
+    downloads: (() => Promise<unknown>) | null;
+    updatePlayback: (() => Promise<unknown>) | null;
+  } = { mediaInfo: null, preferences: null, updatePlaybackPreferences: null, downloads: null, updatePlayback: null };
   class FakeAPI {
     mediaInfo() { return Promise.resolve(state.mediaInfo) }
     playbackPreferences() { return Promise.resolve(state.preferences) }
     subtitles() { return Promise.resolve({ items: [], warnings: [] }) }
-    updatePlayback() { return Promise.resolve({}) }
+    updatePlayback() { return state.updatePlayback ? state.updatePlayback() : Promise.resolve({}) }
     updatePlaybackPreferences(value: unknown) { return state.updatePlaybackPreferences!(value) }
     prepareSubtitle() { return Promise.resolve({}) }
-    downloads() { return Promise.resolve({ items: [] }) }
+    downloads() { return state.downloads ? state.downloads() : Promise.resolve({ items: [] }) }
     streamURL(path: string) { return new URL(path, 'http://server.test').toString() }
   }
   return { state, FakeAPI };
@@ -50,10 +52,13 @@ beforeEach(() => {
 afterEach(() => {
   render(null, host);
   document.body.innerHTML = '';
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   FakeWorker.created = [];
   pendingFrames.clear();
+  harness.state.downloads = null;
+  harness.state.updatePlayback = null;
 });
 function tickFrame() { const callbacks = [...pendingFrames.values()]; pendingFrames.clear(); for (const callback of callbacks) callback(0) }
 async function settle(cycles = 5) {
@@ -149,5 +154,68 @@ describe('Native-track auto-fallback on decode failure', () => {
     expect(panel.querySelectorAll('button')[2].className).toContain('selected');
     expect(host.querySelector('.player-status')).toBeNull();
     expect(harness.state.updatePlaybackPreferences).not.toHaveBeenCalled();
+  });
+});
+
+// — Retry-loop hygiene, driven through the same wiring: video errors trigger the
+// recovery loop, position persistence runs on a 10s cadence. Both loops must be
+// bounded once the stream is permanently gone instead of retrying forever.
+
+// Polls a viewer-observable condition; the recovery loop schedules real 2s
+// retries (happy-dom's window timers resist faking), so tests wait them out.
+async function waitFor(condition: () => boolean, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error('condition not met before timeout');
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
+}
+
+describe('Bounded retry loops', () => {
+  it('stops recovering after three consecutive failures and says the stream is gone', async () => {
+    await startPlayer([audioTrack(0, 'aac')]);
+    let downloadQueries = 0;
+    harness.state.downloads = async () => { downloadQueries++; return { items: [] } };
+    const video = host.querySelector('video') as HTMLVideoElement;
+    video.dispatchEvent(new Event('error'));
+    await waitFor(() => downloadQueries >= 3);
+    // Each failed attempt flashes "Playback retry failed", then the loop stops
+    // for good with a terminal message instead of retrying forever.
+    await waitFor(() => (host.querySelector('.player-status')?.textContent || '').includes('This stream is no longer available.'));
+    expect(downloadQueries).toBe(3);
+    const quiet = Promise.withResolvers<void>();
+    setTimeout(quiet.resolve, 2500);
+    await quiet.promise;
+    expect(downloadQueries).toBe(3);
+  }, 20_000);
+
+  it('stops saving the playback position after a permanent 404', async () => {
+    await startPlayer([audioTrack(0, 'aac')]);
+    let saveCalls = 0;
+    harness.state.updatePlayback = async () => { saveCalls++; throw Object.assign(new Error('sql: no rows in result set'), { status: 404 }) };
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const video = host.querySelector('video') as HTMLVideoElement;
+    video.dispatchEvent(new Event('timeupdate'));
+    await settle(2);
+    expect(saveCalls).toBe(1);
+    vi.setSystemTime(Date.now() + 10_001);
+    video.dispatchEvent(new Event('timeupdate'));
+    await settle(2);
+    expect(saveCalls).toBe(1);
+  });
+
+  it('keeps saving the playback position through transient 503s', async () => {
+    await startPlayer([audioTrack(0, 'aac')]);
+    let saveCalls = 0;
+    harness.state.updatePlayback = async () => { saveCalls++; throw Object.assign(new Error('database is locked'), { status: 503 }) };
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const video = host.querySelector('video') as HTMLVideoElement;
+    video.dispatchEvent(new Event('timeupdate'));
+    await settle(2);
+    expect(saveCalls).toBe(1);
+    vi.setSystemTime(Date.now() + 10_001);
+    video.dispatchEvent(new Event('timeupdate'));
+    await settle(2);
+    expect(saveCalls).toBe(2);
   });
 });

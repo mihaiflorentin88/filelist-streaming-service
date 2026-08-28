@@ -839,9 +839,21 @@ func (a *API) putPlayback(w http.ResponseWriter, r *http.Request) {
 		problem(w, 400, err)
 		return
 	}
+	if input.PositionMS < 0 || input.DurationMS < 0 {
+		problem(w, 400, fmt.Errorf("positionMs and durationMs cannot be negative"))
+		return
+	}
 	p, err := a.service.UpdatePlayback(r.Context(), r.PathValue("sourceId"), input.PositionMS, input.DurationMS)
 	if err != nil {
-		problem(w, 409, err)
+		// Mirror the stream handler: a missing source is permanent (404), every
+		// other persistence failure is transient (503) so clients keep saving
+		// instead of dropping playback persistence on a server restart.
+		if errors.Is(err, sql.ErrNoRows) {
+			problem(w, http.StatusNotFound, err)
+		} else {
+			w.Header().Set("Retry-After", "2")
+			problem(w, http.StatusServiceUnavailable, err)
+		}
 		return
 	}
 	write(w, 200, p)
@@ -907,7 +919,15 @@ func (a *API) mediaInfo(w http.ResponseWriter, r *http.Request) {
 func (a *API) stream(w http.ResponseWriter, r *http.Request) {
 	d, err := a.service.Acquire(r.Context(), r.PathValue("id"))
 	if err != nil {
-		problem(w, 404, err)
+		// A removed source is gone for good; anything else (restart in progress,
+		// locked database, engine hiccup) is transient — tell clients to retry
+		// instead of letting them treat the stream as unavailable forever.
+		if errors.Is(err, sql.ErrNoRows) {
+			problem(w, http.StatusNotFound, err)
+		} else {
+			w.Header().Set("Retry-After", "2")
+			problem(w, http.StatusServiceUnavailable, err)
+		}
 		return
 	}
 	defer a.service.Release(d.ID)

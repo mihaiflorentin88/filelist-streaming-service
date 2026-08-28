@@ -12,7 +12,11 @@ const emptyState: HouseholdState = { favorites: [], continueWatching: [], recent
 const needsEpisodeExpansion = (detail: CatalogDetail) => detail.title.kind === 'series' && detail.seasons.some(season => (season.packSources?.length || 0) > 0 && season.episodes.length === 0);
 function formatPlaybackTime(milliseconds: number) { const total = Math.max(0, Math.floor(milliseconds / 1000)); const hours = Math.floor(total / 3600); const minutes = Math.floor(total % 3600 / 60); const seconds = total % 60; return hours ? `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}` : `${minutes}:${String(seconds).padStart(2, '0')}` }
 function audioTrackLabel(track: MediaAudioTrack) { const language = languageDisplayName(track.language || '') || track.language?.toUpperCase() || 'Language unavailable'; const channels = track.channels === 1 ? 'Mono' : track.channels === 2 ? 'Stereo' : track.channels && track.channels > 2 ? `${track.channels} channels` : ''; return [track.title, language, track.codec?.toUpperCase(), channels].filter(Boolean).join(' · ') }
-
+function permanentPersistenceFailure(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null || !('status' in error)) return false;
+  return error.status === 404 || error.status === 409;
+}
+const MAX_RECOVER_ATTEMPTS = 3;
 const navGroups: { label?: string; items: { id: View; label: string; icon: string }[] }[] = [
   { items: [{ id: 'home', label: 'Home', icon: 'home' }, { id: 'search', label: 'Search', icon: 'search' }] },
   { label: 'My Library', items: [{ id: 'library', label: 'Dashboard', icon: 'library' }, { id: 'continue', label: 'Continue watching', icon: 'play' }, { id: 'favorites', label: 'Favorites', icon: 'heart' }, { id: 'watched', label: 'Watched', icon: 'check' }, { id: 'downloads', label: 'Downloads', icon: 'download' }, { id: 'library-categories', label: 'Categories', icon: 'folder' }] },
@@ -63,6 +67,8 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
   const retryTimer = useRef(0);
   const mediaRetryTimer = useRef(0);
   const recovering = useRef(false);
+  const recoverAttempts = useRef(0);
+  const saveFailed = useRef(false);
   const shouldPlay = useRef(true);
   const preferenceRef = useRef<PlaybackPreferences>(active.preferences || defaults);
   const durationRef = useRef(0);
@@ -93,7 +99,18 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
   const currentTrack = mediaInfo?.audioTracks.find(track => track.streamIndex === selectedAudio);
   const subtitlePositions = useMemo(() => new Map(candidates.map((candidate, index) => [candidate, index + 1])), [candidates]);
   const subtitleGroups = useMemo(() => subtitleMenuGroups(candidates), [candidates]);
-  const save = async () => { if (durationRef.current <= 0) return; try { await api.updatePlayback(active.download.id, logicalPlaybackPosition(0, video.current?.currentTime || 0, durationRef.current), durationRef.current); onStateChanged() } catch { } };
+  const save = async () => {
+    if (durationRef.current <= 0 || saveFailed.current) return;
+    try {
+      await api.updatePlayback(active.download.id, logicalPlaybackPosition(0, video.current?.currentTime || 0, durationRef.current), durationRef.current);
+      onStateChanged()
+    } catch (error) {
+      // Position persistence is best-effort: a missing source (404) or a permanent
+      // update conflict (409) ends it for this playback instead of hammering the
+      // endpoint every ten seconds; transient failures keep the 10s cadence.
+      if (permanentPersistenceFailure(error)) saveFailed.current = true;
+    }
+  };
   const savePreferences = async (value: PlaybackPreferences) => { preferenceRef.current = value; try { preferenceRef.current = await api.updatePlaybackPreferences(active.download.id, value) } catch { } };
 
   useEffect(() => {
@@ -104,6 +121,8 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
         if (cancelled) return;
         preferenceRef.current = saved;
         failedAudio.current = [];
+        recoverAttempts.current = 0;
+        saveFailed.current = false;
         durationRef.current = info.durationMs;
         const track = preferredAudioTrack(info.audioTracks, saved);
         const initial = Math.min(Math.max(0, active.resumeMs), Math.max(0, info.durationMs - 1000));
@@ -204,7 +223,31 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
     } catch (error) { if (!automatic) setMessage(`Subtitle failed: ${(error as Error).message}`); return false }
   }
   function disableSubtitles(persist = true) { if (video.current) Array.from(video.current.textTracks).forEach(track => track.mode = 'disabled'); setSelectedSubtitle('off'); setSubtitleOpen(false); if (persist) void savePreferences({ ...preferenceRef.current, subtitleMode: 'off', subtitleProvider: '', subtitleCandidateId: '' }) }
-  async function recover() { if (recovering.current) return; recovering.current = true; if (!decodeFailed.current) setMessage('Waiting for the next downloaded segment…'); retryTimer.current = window.setTimeout(async () => { try { const latest = (await api.downloads()).items.find(item => item.id === active.download.id); if (!latest) throw new Error('The download is no longer managed.'); if (!decodeFailed.current) setMessage(latest.playbackMode === 'progressive' ? `Streaming while downloading · ${Math.round(latest.progress * 100)}%` : 'Downloaded file ready · retrying playback…'); video.current?.load(); await video.current?.play(); recovering.current = false } catch (error) { recovering.current = false; setMessage(`Playback retry failed: ${(error as Error).message}`); void recover() } }, 2000) }
+  // Playback recovery retries are bounded: after MAX_RECOVER_ATTEMPTS consecutive
+  // failures the loop stops and the viewer sees a terminal message instead of the
+  // player reloading the stream every two seconds forever.
+  async function recover() {
+    if (recovering.current) return;
+    recovering.current = true;
+    if (!decodeFailed.current) setMessage('Waiting for the next downloaded segment…');
+    retryTimer.current = window.setTimeout(async () => {
+      try {
+        const latest = (await api.downloads()).items.find(item => item.id === active.download.id);
+        if (!latest) throw new Error('The download is no longer managed.');
+        if (!decodeFailed.current) setMessage(latest.playbackMode === 'progressive' ? `Streaming while downloading · ${Math.round(latest.progress * 100)}%` : 'Downloaded file ready · retrying playback…');
+        video.current?.load();
+        await video.current?.play();
+        recovering.current = false
+      } catch (error) {
+        recovering.current = false;
+        recoverAttempts.current++;
+        const detail = `Playback retry failed: ${(error as Error).message}`;
+        if (recoverAttempts.current >= MAX_RECOVER_ATTEMPTS) { setMessage(`${detail} This stream is no longer available.`); return }
+        setMessage(detail);
+        void recover()
+      }
+    }, 2000)
+  }
   function restartAt(value: number) {
     if (!mediaInfo || !video.current) return;
     const target = Math.min(Math.max(0, value), Math.max(0, mediaInfo.durationMs - 1000));
@@ -217,9 +260,8 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
   function hideControls() { controls.hide() }
   function setPlayerVolume(value: number) { const element = video.current; if (!element) return; if (decoderRef.current) { decoderRef.current.setVolume(value); decoderRef.current.setMuted(value === 0); setVolume(value); setMuted(value === 0); return } element.volume = value; element.muted = value === 0; setVolume(value); setMuted(value === 0) }
   async function toggleFullscreen() { try { if (document.fullscreenElement) await document.exitFullscreen(); else await root.current?.requestFullscreen() } catch (error) { setMessage(`Fullscreen unavailable: ${(error as Error).message}`) } }
-
   return <div ref={root} class={`video ${controlsVisible ? 'controls-visible' : ''}`} role="dialog" aria-modal="true" aria-label={`Playing ${active.download.displayTitle || active.download.filePath}`}>
-    <video ref={video} src={playbackURL ? api.streamURL(playbackURL) : undefined} autoplay playsInline onLoadedMetadata={event => { if (active.resumeMs > 0) event.currentTarget.currentTime = active.resumeMs / 1000; if (shouldPlay.current) void event.currentTarget.play().catch(() => setMessage('Press Play to start playback.')) }} onWaiting={() => { if (!decodeFailed.current) setMessage(active.download.playbackMode === 'progressive' ? 'Buffering the next downloaded segment…' : 'Buffering…') }} onCanPlay={() => { recovering.current = false; if (!decodeFailed.current) setMessage('') }} onPlaying={() => { decoderRef.current?.resume(); recovering.current = false; setPlaying(true); if (!decodeFailed.current) setMessage('') }} onTimeUpdate={event => { const next = logicalPlaybackPosition(0, event.currentTarget.currentTime, durationRef.current); const now = Date.now(); if (now - lastRendered.current >= 250) { lastRendered.current = now; setPosition(next) } if (now - lastSaved.current > 10000) { lastSaved.current = now; void save() } }} onVolumeChange={event => { setVolume(event.currentTarget.volume); setMuted(event.currentTarget.muted) }} onPause={() => { decoderRef.current?.suspend(); setPlaying(false); void save() }} onEnded={() => void save().then(() => onAdvance(preferenceRef.current))} onError={() => void recover()} onSeeking={event => decoderRef.current?.seek(event.currentTarget.currentTime)} />
+    <video ref={video} src={playbackURL ? api.streamURL(playbackURL) : undefined} autoplay playsInline onLoadedMetadata={event => { if (active.resumeMs > 0) event.currentTarget.currentTime = active.resumeMs / 1000; if (shouldPlay.current) void event.currentTarget.play().catch(() => setMessage('Press Play to start playback.')) }} onWaiting={() => { if (!decodeFailed.current) setMessage(active.download.playbackMode === 'progressive' ? 'Buffering the next downloaded segment…' : 'Buffering…') }} onCanPlay={() => { recovering.current = false; recoverAttempts.current = 0; if (!decodeFailed.current) setMessage('') }} onPlaying={() => { decoderRef.current?.resume(); recovering.current = false; recoverAttempts.current = 0; setPlaying(true); if (!decodeFailed.current) setMessage('') }} onTimeUpdate={event => { const next = logicalPlaybackPosition(0, event.currentTarget.currentTime, durationRef.current); const now = Date.now(); if (now - lastRendered.current >= 250) { lastRendered.current = now; setPosition(next) } if (now - lastSaved.current > 10000) { lastSaved.current = now; void save() } }} onVolumeChange={event => { setVolume(event.currentTarget.volume); setMuted(event.currentTarget.muted) }} onPause={() => { decoderRef.current?.suspend(); setPlaying(false); void save() }} onEnded={() => void save().then(() => onAdvance(preferenceRef.current))} onError={() => void recover()} onSeeking={event => decoderRef.current?.seek(event.currentTarget.currentTime)} />
     <div class="player-chrome">
       <div class="player-heading"><strong>{active.download.displayTitle || active.download.filePath}</strong><span>{active.download.playbackMode === 'progressive' ? 'Streaming while downloading' : 'Downloaded file'}</span></div>
       <div class="player-scrubber"><input aria-label="Playback position" type="range" min="0" max={mediaInfo?.durationMs || 1} step="1000" value={Math.min(position, mediaInfo?.durationMs || 1)} disabled={!mediaInfo} onInput={event => setPosition(Number(event.currentTarget.value))} onChange={event => restartAt(Number(event.currentTarget.value))} /><div><time>{formatPlaybackTime(position)}</time><time>{mediaInfo ? formatPlaybackTime(mediaInfo.durationMs) : 'Preparing…'}</time></div></div>

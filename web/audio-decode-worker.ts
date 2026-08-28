@@ -22,6 +22,7 @@ const RETRY_DELAY_MS = 2000;
 const RETRY_AFTER_MIN_MS = 2000;
 const RETRY_AFTER_MAX_MS = 30000;
 const MAX_DECODE_FAILURES = 3;
+const MAX_FETCH_ATTEMPTS = 3;
 const WINDOW_FILE = 'window.bin';
 const OUTPUT_FILE = 'out.pcm';
 
@@ -92,12 +93,15 @@ async function runSession(start: Extract<WorkerInMessage, { type: 'start' }>, se
   // absent and per-track maps (0:a:N, N>0) resolve to no streams at all; prepending
   // the header region keeps the demuxer able to address every audio track. Windows
   // that already contain it are decoded as-is via decodeWindow's decodePos check.
-  let headerBytes: Uint8Array | null = null;
-  try { headerBytes = await fetchRange(start.url, 0, Math.min(HEADER_BYTES, start.totalBytes) - 1, sessionID, abort) } catch { headerBytes = null }
+  const headerBytes = await fetchRange(start.url, 0, Math.min(HEADER_BYTES, start.totalBytes) - 1, sessionID, abort);
   if (session !== sessionID) return;
-  // The prepended header decodes to real audio from the file start; those frames are
-  // dropped so only the window's own bytes reach the audio graph.
-  const headerFrames = headerBytes ? Math.round(headerBytes.length / Math.max(1, start.bytesPerSecond) * DECODE_SAMPLE_RATE) : 0;
+  // The prepended header decodes to real audio from the file start; those frames
+  // must be dropped so only the window's own bytes reach the audio graph. How
+  // much audio the header region actually holds is measured once per session, the
+  // first time a window needs the drop, by decoding the header alone through the
+  // same ffmpeg path. An average-bitrate estimate mis-measures VBR files by
+  // seconds and leaked file-start audio into every prepended window.
+  let headerFrames = -1;
   let fetchPos = begin;
   let decodePos = begin;
   let queued: Uint8Array[] = [];
@@ -117,6 +121,11 @@ async function runSession(start: Extract<WorkerInMessage, { type: 'start' }>, se
     queuedBytes += chunk.length;
     fetchPos += chunk.length;
     if (queuedBytes < windowBytes && fetchPos < start.totalBytes) continue;
+    if (headerBytes && decodePos >= headerBytes.length && headerFrames < 0) {
+      const measured = decodeFrames(headerBytes, start.audioOrdinal);
+      headerFrames = measured ? measured.frames : 0;
+      console.debug(`[audio-decode] header region measures ${(headerFrames / DECODE_SAMPLE_RATE).toFixed(3)}s of audio${measured ? '' : ' (undecodable alone; keeping its audio)'}`);
+    }
     const windowStart = decodePos;
     const decoded = decodeWindow(concatBytes(queued, queuedBytes), decodePos, headerBytes, headerFrames, sessionID, start.audioOrdinal);
     queued = [];
@@ -134,10 +143,20 @@ async function runSession(start: Extract<WorkerInMessage, { type: 'start' }>, se
   if (session === sessionID) { console.debug(`[audio-decode] session ${sessionID} end-of-stream at byte ${fetchPos}`); post({ type: 'eos', session: sessionID }) }
 }
 
-// One range fetch with the full stall contract: 503 + Retry-After while pieces are
-// missing, a watchdog that abandons silent reads, and retries that keep whatever a
+// Why a range fetch cannot proceed. Permanent failures (4xx: the stream id is
+// gone, the range is unsatisfiable) must surface as a session error instead of
+// being retried forever; transient ones (network drops, 5xx flapping, empty
+// responses) are retried a bounded number of times before the same happens.
+class FetchFailure extends Error {
+  constructor(message: string, readonly permanent: boolean) { super(message) }
+}
+
+// One range fetch with the full stall contract: 503 + Retry-After while pieces
+// are missing (the server parks reads on purpose, so that loop stays open), a
+// watchdog that abandons silent reads, and bounded retries that keep whatever a
 // stalled body already delivered (the server can end a response early mid-range).
 async function fetchRange(url: string, start: number, end: number, sessionID: number, abort: AbortController): Promise<Uint8Array> {
+  let attempts = 0;
   for (; ;) {
     if (session !== sessionID) throw new Error('decode session replaced');
     const attempt = new AbortController();
@@ -154,8 +173,8 @@ async function fetchRange(url: string, start: number, end: number, sessionID: nu
         await delay(wait);
         continue;
       }
-      if (!response.ok) throw new Error(`stream HTTP ${response.status}`);
-      if (!response.body) throw new Error('stream body unavailable');
+      if (!response.ok) throw new FetchFailure(`stream HTTP ${response.status}`, response.status < 500);
+      if (!response.body) throw new FetchFailure('stream body unavailable', true);
       const reader = response.body.getReader();
       const parts: Uint8Array[] = [];
       let received = 0;
@@ -164,7 +183,7 @@ async function fetchRange(url: string, start: number, end: number, sessionID: nu
         try {
           chunk = await reader.read();
         } catch {
-          if (!stalled) throw new Error('stream read failed');
+          if (!stalled) throw new FetchFailure('stream read failed', false);
           break;
         }
         if (chunk.done) break;
@@ -173,18 +192,17 @@ async function fetchRange(url: string, start: number, end: number, sessionID: nu
         clearTimeout(watchdog);
         watchdog = setTimeout(() => { stalled = true; attempt.abort() }, STALL_TIMEOUT_MS);
       }
-      if (received === 0) {
-        if (session !== sessionID) throw new Error('decode session replaced');
-        post({ type: 'state', session: sessionID, status: 'stalling' });
-        await delay(RETRY_DELAY_MS);
-        continue;
-      }
+      if (received === 0) throw new FetchFailure('stream response was empty', false);
       return concatBytes(parts, received);
-    } catch {
+    } catch (error) {
       clearTimeout(watchdog);
       if (abort.signal.aborted || session !== sessionID) throw new Error('decode session replaced');
+      const failure = error instanceof FetchFailure ? error : new FetchFailure('stream read failed', false);
+      attempts++;
+      if (failure.permanent || attempts >= MAX_FETCH_ATTEMPTS) throw failure;
+      console.debug(`[audio-decode] range ${start}-${end} failed (${failure.message}); retry ${attempts}/${MAX_FETCH_ATTEMPTS - 1}`);
       post({ type: 'state', session: sessionID, status: 'stalling' });
-      await delay(RETRY_DELAY_MS);
+      await delay(RETRY_DELAY_MS * attempts);
     } finally {
       abort.signal.removeEventListener('abort', relay);
       clearTimeout(watchdog);
@@ -192,37 +210,47 @@ async function fetchRange(url: string, start: number, end: number, sessionID: nu
   }
 }
 
-// Decode one window to interleaved f32 stereo at the fixed output rate and transfer
-// the PCM buffer to the main thread. beginByte is the stream position the window's
-// content starts at, so the controller can trim header-region sessions to position.
-// Windows that received a prepended header decode the header's audio in front of
-// their own bytes; headerFrames drops exactly that region so the schedule never
-// hears the file's start twice.
-function decodeWindow(slice: Uint8Array, decodePos: number, headerBytes: Uint8Array | null, headerFrames: number, sessionID: number, audioOrdinal: number): boolean {
+// Run one input blob through the ffmpeg decode path and return the raw
+// interleaved f32 stereo output with its frame count, or null when ffmpeg cannot
+// decode it. Shared by the standalone header measurement and the window decode,
+// so the measured header audio and the window content come from one code path.
+function decodeFrames(input: Uint8Array, audioOrdinal: number): { raw: Uint8Array; frames: number } | null {
   const instance = core;
-  if (!instance) return false;
-  const prepended = !!headerBytes && decodePos >= headerBytes.length;
-  const input = prepended && headerBytes ? concatBytes([headerBytes, slice], headerBytes.length + slice.length) : slice;
+  if (!instance) return null;
   try {
     instance.FS.writeFile(WINDOW_FILE, input);
     instance.exec('-hide_banner', '-loglevel', 'error', '-nostdin', '-i', WINDOW_FILE, '-vn', '-sn', '-dn', '-map', `0:a:${audioOrdinal}`, '-f', 'f32le', '-acodec', 'pcm_f32le', '-ac', String(DECODE_CHANNELS), '-ar', String(DECODE_SAMPLE_RATE), OUTPUT_FILE);
     const code = instance.ret;
     instance.reset();
-    if (code !== 0) return false;
+    if (code !== 0) return null;
     const raw = instance.FS.readFile(OUTPUT_FILE);
-    const decoded = Math.floor(raw.length / (DECODE_CHANNELS * 4));
-    const drop = prepended ? Math.min(headerFrames, decoded) : 0;
-    const frames = decoded - drop;
-    if (frames <= 0) return false;
-    const pcm = new Float32Array(raw.buffer, drop * DECODE_CHANNELS * 4, frames * DECODE_CHANNELS);
-    post({ type: 'pcm', session: sessionID, data: pcm, frames, beginByte: decodePos }, [pcm.buffer]);
-    return true;
+    return { raw, frames: Math.floor(raw.length / (DECODE_CHANNELS * 4)) };
   } catch {
-    return false;
+    return null;
   } finally {
     try { instance.FS.unlink(OUTPUT_FILE) } catch { }
     try { instance.FS.unlink(WINDOW_FILE) } catch { }
   }
+}
+
+// Decode one window to interleaved f32 stereo at the fixed output rate and
+// transfer the PCM buffer to the main thread. beginByte is the stream position
+// the window's content starts at, so the controller can trim header-region
+// sessions to position. Windows that received a prepended header decode the
+// header's audio in front of their own bytes; headerFrames — measured once per
+// session — drops exactly that region so the schedule never hears the file's
+// start twice.
+function decodeWindow(slice: Uint8Array, decodePos: number, headerBytes: Uint8Array | null, headerFrames: number, sessionID: number, audioOrdinal: number): boolean {
+  const prepended = !!headerBytes && decodePos >= headerBytes.length;
+  const input = prepended && headerBytes ? concatBytes([headerBytes, slice], headerBytes.length + slice.length) : slice;
+  const decoded = decodeFrames(input, audioOrdinal);
+  if (!decoded) return false;
+  const drop = prepended ? Math.min(headerFrames, decoded.frames) : 0;
+  const frames = decoded.frames - drop;
+  if (frames <= 0) return false;
+  const pcm = new Float32Array(decoded.raw.buffer, drop * DECODE_CHANNELS * 4, frames * DECODE_CHANNELS);
+  post({ type: 'pcm', session: sessionID, data: pcm, frames, beginByte: decodePos }, [pcm.buffer]);
+  return true;
 }
 
 function concatBytes(parts: Uint8Array[], total: number): Uint8Array {

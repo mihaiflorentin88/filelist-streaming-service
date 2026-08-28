@@ -1,7 +1,11 @@
 package httpapi
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -11,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mihaiflorentin88/filelist-streaming-service/internal/application"
 	"github.com/mihaiflorentin88/filelist-streaming-service/internal/domain"
 	"github.com/mihaiflorentin88/filelist-streaming-service/internal/platform/config"
 )
@@ -99,5 +104,107 @@ func TestContentTypeUsesBrowserMediaTypes(t *testing.T) {
 		if got := contentType(path); got != want {
 			t.Errorf("contentType(%q) = %q, want %q", path, got, want)
 		}
+	}
+}
+
+// — Acquire/GetDownload error mapping: a removed source is permanent (404),
+// anything the server can transiently fail to resolve (database restart, locked
+// database, torrent engine hiccup) is retryable (503 + Retry-After). Clients use
+// the split to stop hammering on 404 and keep best-effort persistence otherwise.
+
+type stubRepo struct {
+	application.Repository
+	downloadErr error
+}
+
+func (r stubRepo) GetDownload(context.Context, string) (domain.Download, error) {
+	return domain.Download{}, r.downloadErr
+}
+
+func newStubHandler(t *testing.T, downloadErr error) http.Handler {
+	t.Helper()
+	dir := t.TempDir()
+	b, err := json.Marshal(map[string]any{
+		"databasePath": filepath.Join(dir, "test.db"),
+		"downloadRoot": filepath.Join(dir, "downloads"),
+		"trustedCidrs": []string{"127.0.0.0/8", "::1/128", "192.0.2.0/24"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "settings.json")
+	if err := os.WriteFile(path, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(config.EnvironmentPrefix+"SETTINGS_PATH", path)
+	store, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := application.NewService(nil, nil, stubRepo{Repository: nil, downloadErr: downloadErr}, store)
+	return New(service, store, slog.New(slog.NewTextHandler(io.Discard, nil)), "test")
+}
+
+func TestStreamAcquireMissingSourceIs404(t *testing.T) {
+	handler := newStubHandler(t, sql.ErrNoRows)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/streams/abc", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("GET /api/v1/streams/abc status = %d, want 404", rec.Code)
+	}
+}
+
+func TestStreamAcquireTransientErrorIs503(t *testing.T) {
+	handler := newStubHandler(t, fmt.Errorf("get download: %w", errors.New("database is locked")))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/streams/abc", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("GET /api/v1/streams/abc status = %d, want 503", rec.Code)
+	}
+	if rec.Header().Get("Retry-After") == "" {
+		t.Fatal("transient acquire error lost the Retry-After hint")
+	}
+	var problem struct {
+		Status int    `json:"status"`
+		Detail string `json:"detail"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil {
+		t.Fatal(err)
+	}
+	if problem.Status != http.StatusServiceUnavailable || !strings.Contains(problem.Detail, "database is locked") {
+		t.Fatalf("problem body = %s, want 503 with the original detail", rec.Body.String())
+	}
+}
+
+func TestPlaybackUpdateMissingSourceIs404(t *testing.T) {
+	handler := newStubHandler(t, sql.ErrNoRows)
+	rec := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPut, "/api/v1/playback/abc", strings.NewReader(`{"positionMs":1000,"durationMs":5000}`))
+	request.Header.Set("Content-Type", "application/json")
+	handler.ServeHTTP(rec, request)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("PUT /api/v1/playback/abc status = %d, want 404", rec.Code)
+	}
+}
+
+func TestPlaybackUpdateTransientErrorIs503(t *testing.T) {
+	handler := newStubHandler(t, fmt.Errorf("get download: %w", errors.New("database is locked")))
+	rec := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPut, "/api/v1/playback/abc", strings.NewReader(`{"positionMs":1000,"durationMs":5000}`))
+	request.Header.Set("Content-Type", "application/json")
+	handler.ServeHTTP(rec, request)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("PUT /api/v1/playback/abc status = %d, want 503", rec.Code)
+	}
+}
+
+func TestPlaybackUpdateNegativeInputIs400(t *testing.T) {
+	handler := newStubHandler(t, nil)
+	rec := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPut, "/api/v1/playback/abc", strings.NewReader(`{"positionMs":-1,"durationMs":5000}`))
+	request.Header.Set("Content-Type", "application/json")
+	handler.ServeHTTP(rec, request)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("PUT /api/v1/playback/abc status = %d, want 400", rec.Code)
 	}
 }

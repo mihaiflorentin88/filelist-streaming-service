@@ -57,7 +57,7 @@ export function formatBytes(value: number): string { if (!Number.isFinite(value)
 export class API {
   base: string;
   constructor(base: string) { this.base = base.replace(/\/$/, '') }
-  async call<T>(path: string, init?: RequestInit): Promise<T> { const r = await fetch(`${this.base}/api/v1${path}`, { headers: { 'Content-Type': 'application/json' }, ...init }); if (!r.ok) { const p = await r.json().catch(() => ({ detail: r.statusText })); throw new Error(p.detail || r.statusText) } if (r.status === 204) return undefined as T; return r.json() }
+  async call<T>(path: string, init?: RequestInit): Promise<T> { const r = await fetch(`${this.base}/api/v1${path}`, { headers: { 'Content-Type': 'application/json' }, ...init }); if (!r.ok) { const p = await r.json().catch(() => ({ detail: r.statusText })); throw Object.assign(new Error(p.detail || r.statusText), { status: r.status }) } if (r.status === 204) return undefined as T; return r.json() }
   info() { return this.call<{ name: string; instanceName?: string; version: string; apiVersion?: string; configured: boolean; capabilities?: string[] }>('/system/info') }
   latest(category = '') { return this.call<Page<Release>>('/catalog/latest?category=' + encodeURIComponent(category)) }
   search(q: string) { return this.call<Page<Release>>('/catalog/search?query=' + encodeURIComponent(q)) }
