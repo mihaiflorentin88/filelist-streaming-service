@@ -17,11 +17,11 @@ beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 
 describe('Controls visibility — browser policy', () => {
-  it('hides once after five idle seconds, not a tick sooner', () => {
+  it('hides once after two idle seconds, not a tick sooner', () => {
     const { controls, changes } = create();
     expect(controls.visible).toBe(true);
     controls.reveal();
-    vi.advanceTimersByTime(4999);
+    vi.advanceTimersByTime(1999);
     expect(controls.visible).toBe(true);
     vi.advanceTimersByTime(1);
     expect(changes).toEqual([false]);
@@ -29,12 +29,12 @@ describe('Controls visibility — browser policy', () => {
     expect(changes).toEqual([false]);
   });
 
-  it('restarts the five seconds on every reveal', () => {
+  it('restarts the two seconds on every reveal', () => {
     const { controls } = create();
     controls.reveal();
-    vi.advanceTimersByTime(3000);
+    vi.advanceTimersByTime(1000);
     controls.reveal();
-    vi.advanceTimersByTime(4999);
+    vi.advanceTimersByTime(1999);
     expect(controls.visible).toBe(true);
     vi.advanceTimersByTime(1);
     expect(controls.visible).toBe(false);
@@ -44,16 +44,20 @@ describe('Controls visibility — browser policy', () => {
     const { controls } = create({ playing: true });
     controls.setPlaying(false);
     controls.reveal();
-    vi.advanceTimersByTime(5000);
+    vi.advanceTimersByTime(1999);
+    expect(controls.visible).toBe(true);
+    vi.advanceTimersByTime(1);
     expect(controls.visible).toBe(false);
   });
 
   it('pausing mid-count does not stop the hide', () => {
     const { controls } = create();
     controls.reveal();
-    vi.advanceTimersByTime(2000);
+    vi.advanceTimersByTime(1000);
     controls.setPlaying(false);
-    vi.advanceTimersByTime(3000);
+    vi.advanceTimersByTime(999);
+    expect(controls.visible).toBe(true);
+    vi.advanceTimersByTime(1);
     expect(controls.visible).toBe(false);
   });
 
@@ -65,7 +69,7 @@ describe('Controls visibility — browser policy', () => {
     expect(controls.visible).toBe(true);
     controls.setPanelOpen(false);
     controls.refresh();
-    vi.advanceTimersByTime(4999);
+    vi.advanceTimersByTime(1999);
     expect(controls.visible).toBe(true);
     vi.advanceTimersByTime(1);
     expect(controls.visible).toBe(false);
@@ -79,21 +83,23 @@ describe('Controls visibility — browser policy', () => {
     expect(controls.visible).toBe(true);
     controls.setStatus(false);
     controls.refresh();
-    vi.advanceTimersByTime(5000);
+    vi.advanceTimersByTime(1999);
+    expect(controls.visible).toBe(true);
+    vi.advanceTimersByTime(1);
     expect(controls.visible).toBe(false);
   });
 
   it('re-arms from zero when a hold clears mid-count', () => {
     const { controls } = create();
     controls.reveal();
-    vi.advanceTimersByTime(1000);
+    vi.advanceTimersByTime(500);
     controls.setStatus(true);
     controls.refresh();
-    vi.advanceTimersByTime(5000);
+    vi.advanceTimersByTime(2000);
     expect(controls.visible).toBe(true);
     controls.setStatus(false);
     controls.refresh();
-    vi.advanceTimersByTime(4999);
+    vi.advanceTimersByTime(1999);
     expect(controls.visible).toBe(true);
     vi.advanceTimersByTime(1);
     expect(controls.visible).toBe(false);
@@ -113,30 +119,32 @@ describe('Controls visibility — TV policy', () => {
   const createTV = (overrides: Partial<{ playing: boolean; panelOpen: boolean; statusShowing: boolean }> = {}): Harness => {
     const changes: boolean[] = [];
     const controls = new ControlsVisibility({
-      policy: { armWhilePaused: false, statusHolds: false },
+      policy: { armWhilePaused: true, statusHolds: false },
       onChange: visible => changes.push(visible),
       ...overrides,
     });
     return { controls, changes };
   };
 
-  it('hides five seconds after a plain reveal while playing', () => {
+  it('hides two seconds after a plain reveal while playing', () => {
     const { controls } = createTV({ playing: true });
     controls.reveal();
-    vi.advanceTimersByTime(4999);
+    vi.advanceTimersByTime(1999);
     expect(controls.visible).toBe(true);
     vi.advanceTimersByTime(1);
     expect(controls.visible).toBe(false);
   });
 
-  it('never arms while paused; resuming starts the countdown', () => {
-    const { controls } = createTV();
+  it('hides while paused, like the browser — pausing is not a hold', () => {
+    const { controls } = createTV({ playing: true });
+    controls.setPlaying(false);
     controls.reveal();
-    vi.advanceTimersByTime(60_000);
+    vi.advanceTimersByTime(1999);
     expect(controls.visible).toBe(true);
+    vi.advanceTimersByTime(1);
+    expect(controls.visible).toBe(false);
     controls.setPlaying(true);
-    controls.reveal();
-    vi.advanceTimersByTime(5000);
+    vi.advanceTimersByTime(60_000);
     expect(controls.visible).toBe(false);
   });
 
@@ -148,7 +156,7 @@ describe('Controls visibility — TV policy', () => {
     expect(controls.visible).toBe(true);
     controls.setPanelOpen(false);
     controls.reveal();
-    vi.advanceTimersByTime(4999);
+    vi.advanceTimersByTime(1999);
     expect(controls.visible).toBe(true);
     vi.advanceTimersByTime(1);
     expect(controls.visible).toBe(false);
@@ -166,7 +174,7 @@ describe('Controls visibility — TV policy', () => {
     controls.reveal(true);
     vi.advanceTimersByTime(1000);
     controls.reveal();
-    vi.advanceTimersByTime(4999);
+    vi.advanceTimersByTime(1999);
     expect(controls.visible).toBe(true);
     vi.advanceTimersByTime(1);
     expect(controls.visible).toBe(false);
@@ -176,7 +184,9 @@ describe('Controls visibility — TV policy', () => {
     const { controls } = createTV({ playing: true });
     controls.setStatus(true);
     controls.reveal();
-    vi.advanceTimersByTime(5000);
+    vi.advanceTimersByTime(1999);
+    expect(controls.visible).toBe(true);
+    vi.advanceTimersByTime(1);
     expect(controls.visible).toBe(false);
   });
 
@@ -188,7 +198,9 @@ describe('Controls visibility — TV policy', () => {
     expect(controls.visible).toBe(true);
     controls.setPlaying(true);
     controls.reveal();
-    vi.advanceTimersByTime(5000);
+    vi.advanceTimersByTime(1999);
+    expect(controls.visible).toBe(true);
+    vi.advanceTimersByTime(1);
     expect(controls.visible).toBe(false);
   });
 
@@ -197,7 +209,7 @@ describe('Controls visibility — TV policy', () => {
     controls.reveal(true);
     vi.advanceTimersByTime(400);
     controls.reveal();
-    vi.advanceTimersByTime(4999);
+    vi.advanceTimersByTime(1999);
     expect(controls.visible).toBe(true);
     vi.advanceTimersByTime(1);
     expect(controls.visible).toBe(false);

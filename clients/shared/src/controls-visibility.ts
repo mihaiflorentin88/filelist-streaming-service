@@ -3,7 +3,7 @@
 // status state — and apply the visibility it emits; per-client differences are
 // policy parameters, not divergent logic.
 export interface ControlsVisibilityPolicy {
-  /** False makes a paused/buffered/waiting player hold controls (TV); true hides regardless of playback (browser). */
+  /** True hides controls regardless of playback state; false makes a paused/buffered/waiting player hold them. */
   armWhilePaused: boolean;
   /** True holds controls while a transient status message shows (browser); false ignores status (TV). */
   statusHolds: boolean;
@@ -33,7 +33,7 @@ export class ControlsVisibility {
   constructor(options: ControlsVisibilityOptions) {
     this.#policy = options.policy;
     this.#onChange = options.onChange;
-    this.#timeoutMs = options.timeoutMs ?? 5000;
+    this.#timeoutMs = options.timeoutMs ?? 2000;
     this.#playing = options.playing ?? false;
     this.#panelOpen = options.panelOpen ?? false;
     this.#statusShowing = options.statusShowing ?? false;

@@ -157,7 +157,7 @@ function BrowserPlayer({active,onClose,onStateChanged,onAdvance}:{active:ActiveP
     return()=>{cancelled=true};
   },[active.download.id]);
   // Player chrome auto-hide: the shared controller holds controls while a panel
-  // or a status message is shown; otherwise 5 idle seconds hide them until the
+  // or a status message is shown; otherwise 2 idle seconds hide them until the
   // next mouse move or key press, windowed and fullscreen alike.
   useEffect(()=>{
     if(controlsVisible)controls.refresh();

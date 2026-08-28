@@ -80,7 +80,7 @@ function Player({api, download, resumeMs, preferences, onClose, onStateChanged, 
   menuRef.current = menu;
   controlsVisibleRef.current = controlsVisible;
   subtitleDelayRef.current = subtitleDelay;
-  const controls=useMemo(()=>new ControlsVisibility({policy:{armWhilePaused:false,statusHolds:false},onChange:value=>{controlsVisibleRef.current=value;setControlsVisible(value);}}),[]);
+  const controls=useMemo(()=>new ControlsVisibility({policy:{armWhilePaused:true,statusHolds:false},onChange:value=>{controlsVisibleRef.current=value;setControlsVisible(value);}}),[]);
   const save = async () => {if (duration.current > 0) try{await api.updatePlayback(download.id, current.current, duration.current);onStateChanged()}catch{}};
   const savePreferences=async(value:PlaybackPreferences)=>{preferenceRef.current=value;try{preferenceRef.current=await api.updatePlaybackPreferences(download.id,value)}catch{}};
 
@@ -147,7 +147,7 @@ function Player({api, download, resumeMs, preferences, onClose, onStateChanged, 
     try {
       const shouldPlay = force ?? !playing.current;
       if (shouldPlay) {av.play(); playing.current = true; setPhase('playing'); setMessage(''); controls.setPlaying(true); revealControls();}
-      else {av.pause(); playing.current = false; setPhase('paused'); setMessage('Paused'); controls.setPlaying(false); revealControls(true); save();}
+      else {av.pause(); playing.current = false; setPhase('paused'); setMessage('Paused'); controls.setPlaying(false); revealControls(); save();}
     } catch {}
   }
 
@@ -217,7 +217,7 @@ function Player({api, download, resumeMs, preferences, onClose, onStateChanged, 
         else if (!autoSubtitleAttempted.current) {autoSubtitleAttempted.current = true; void autoSelectSubtitles(allTracks);}
         if (startAt > 0 && startAt < duration.current) av.seekTo(clampSeek(startAt, duration.current));
         if (shouldPlay) {av.play(); playing.current = true; setPhase('playing'); setMessage(''); controls.setPlaying(true); revealControls();}
-        else {playing.current = false; setPhase('paused'); setMessage('Paused'); controls.setPlaying(false); revealControls(true);}
+        else {playing.current = false; setPhase('paused'); setMessage('Paused'); controls.setPlaying(false); revealControls();}
       }, (error: string) => void recover(error || 'AVPlay could not prepare this source.', token));
     } catch (error) {void recover((error as Error).message, token);}
   }
