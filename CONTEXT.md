@@ -47,7 +47,10 @@ Playing a torrent before it completes by serving the pieces already on disk.
 _Avoid_: streaming (unqualified)
 
 **Direct play**:
-Serving original bytes so the client device decodes everything; the TV playback mode.
+Serving original bytes so the client device decodes everything; on both screens for natively playable content.
+
+**Client decode**:
+The browser decoding audio it cannot play natively (AC3/DTS class) with its own decoder while video bytes are still served as-is; the browser-side counterpart of Direct play under the no-transcode rule.
 
 ### Subtitles
 
