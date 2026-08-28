@@ -45,6 +45,8 @@ jobs:
           cache: npm
       - name: Install locked dependencies
         run: npm ci
+      - name: Client unit tests
+        run: npm run test:clients
       - name: Test and build browser and TV clients
         run: npm run build
       - name: Package and validate unsigned Apps2Samsung WGT

@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test": "vitest run --passWithNoTests",
     "build": "tsc --noEmit && vite build"
   },
   "dependencies": {
@@ -15,6 +16,7 @@
   "devDependencies": {
     "@preact/preset-vite": "2.10.2",
     "typescript": "5.9.2",
-    "vite": "7.3.6"
+    "vite": "7.3.6",
+    "vitest": "4.1.10"
   }
 }
