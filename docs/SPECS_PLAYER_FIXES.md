@@ -1,6 +1,6 @@
 # Specs — Player Fixes
 
-Status: **GRILL CLOSED 2026-08-28 — all decisions resolved** (see ledger at bottom). Specs finalization awaits the user's go. Nothing here is implemented until all phases complete and the user gives the go.
+Status: **IMPLEMENTED 2026-08-28** — Specs 1–2 shipped through tickets #23–#31 (decision ledger below records every resolved grill decision). Outstanding verification: the viewer's manual TV test (hide button, 2 s auto-hide, any-key reveal) and audible confirmation on household screens.
 
 Scope: reported 2026-08-28 against the post-`0ffcba8` build:
 

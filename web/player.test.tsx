@@ -3,6 +3,7 @@ import { render } from 'preact';
 import { BrowserPlayer } from './src';
 import type { Download, MediaAudioTrack, MediaInfo, PlaybackPreferences } from '@filelist/shared';
 import type { WorkerInMessage, WorkerOutMessage } from './audio-decode';
+import { FakeAudioContext, FakeWorker } from './test-fakes';
 
 // — Decode-fallback contract, verified through the player wiring with the same
 // injected fakes as the controller suite: a fake AudioContext and a fake Worker
@@ -31,36 +32,6 @@ const harness = vi.hoisted(() => {
 });
 vi.mock('@filelist/shared', async importOriginal => ({ ...(await importOriginal<SharedModule>()), API: harness.FakeAPI }));
 
-class FakeAudioContext {
-  state: AudioContextState = 'running';
-  currentTime = 0;
-  closed = false;
-  onstatechange: (() => void) | null = null;
-  readonly destination = {};
-  resume() { this.state = 'running'; return Promise.resolve() }
-  suspend() { this.state = 'suspended'; return Promise.resolve() }
-  close() { this.closed = true; return Promise.resolve() }
-  createGain(): GainNode { return { connect() { }, gain: { value: 1, setTargetAtTime() { } } } as unknown as GainNode }
-  createBuffer(channels: number, frames: number): AudioBuffer {
-    const data = new Float32Array(frames * channels);
-    return { duration: frames / 48000, getChannelData: (channel: number) => data.slice(channel * frames, (channel + 1) * frames) } as unknown as AudioBuffer;
-  }
-  createBufferSource(): AudioBufferSourceNode {
-    return { buffer: null, onended: null, connect() { }, start() { }, stop() { } } as unknown as AudioBufferSourceNode;
-  }
-}
-
-class FakeWorker {
-  static created: FakeWorker[] = [];
-  onmessage: ((event: { data: WorkerOutMessage }) => void) | null = null;
-  onerror: (() => void) | null = null;
-  terminated = false;
-  readonly sent: WorkerInMessage[] = [];
-  constructor() { FakeWorker.created.push(this) }
-  postMessage(message: WorkerInMessage) { this.sent.push(message) }
-  terminate() { this.terminated = true }
-  receive(message: WorkerOutMessage) { this.onmessage?.({ data: message }) }
-}
 
 // requestAnimationFrame drives both preact's deferred effects and the decode
 // controller's tick loop; the stub keeps every pending callback keyed by id so

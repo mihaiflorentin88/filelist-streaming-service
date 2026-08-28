@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AudioDecodeController, byteOffsetForTime, DECODE_SAMPLE_RATE, windowByteBudget } from './audio-decode';
-import type { DecodeOptions, DecodeStatus, WorkerInMessage, WorkerOutMessage } from './audio-decode';
+import { AudioDecodeController, byteOffsetForTime, windowByteBudget } from './audio-decode';
+import type { DecodeOptions, DecodeStatus } from './audio-decode';
+import { FakeAudioContext, FakeWorker } from './test-fakes';
 
 describe('Time to byte offset mapping', () => {
   it('maps seconds through the average byte rate', () => {
@@ -23,42 +24,6 @@ describe('Decode window byte budget', () => {
     expect(windowByteBudget(10_000_000)).toBe(16 * 1024 * 1024);
   });
 });
-
-// — Decode failure contract, verified through the controller's injected boundary.
-// A fake AudioContext and a fake Worker stand in for the browser internals so the
-// tests assert what a viewer experiences: a visible message on the onStatus
-// channel the player renders, a sane (unmuted) video element, and a terminated
-// decode session. Production code never passes the factories.
-class FakeAudioContext {
-  state: AudioContextState;
-  currentTime = 0;
-  closed = false;
-  onstatechange: (() => void) | null = null;
-  readonly destination = {};
-  constructor(state: AudioContextState = 'running') { this.state = state }
-  resume() { this.state = 'running'; return Promise.resolve() }
-  suspend() { this.state = 'suspended'; return Promise.resolve() }
-  close() { this.closed = true; return Promise.resolve() }
-  createGain(): GainNode { return { connect() { }, gain: { value: 1, setTargetAtTime() { } } } as unknown as GainNode }
-  createBuffer(channels: number, frames: number): AudioBuffer {
-    const data = new Float32Array(frames * channels);
-    return { duration: frames / DECODE_SAMPLE_RATE, getChannelData: (channel: number) => data.slice(channel * frames, (channel + 1) * frames) } as unknown as AudioBuffer;
-  }
-  createBufferSource(): AudioBufferSourceNode {
-    return { buffer: null, onended: null, connect() { }, start() { }, stop() { } } as unknown as AudioBufferSourceNode;
-  }
-}
-
-class FakeWorker {
-  onmessage: ((event: { data: WorkerOutMessage }) => void) | null = null;
-  onerror: ((event: { message: string }) => void) | null = null;
-  terminated = false;
-  readonly sent: WorkerInMessage[] = [];
-  postMessage(message: WorkerInMessage) { this.sent.push(message) }
-  terminate() { this.terminated = true }
-  receive(message: WorkerOutMessage) { this.onmessage?.({ data: message }) }
-  failToLoad(message = 'network unreachable') { this.onerror?.({ message }) }
-}
 
 type ControllerHarness = {
   video: HTMLVideoElement;
