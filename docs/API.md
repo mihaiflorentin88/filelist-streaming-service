@@ -34,12 +34,11 @@ The normative contract is [OpenAPI](../api/openapi.yaml); the future event contr
 - `PUT|DELETE /favorites/{releaseId}`: idempotent release-level favorites.
 - `GET|PUT /playback/{sourceId}` and `PUT /playback/{sourceId}/watched`: exact resume and watched state.
 - `GET|PUT /playback/{sourceId}/preferences`: per-file audio language/index and subtitle auto/off/exact-selection state. Defaults come from server settings; selected subtitle provider/candidate IDs point at the reusable prepared-subtitle cache and never contain credentials.
-- `GET|HEAD /streams/{id}`: full or single-range streaming from requested downloaded pieces. Completed files use the local strategy without qBittorrent; incomplete files use qBittorrent's effective `temp_path` until the daemon moves them to `content_path`, and return `Retry-After` when initial pieces time out. Download responses expose `mimeType`, `playbackMode`, and `browserStreamUrl`.
-- `GET /streams/{id}/browser?audioTrack=&startMs=`: browser compatibility output. The requested original audio stream index is validated against `media-info`, FFmpeg seeks to the logical offset, copies video without re-encoding, converts only the selected audio to AAC stereo, and emits fragmented MP4. Tizen AVPlay always retains the original Range stream.
+- `GET|HEAD /streams/{id}`: full or single-range streaming from requested downloaded pieces. Completed files use the local strategy without qBittorrent; incomplete files use qBittorrent's effective `temp_path` until the daemon moves them to `content_path`, and return `Retry-After` when initial pieces time out. Download responses expose `mimeType` and `playbackMode`.
 
 Errors use `{type,title,status,detail}`. Invalid or multiple byte ranges return 416 and `Content-Range: bytes */<length>`.
 
-Embedded subtitle runtime paths are persisted as absolute `ffprobePath` and `ffmpegPath` settings. The adapter probes and extracts subtitle streams. The browser compatibility route may transcode audio only; video remains direct copy and Tizen never uses the compatibility route. Prepared subtitle associations are stored in SQLite so the same source/provider/candidate/target format is reused.
+Embedded subtitle runtime paths are persisted as absolute `ffprobePath` and `ffmpegPath` settings. The adapter probes and extracts subtitle streams. Prepared subtitle associations are stored in SQLite so the same source/provider/candidate/target format is reused.
 
 Successful deletion also removes its managed-download row. Playback history intentionally survives, so a title can remain in Recent or Watched and be prepared again later.
 

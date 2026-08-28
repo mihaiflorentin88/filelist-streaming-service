@@ -8,11 +8,11 @@ The 0.1.3 Smart Remote input path is confirmed on the target S90C. Version 0.2.0
 
 The Raspberry Pi server now maps HTTP byte ranges to qBittorrent pieces, reasserts sequential and first/last scheduling, and reads incomplete content from qBittorrent's effective temporary path. A throttled live test returned valid startup and tail HTTP 206 responses at 3.39% completion, and the Pi's existing `ffprobe` parsed that same progressive URL as Matroska with the expected duration. The server-side phase-3 defect is resolved.
 
-Browser video and Tizen AVPlay now retry incomplete streams as requested pieces become readable instead of waiting for 100% completion. Actual browser decoding and physical S90C AVPlay/remote behavior below 100% still need observation; server `ffprobe` is not a substitute for that client/device test.
+Browser video and Tizen AVPlay now retry incomplete streams as requested pieces become readable instead of waiting for 100% completion. The web player decodes non-native audio client-side (verified playing an EAC3 title from the raw progressive stream); actual audibility on household screens and physical S90C AVPlay/remote behavior below 100% still need observation; server `ffprobe` is not a substitute for that client/device test.
 
 ## Direct-play compatibility
 
-The server never transcodes video. The browser can convert the selected original audio track to AAC stereo while copying video, but an unsupported video codec/profile may still fail. Tizen remains direct-play through AVPlay, so unsupported TV video or audio formats require choosing another source.
+The server never transcodes anything (see `docs/adr/0001`). The web app decodes audio the browser cannot handle natively (AC3/EAC3/DTS) client-side with an audio-only WASM decoder and plays everything else natively; video is never re-encoded anywhere. Tizen remains direct-play through AVPlay, so unsupported TV video or audio formats require choosing another source.
 
 ## Catalog metadata coverage
 

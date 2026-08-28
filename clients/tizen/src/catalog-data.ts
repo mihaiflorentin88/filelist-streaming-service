@@ -12,4 +12,3 @@ export function householdSections(route:string,state:HouseholdState):HouseholdSe
 }
 
 export function trackerCategories(facets:CatalogFacets):string[]{return facets.categories;}
-export function effectiveCatalogSort(route:string,sort:string):string{return route==='recent'?'newest':sort;}

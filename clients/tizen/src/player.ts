@@ -1,4 +1,4 @@
-import type {Download} from '@filelist/shared';
+import {canonicalLanguage, languageDisplayName, type Download} from '@filelist/shared';
 
 export type PlayerAction = 'left'|'right'|'up'|'down'|'enter'|'back'|'play'|'pause'|'play-pause'|'stop'|'rewind'|'fast-forward'|'previous'|'next'|null;
 
@@ -39,12 +39,10 @@ export function playerAction(key: string, keyCode: number): PlayerAction {
 
 export interface AVTrack {index:number; type:string; language:string; label:string}
 
-function trackLanguage(value:string):string {const language=value.toLowerCase();if(/^(en|eng)(-|$)/.test(language))return'en';if(/^(ro|ron|rum)(-|$)/.test(language))return'ro';return language.split('-')[0]}
-
 export function preferredAudio(tracks:AVTrack[],language:string,index:number):AVTrack|null {
   const audio=tracks.filter(track=>track.type==='AUDIO');
-  const wanted=trackLanguage(language||'en');
-  return audio.find(track=>track.index===index&&trackLanguage(track.language)===wanted)||audio.find(track=>trackLanguage(track.language)===wanted)||audio.find(track=>trackLanguage(track.language)==='en')||audio[0]||null;
+  const wanted=canonicalLanguage(language||'en');
+  return audio.find(track=>track.index===index&&canonicalLanguage(track.language)===wanted)||audio.find(track=>canonicalLanguage(track.language)===wanted)||audio.find(track=>canonicalLanguage(track.language)==='en')||audio[0]||null;
 }
 
 export function normalizeTrack(track: any): AVTrack {
@@ -54,11 +52,10 @@ export function normalizeTrack(track: any): AVTrack {
   const rawCodec = String(extra.subtitle_type || extra.fourCC || extra.codec || extra.Codec || extra.codec_name || '');
   const codec = /^(text\/plain|text|unknown|0|-1)$/i.test(rawCodec) ? '' : rawCodec;
   const type = String(track.type || '').toUpperCase();
-  const names:Record<string,string>={ro:'Romanian',ron:'Romanian',rum:'Romanian',en:'English',eng:'English'};
-  const languageLabel=names[language]||language.toUpperCase();
-  const fallback=type==='TEXT'?`Subtitle ${Number(track.index)+1}`:type==='AUDIO'?`Audio ${Number(track.index)+1}`:`Track ${Number(track.index)+1}`;
-  const title=String(extra.track_title||extra.title||extra.Title||'').trim();
-  return {index: Number(track.index), type, language, label: [title,languageLabel||(!title?fallback:''),codec].filter(Boolean).join(' · ')};
+  const title = String(extra.track_title || extra.title || extra.Title || '').trim();
+  const hint = languageDisplayName(canonicalLanguage(language));
+  const label = [hint, title, codec].filter(Boolean).join(' · ') || `Unknown ${Number(track.index)+1}`;
+  return {index: Number(track.index), type, language, label};
 }
 
 export function preferredSubtitle(tracks: AVTrack[]): AVTrack | null {

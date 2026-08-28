@@ -1,6 +1,6 @@
 import {describe,expect,it} from 'vitest';
 import {CatalogFacets, HouseholdItem, HouseholdState} from '@filelist/shared';
-import {effectiveCatalogSort,householdSections,trackerCategories} from './catalog-data';
+import {householdSections,trackerCategories} from './catalog-data';
 
 const empty={favorites:[],continueWatching:[],recent:[],watched:[]} as HouseholdState;
 
@@ -13,10 +13,6 @@ describe('Tizen route data parity',()=>{
     expect(householdSections('home',empty).map(section=>section.key)).toEqual(['continue','favorites']);
     expect(householdSections('library',empty).map(section=>section.key)).toEqual(['continue','recent','watched']);
     expect(householdSections('favorites',empty).map(section=>section.key)).toEqual(['favorites']);
-  });
-  it('keeps Recently added ordered newest regardless of another route sort',()=>{
-    expect(effectiveCatalogSort('recent','seeders')).toBe('newest');
-    expect(effectiveCatalogSort('browse','seeders')).toBe('seeders');
   });
   it('renders one household dashboard card per canonical series title',()=>{
     const release={id:'silo-pack',name:'Silo Season 1',category:'TV-Series HD',sizeBytes:40_000_000_000,seeders:20,leechers:1,freeleech:false};

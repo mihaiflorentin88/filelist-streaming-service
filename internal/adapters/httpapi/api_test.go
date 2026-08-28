@@ -2,13 +2,59 @@ package httpapi
 
 import (
 	"encoding/json"
-	"slices"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/mihaiflorentin88/filelist-streaming-service/internal/domain"
 	"github.com/mihaiflorentin88/filelist-streaming-service/internal/platform/config"
 )
+
+func TestBrowserTranscodeRouteIsRemoved(t *testing.T) {
+	dir := t.TempDir()
+	b, err := json.Marshal(map[string]any{
+		"databasePath": filepath.Join(dir, "test.db"),
+		"downloadRoot": filepath.Join(dir, "downloads"),
+		"trustedCidrs": []string{"127.0.0.0/8", "::1/128", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "192.0.2.0/24"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "settings.json")
+	if err := os.WriteFile(path, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(config.EnvironmentPrefix+"SETTINGS_PATH", path)
+	store, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := New(nil, store, slog.New(slog.NewTextHandler(io.Discard, nil)), "test")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/streams/abc/browser", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("GET /api/v1/streams/abc/browser status = %d, want 404", rec.Code)
+	}
+}
+
+func TestDownloadDTOExposesOnlyProgressiveStream(t *testing.T) {
+	b, err := json.Marshal(downloadDTO(domain.Download{ID: "abc", State: "downloading"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(b)
+	if strings.Contains(text, "browserStreamUrl") {
+		t.Fatal("download DTO still advertises the removed browser compatibility stream")
+	}
+	if !strings.Contains(text, `"streamUrl":"/api/v1/streams/abc"`) {
+		t.Fatal("download DTO lost the progressive playback stream URL")
+	}
+}
 
 func TestParseRange(t *testing.T) {
 	tests := []struct {
@@ -21,48 +67,6 @@ func TestParseRange(t *testing.T) {
 		if s != tt.start || e != tt.end || p != tt.partial || ok != tt.ok {
 			t.Errorf("%q got %d,%d,%v,%v", tt.header, s, e, p, ok)
 		}
-	}
-}
-
-func TestBrowserStreamArgsCopiesVideoAndSelectsOriginalAudio(t *testing.T) {
-	info := domain.MediaInfo{DurationMS: 3_594_842, AudioTracks: []domain.MediaAudioTrack{
-		{Index: 1, Language: "eng", Channels: 6, Default: true},
-		{Index: 3, Language: "ron", Channels: 2},
-	}}
-	args, selected, err := browserStreamArgs("http://127.0.0.1/media", info, "3", "120000")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if selected.Index != 3 {
-		t.Fatalf("selected stream = %d", selected.Index)
-	}
-	wantPairs := [][]string{{"-ss", "120.000"}, {"-map", "0:3"}, {"-c:v", "copy"}, {"-c:a", "aac"}, {"-ac", "2"}}
-	for _, pair := range wantPairs {
-		found := false
-		for i := 0; i+1 < len(args); i++ {
-			if slices.Equal(args[i:i+2], pair) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Fatalf("missing %v in %v", pair, args)
-		}
-	}
-	for i := range args {
-		if strings.HasPrefix(args[i], "-c:v") && args[i] != "-c:v" {
-			t.Fatalf("unexpected video codec argument %q", args[i])
-		}
-	}
-}
-
-func TestBrowserStreamArgsRejectsInvalidTrackAndOffset(t *testing.T) {
-	info := domain.MediaInfo{DurationMS: 10_000, AudioTracks: []domain.MediaAudioTrack{{Index: 1, Language: "eng"}}}
-	if _, _, err := browserStreamArgs("input", info, "2", "0"); err == nil {
-		t.Fatal("expected invalid audio stream error")
-	}
-	if _, _, err := browserStreamArgs("input", info, "1", "10000"); err == nil {
-		t.Fatal("expected invalid offset error")
 	}
 }
 

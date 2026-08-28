@@ -19,7 +19,7 @@ This file records constraints and invariants that must survive context resets an
 - Completed playback must not depend on qBittorrent. Incomplete playback must keep selected files at normal priority, reapply sequential/first-last scheduling once, and resolve qBittorrent's effective `temp_path` beneath the configured root between read-ahead chunks.
 - A title-expansion request is suppressed when the title was refreshed less than one hour ago. FileList requests remain serialized even when the global background worker limit is higher.
 - Metadata is queued only for visible/searched media and patches clients through SSE. A parsed movie/series kind is a preference during TMDB lookup, not authority; the Find API may return the valid record in the other bucket.
-- SubDL has a limited daily quota. Automatic playback searches only torrent-contained and server-probed embedded subtitles. Online provider search requires the explicit **Find online subtitles** action. Prepared subtitle assets are persisted and reused.
+- SubDL has a limited daily quota. The web player lists all subtitle sources automatically when playback opens (contained, embedded, provider); the server's one-hour search cache bounds provider calls. The TV player keeps automatic search to torrent-contained and server-probed embedded subtitles and requires the explicit **Find online subtitles** action for providers. Prepared subtitle assets are persisted and reused.
 - Server-side progressive playback is confirmed only by a below-100% HTTP 206 plus media parsing. Keep browser and physical-TV playback status separate until each client is observed below 100%.
 
 ## TV interaction invariants

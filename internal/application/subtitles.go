@@ -105,7 +105,7 @@ func (s *Service) SearchSubtitles(ctx context.Context, downloadID, language stri
 					if track.Forced {
 						score += 5
 					}
-					items = append(items, domain.SubtitleCandidate{ID: strconv.Itoa(track.Index), Provider: "embedded", ProviderLabel: "Embedded", Language: track.Language, Title: label, FileName: label, ReleaseName: release.Name, Format: track.Codec, HearingImpaired: track.HearingImpaired, Description: "Embedded in the media file", Score: score})
+					items = append(items, domain.SubtitleCandidate{ID: strconv.Itoa(track.Index), Provider: "embedded", ProviderLabel: "Embedded", Language: domain.NormalizeLanguage(track.Language), Title: label, FileName: label, ReleaseName: release.Name, Format: track.Codec, HearingImpaired: track.HearingImpaired, Description: "Embedded in the media file", Score: score})
 				}
 			}
 		}
@@ -120,9 +120,13 @@ func (s *Service) SearchSubtitles(ctx context.Context, downloadID, language stri
 			}
 			for i := range found {
 				found[i].Provider = provider.Name()
+				found[i].Language = domain.NormalizeLanguage(found[i].Language)
 				found[i].Score += 100
 				if sameLanguage(language, found[i].Language) {
 					found[i].Score += 25
+				}
+				if cached, err := s.repo.HasSubtitleAsset(ctx, downloadID, found[i].Provider, found[i].ID); err == nil && cached {
+					found[i].Cached = true
 				}
 			}
 			items = append(items, found...)
@@ -161,6 +165,7 @@ func (s *Service) PrepareSubtitle(ctx context.Context, downloadID, providerName,
 		}
 	}
 	var source SubtitleDownload
+	language := ""
 	if providerName == "contained" {
 		index, parseErr := strconv.Atoi(candidateID)
 		if parseErr != nil {
@@ -205,6 +210,7 @@ func (s *Service) PrepareSubtitle(ctx context.Context, downloadID, providerName,
 		if readErr != nil {
 			return domain.SubtitleAsset{}, readErr
 		}
+		language = subtitleLanguage(selected.Path)
 		source = SubtitleDownload{Data: data, Format: filepath.Ext(path), Name: filepath.Base(path)}
 	} else if providerName == "embedded" {
 		if s.mediaProbe == nil {
@@ -216,6 +222,17 @@ func (s *Service) PrepareSubtitle(ctx context.Context, downloadID, providerName,
 		}
 		if _, statErr := os.Stat(d.AbsolutePath); statErr != nil {
 			return domain.SubtitleAsset{}, fmt.Errorf("media file is not ready for embedded subtitles: %w", statErr)
+		}
+		// The prepared asset persists the candidate's language so an
+		// embedded track keeps it across restarts instead of losing it to
+		// filename re-derivation.
+		if tracks, probeErr := s.mediaProbe.ProbeSubtitles(ctx, d.AbsolutePath); probeErr == nil {
+			for _, track := range tracks {
+				if track.Index == index {
+					language = domain.NormalizeLanguage(track.Language)
+					break
+				}
+			}
 		}
 		if err = os.MkdirAll(s.settings.Get().SubtitleCachePath, 0o750); err != nil {
 			return domain.SubtitleAsset{}, err
@@ -250,6 +267,7 @@ func (s *Service) PrepareSubtitle(ctx context.Context, downloadID, providerName,
 		if err != nil {
 			return domain.SubtitleAsset{}, err
 		}
+		language = domain.NormalizeLanguage(source.Language)
 	}
 	data, format, err := unpackSubtitle(source.Data, source.Format, source.Name, d.FilePath)
 	if err != nil {
@@ -280,7 +298,7 @@ func (s *Service) PrepareSubtitle(ctx context.Context, downloadID, providerName,
 		return domain.SubtitleAsset{}, err
 	}
 	pruneSubtitleCache(cache, s.settings.Get().SubtitleCacheMaxBytes, path)
-	asset := domain.SubtitleAsset{ID: id, SourceID: downloadID, Provider: providerName, CandidateID: candidateID, Name: source.Name, Language: subtitleLanguage(source.Name), URL: "/api/v1/subtitles/" + id + ext, Format: target, MimeType: mimeType, Path: path, CreatedAt: time.Now().UTC(), LastUsedAt: time.Now().UTC()}
+	asset := domain.SubtitleAsset{ID: id, SourceID: downloadID, Provider: providerName, CandidateID: candidateID, Name: source.Name, Language: language, URL: "/api/v1/subtitles/" + id + ext, Format: target, MimeType: mimeType, Path: path, CreatedAt: time.Now().UTC(), LastUsedAt: time.Now().UTC()}
 	if err = s.repo.SaveSubtitleAsset(ctx, asset); err != nil {
 		return domain.SubtitleAsset{}, err
 	}
@@ -356,6 +374,7 @@ func toWebVTT(data []byte, format string) ([]byte, error) {
 	}
 	return nil, fmt.Errorf("subtitle format %q cannot be used by the browser", format)
 }
+
 func vttTime(ms int64) string {
 	return fmt.Sprintf("%02d:%02d:%02d.%03d", ms/3600000, (ms/60000)%60, (ms/1000)%60, ms%1000)
 }
@@ -441,8 +460,10 @@ func supportedSubtitleExt(ext string) bool {
 	return false
 }
 
-var timeLine = regexp.MustCompile(`(?i)(\d{1,2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{1,2}):(\d{2}):(\d{2})[,.](\d{3})`)
-var assLine = regexp.MustCompile(`(?i)^Dialogue:[^,]*,(\d+):(\d{2}):(\d{2})[.](\d{2}),(\d+):(\d{2}):(\d{2})[.](\d{2}),[^,]*,[^,]*,[^,]*,[^,]*,[^,]*,[^,]*,(.*)$`)
+var (
+	timeLine = regexp.MustCompile(`(?i)(\d{1,2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{1,2}):(\d{2}):(\d{2})[,.](\d{3})`)
+	assLine  = regexp.MustCompile(`(?i)^Dialogue:[^,]*,(\d+):(\d{2}):(\d{2})[.](\d{2}),(\d+):(\d{2}):(\d{2})[.](\d{2}),[^,]*,[^,]*,[^,]*,[^,]*,[^,]*,[^,]*,(.*)$`)
+)
 
 func toSAMI(data []byte, format string) ([]byte, error) {
 	if bytes.IndexByte(data, 0) >= 0 {
@@ -499,6 +520,7 @@ func clockMS(parts []string) int64 {
 	}
 	return ((values[0]*60+values[1])*60+values[2])*1000 + values[3]
 }
+
 func assMS(parts []string) int64 {
 	values := make([]int64, 4)
 	for i := range values {
@@ -506,12 +528,14 @@ func assMS(parts []string) int64 {
 	}
 	return ((values[0]*60+values[1])*60+values[2])*1000 + values[3]*10
 }
+
 func cleanCue(value string) string {
 	value = regexp.MustCompile(`\{[^}]*\}`).ReplaceAllString(value, "")
 	value = strings.ReplaceAll(value, `\N`, "\n")
 	escaped := html.EscapeString(strings.TrimSpace(value))
 	return strings.ReplaceAll(escaped, "\n", "<br>")
 }
+
 func sameStem(media, sub string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSuffix(filepath.Base(sub), filepath.Ext(sub))), strings.ToLower(strings.TrimSuffix(filepath.Base(media), filepath.Ext(media))))
 }
@@ -528,10 +552,12 @@ func episodeKey(path string) string {
 	}
 	return match[3] + ":" + match[4]
 }
+
 func episodeMatches(media, subtitle string) bool {
 	left, right := episodeKey(media), episodeKey(subtitle)
 	return left == "" || right == "" || left == right
 }
+
 func filenameSimilarity(left, right string) int {
 	words := strings.Fields(strings.NewReplacer(".", " ", "_", " ", "-", " ").Replace(strings.ToLower(strings.TrimSuffix(filepath.Base(left), filepath.Ext(left)))))
 	haystack := " " + strings.Join(strings.Fields(strings.NewReplacer(".", " ", "_", " ", "-", " ").Replace(strings.ToLower(strings.TrimSuffix(filepath.Base(right), filepath.Ext(right))))), " ") + " "
@@ -550,26 +576,38 @@ func filenameSimilarity(left, right string) int {
 	}
 	return score
 }
+
 func sameLanguage(a, b string) bool {
-	a = strings.ToLower(a)
-	b = strings.ToLower(b)
-	if a == b {
-		return true
-	}
-	return (a == "ro" || a == "ron" || a == "rum") && (b == "ro" || b == "ron" || b == "rum") || (a == "en" || a == "eng") && (b == "en" || b == "eng")
+	return domain.NormalizeLanguage(a) == domain.NormalizeLanguage(b)
 }
+
+// subtitleNameMarkers are sidecar name words that may follow a language tag
+// without hiding it: Movie.jpn.forced.srt, Movie.ro.subs.srt.
+var subtitleNameMarkers = map[string]bool{
+	"cc": true, "forced": true, "sdh": true, "sub": true, "subs": true, "subtitle": true, "subtitles": true, "subtitrari": true,
+}
+
+var subtitleNameTokens = regexp.MustCompile(`[^a-z]+`)
+
+// subtitleLanguage derives the canonical subtitle language hinted by a
+// torrent-contained sidecar file name. A language tag is only recognized in
+// the last tokens of the name, optionally followed by subtitle markers;
+// anything else is undetermined so release words are never mistaken for
+// language codes.
 func subtitleLanguage(name string) string {
-	lower := strings.ToLower(name)
-	for _, part := range regexp.MustCompile(`[^a-z]+`).Split(lower, -1) {
-		if part == "ro" || part == "ron" || part == "rum" {
-			return "ro"
+	base := strings.TrimSuffix(strings.ToLower(filepath.Base(name)), strings.ToLower(filepath.Ext(name)))
+	tokens := subtitleNameTokens.Split(base, -1)
+	for i := len(tokens) - 1; i >= 0 && len(tokens)-i <= 3; i-- {
+		if code := domain.NormalizeLanguage(tokens[i]); code != "" {
+			return code
 		}
-		if part == "en" || part == "eng" {
-			return "en"
+		if !subtitleNameMarkers[tokens[i]] {
+			return ""
 		}
 	}
 	return ""
 }
+
 func pruneSubtitleCache(dir string, maximum int64, keep string) {
 	entries, _ := os.ReadDir(dir)
 	type item struct {

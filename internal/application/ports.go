@@ -48,9 +48,10 @@ type SubtitleQuery struct {
 	FallbackLanguage string
 }
 type SubtitleDownload struct {
-	Data   []byte
-	Format string
-	Name   string
+	Data     []byte
+	Format   string
+	Name     string
+	Language string
 }
 type SubtitleProvider interface {
 	Name() string
@@ -109,4 +110,5 @@ type Repository interface {
 	ListFavorites(context.Context, string) ([]domain.Favorite, error)
 	SaveSubtitleAsset(context.Context, domain.SubtitleAsset) error
 	GetSubtitleAsset(context.Context, string, string, string, string) (domain.SubtitleAsset, error)
+	HasSubtitleAsset(context.Context, string, string, string) (bool, error)
 }

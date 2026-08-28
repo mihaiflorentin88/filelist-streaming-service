@@ -472,9 +472,11 @@ func scanRelease(s scanner) (domain.TorrentRelease, error) {
 	}
 	return x, err
 }
+
 func (r *Repository) GetRelease(ctx context.Context, id string) (domain.TorrentRelease, error) {
 	return scanRelease(r.db.QueryRowContext(ctx, `SELECT id,name,category,size_bytes,imdb_id,seeders,leechers,times_completed,freeleech,double_up,internal,moderated,small_description,uploaded_at,file_count,comments FROM releases WHERE id=?`, id))
 }
+
 func (r *Repository) SyncAge(ctx context.Context, name string) (int64, error) {
 	var ts sql.NullInt64
 	err := r.db.QueryRowContext(ctx, "SELECT last_success FROM sync_state WHERE name=?", name).Scan(&ts)
@@ -486,6 +488,7 @@ func (r *Repository) SyncAge(ctx context.Context, name string) (int64, error) {
 	}
 	return time.Now().Unix() - ts.Int64, nil
 }
+
 func (r *Repository) RecordSync(ctx context.Context, name string, count int, syncErr error) error {
 	var ts any
 	msg := ""
@@ -502,6 +505,7 @@ func (r *Repository) SaveDownload(ctx context.Context, d domain.Download) error 
 	_, err := r.db.ExecContext(ctx, `INSERT INTO downloads(id,release_id,engine_id,file_index,file_path,absolute_path,size_bytes,file_offset,piece_size,state,progress,downloaded_bytes,speed_bytes_per_second,eta_seconds,peers,seeds,buffered_bytes,leased,error,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET engine_id=excluded.engine_id,absolute_path=excluded.absolute_path,piece_size=excluded.piece_size,state=excluded.state,progress=excluded.progress,downloaded_bytes=excluded.downloaded_bytes,speed_bytes_per_second=excluded.speed_bytes_per_second,eta_seconds=excluded.eta_seconds,peers=excluded.peers,seeds=excluded.seeds,buffered_bytes=excluded.buffered_bytes,leased=excluded.leased,error=excluded.error,updated_at=excluded.updated_at`, d.ID, d.ReleaseID, d.EngineID, d.FileIndex, d.FilePath, d.AbsolutePath, d.SizeBytes, d.FileOffset, d.PieceSize, d.State, d.Progress, d.DownloadedBytes, d.SpeedBytesPerSecond, d.ETASeconds, d.Peers, d.Seeds, d.BufferedBytes, d.Leased, d.Error, d.CreatedAt.Unix(), d.UpdatedAt.Unix())
 	return err
 }
+
 func (r *Repository) DeleteDownload(ctx context.Context, id string) error {
 	res, err := r.db.ExecContext(ctx, "DELETE FROM downloads WHERE id=?", id)
 	if err != nil {
@@ -513,9 +517,11 @@ func (r *Repository) DeleteDownload(ctx context.Context, id string) error {
 	}
 	return nil
 }
+
 func (r *Repository) GetDownload(ctx context.Context, id string) (domain.Download, error) {
 	return scanDownload(r.db.QueryRowContext(ctx, `SELECT id,release_id,engine_id,file_index,file_path,absolute_path,size_bytes,file_offset,piece_size,state,progress,downloaded_bytes,speed_bytes_per_second,eta_seconds,peers,seeds,buffered_bytes,leased,error,created_at,updated_at FROM downloads WHERE id=?`, id))
 }
+
 func (r *Repository) FindDownload(ctx context.Context, releaseID string, fileIndex int) (domain.Download, error) {
 	query := `SELECT id,release_id,engine_id,file_index,file_path,absolute_path,size_bytes,file_offset,piece_size,state,progress,downloaded_bytes,speed_bytes_per_second,eta_seconds,peers,seeds,buffered_bytes,leased,error,created_at,updated_at FROM downloads WHERE release_id=?`
 	args := []any{releaseID}
@@ -526,6 +532,7 @@ func (r *Repository) FindDownload(ctx context.Context, releaseID string, fileInd
 	query += ` ORDER BY CASE WHEN progress>=1 THEN 0 ELSE 1 END,updated_at DESC LIMIT 1`
 	return scanDownload(r.db.QueryRowContext(ctx, query, args...))
 }
+
 func (r *Repository) ListDownloads(ctx context.Context) ([]domain.Download, error) {
 	rows, err := r.db.QueryContext(ctx, `SELECT id,release_id,engine_id,file_index,file_path,absolute_path,size_bytes,file_offset,piece_size,state,progress,downloaded_bytes,speed_bytes_per_second,eta_seconds,peers,seeds,buffered_bytes,leased,error,created_at,updated_at FROM downloads ORDER BY created_at DESC,id ASC`)
 	if err != nil {
@@ -542,6 +549,7 @@ func (r *Repository) ListDownloads(ctx context.Context) ([]domain.Download, erro
 	}
 	return out, rows.Err()
 }
+
 func scanDownload(s scanner) (domain.Download, error) {
 	var d domain.Download
 	var created, updated int64
@@ -550,6 +558,7 @@ func scanDownload(s scanner) (domain.Download, error) {
 	d.UpdatedAt = time.Unix(updated, 0).UTC()
 	return d, err
 }
+
 func (r *Repository) SetLease(ctx context.Context, id string, v bool) error {
 	res, err := r.db.ExecContext(ctx, "UPDATE downloads SET leased=?,updated_at=? WHERE id=?", v, time.Now().Unix(), id)
 	if err != nil {
@@ -859,9 +868,11 @@ position_ms=excluded.position_ms,duration_ms=excluded.duration_ms,watched=exclud
 		p.ProfileID, p.SourceID, p.ReleaseID, p.FileIndex, p.FilePath, p.PositionMS, p.DurationMS, p.Watched, p.UpdatedAt.Unix())
 	return err
 }
+
 func (r *Repository) GetPlayback(ctx context.Context, profileID, sourceID string) (domain.PlaybackState, error) {
 	return scanPlayback(r.db.QueryRowContext(ctx, `SELECT profile_id,source_id,release_id,file_index,file_path,position_ms,duration_ms,watched,updated_at FROM playback_state WHERE profile_id=? AND source_id=?`, profileID, sourceID))
 }
+
 func (r *Repository) ListPlayback(ctx context.Context, profileID string) ([]domain.PlaybackState, error) {
 	rows, err := r.db.QueryContext(ctx, `SELECT profile_id,source_id,release_id,file_index,file_path,position_ms,duration_ms,watched,updated_at FROM playback_state WHERE profile_id=? ORDER BY updated_at DESC`, profileID)
 	if err != nil {
@@ -878,6 +889,7 @@ func (r *Repository) ListPlayback(ctx context.Context, profileID string) ([]doma
 	}
 	return out, rows.Err()
 }
+
 func scanPlayback(s scanner) (domain.PlaybackState, error) {
 	var p domain.PlaybackState
 	var updated int64
@@ -885,6 +897,7 @@ func scanPlayback(s scanner) (domain.PlaybackState, error) {
 	p.UpdatedAt = time.Unix(updated, 0).UTC()
 	return p, err
 }
+
 func (r *Repository) SavePlaybackPreferences(ctx context.Context, p domain.PlaybackPreferences) error {
 	_, err := r.db.ExecContext(ctx, `INSERT INTO playback_preferences(profile_id,source_id,audio_language,audio_track_index,subtitle_language,subtitle_provider,subtitle_candidate_id,subtitle_mode,updated_at)
 VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(profile_id,source_id) DO UPDATE SET audio_language=excluded.audio_language,audio_track_index=excluded.audio_track_index,
@@ -892,6 +905,7 @@ subtitle_language=excluded.subtitle_language,subtitle_provider=excluded.subtitle
 		p.ProfileID, p.SourceID, p.AudioLanguage, p.AudioTrackIndex, p.SubtitleLanguage, p.SubtitleProvider, p.SubtitleCandidateID, p.SubtitleMode, p.UpdatedAt.Unix())
 	return err
 }
+
 func (r *Repository) GetPlaybackPreferences(ctx context.Context, profileID, sourceID string) (domain.PlaybackPreferences, error) {
 	var p domain.PlaybackPreferences
 	var updated int64
@@ -900,6 +914,7 @@ FROM playback_preferences WHERE profile_id=? AND source_id=?`, profileID, source
 	p.UpdatedAt = time.Unix(updated, 0).UTC()
 	return p, err
 }
+
 func (r *Repository) SetFavorite(ctx context.Context, profileID, releaseID string, favorite bool) error {
 	if favorite {
 		_, err := r.db.ExecContext(ctx, `INSERT INTO favorites(profile_id,title_id,created_at) VALUES(?,?,?) ON CONFLICT(profile_id,title_id) DO NOTHING`, profileID, releaseID, time.Now().Unix())
@@ -908,6 +923,7 @@ func (r *Repository) SetFavorite(ctx context.Context, profileID, releaseID strin
 	_, err := r.db.ExecContext(ctx, "DELETE FROM favorites WHERE profile_id=? AND title_id=?", profileID, releaseID)
 	return err
 }
+
 func (r *Repository) ListFavorites(ctx context.Context, profileID string) ([]domain.Favorite, error) {
 	rows, err := r.db.QueryContext(ctx, "SELECT profile_id,title_id,created_at FROM favorites WHERE profile_id=? ORDER BY created_at DESC", profileID)
 	if err != nil {
@@ -961,6 +977,14 @@ FROM subtitle_assets WHERE source_id=? AND provider=? AND candidate_id=? AND for
 	a.URL = "/api/v1/subtitles/" + a.ID + ext
 	return a, nil
 }
+
+func (r *Repository) HasSubtitleAsset(ctx context.Context, sourceID, provider, candidateID string) (bool, error) {
+	var exists bool
+	err := r.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM subtitle_assets WHERE source_id=? AND provider=? AND candidate_id=?)`, sourceID, provider, candidateID).
+		Scan(&exists)
+	return exists, err
+}
+
 func DecodeCursor(v string) (int, error) {
 	if v == "" {
 		return 0, nil
@@ -975,6 +999,7 @@ func DecodeCursor(v string) (int, error) {
 	}
 	return n, nil
 }
+
 func escapeLike(s string) string {
 	return strings.NewReplacer("\\", "\\\\", "%", "\\%", "_", "\\_").Replace(s)
 }

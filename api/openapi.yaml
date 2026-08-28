@@ -1,259 +1,1516 @@
 openapi: 3.1.0
-info: {title: FileList Streaming API, version: 0.2.4}
-servers: [{url: /api/v1}]
+info: { title: FileList Streaming API, version: 0.2.4 }
+servers: [{ url: /api/v1 }]
 paths:
   /system/info:
-    get: {operationId: getSystemInfo, responses: {'200': {description: Server identity, content: {application/json: {schema: {$ref: '#/components/schemas/SystemInfo'}}}}}}
+    get:
+      {
+        operationId: getSystemInfo,
+        responses:
+          {
+            "200":
+              {
+                description: Server identity,
+                content:
+                  {
+                    application/json:
+                      { schema: { $ref: "#/components/schemas/SystemInfo" } },
+                  },
+              },
+          },
+      }
   /settings:
-    get: {operationId: getSettings, responses: {'200': {description: Redacted settings, content: {application/json: {schema: {type: object}}}}}}
+    get:
+      {
+        operationId: getSettings,
+        responses:
+          {
+            "200":
+              {
+                description: Redacted settings,
+                content: { application/json: { schema: { type: object } } },
+              },
+          },
+      }
     put:
       operationId: saveSettings
-      requestBody: {required: true, content: {application/json: {schema: {type: object}}}}
-      responses: {'200': {description: Saved}}
+      requestBody:
+        {
+          required: true,
+          content: { application/json: { schema: { type: object } } },
+        }
+      responses: { "200": { description: Saved } }
   /settings/schema:
-    get: {operationId: getSettingsSchema, responses: {'200': {description: Field labels, help text, secret flags, and acquisition guidance for settings clients}}}
+    get:
+      {
+        operationId: getSettingsSchema,
+        responses:
+          {
+            "200":
+              {
+                description: Field labels,
+                help text,
+                secret flags,
+                and acquisition guidance for settings clients,
+              },
+          },
+      }
   /dependencies/{name}/test:
     post:
       operationId: testDependency
-      parameters: [{in: path, name: name, required: true, schema: {type: string, enum: [filelist, qbittorrent, storage, tmdb, subtitles, subdl]}}]
-      responses: {'200': {description: Test result}, '502': {$ref: '#/components/responses/Problem'}, '503': {$ref: '#/components/responses/Problem'}}
+      parameters:
+        [
+          {
+            in: path,
+            name: name,
+            required: true,
+            schema:
+              {
+                type: string,
+                enum: [filelist, qbittorrent, storage, tmdb, subtitles, subdl],
+              },
+          },
+        ]
+      responses:
+        {
+          "200": { description: Test result },
+          "502": { $ref: "#/components/responses/Problem" },
+          "503": { $ref: "#/components/responses/Problem" },
+        }
   /diagnostics/client:
     post:
       operationId: reportClientDiagnostic
-      requestBody: {required: true, content: {application/json: {schema: {type: object, required: [level, message], properties: {level: {type: string, enum: [warn, error]}, message: {type: string, minLength: 1, maxLength: 1000}, context: {type: object}}}}}}
-      responses: {'204': {description: Diagnostic written to the server log}}
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    {
+                      type: object,
+                      required: [level, message],
+                      properties:
+                        {
+                          level: { type: string, enum: [warn, error] },
+                          message:
+                            { type: string, minLength: 1, maxLength: 1000 },
+                          context: { type: object },
+                        },
+                    },
+                },
+            },
+        }
+      responses:
+        { "204": { description: Diagnostic written to the server log } }
   /catalog/categories:
-    get: {operationId: getCatalogCategories, responses: {'200': {description: FileList category registry}}}
+    get:
+      {
+        operationId: getCatalogCategories,
+        responses: { "200": { description: FileList category registry } },
+      }
   /catalog/latest:
     get:
       operationId: getLatest
-      parameters: [{in: query, name: category, schema: {type: string}}, {in: query, name: cursor, schema: {type: string}}, {in: query, name: pageSize, schema: {type: integer, minimum: 1, maximum: 100, default: 24}}]
-      responses: {'200': {description: Release page, content: {application/json: {schema: {$ref: '#/components/schemas/ReleasePage'}}}}}
+      parameters:
+        [
+          { in: query, name: category, schema: { type: string } },
+          { in: query, name: cursor, schema: { type: string } },
+          {
+            in: query,
+            name: pageSize,
+            schema: { type: integer, minimum: 1, maximum: 100, default: 24 },
+          },
+        ]
+      responses:
+        {
+          "200":
+            {
+              description: Release page,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/ReleasePage" } },
+                },
+            },
+        }
   /catalog/search:
     get:
       operationId: searchCatalog
-      parameters: [{in: query, name: query, required: true, schema: {type: string, minLength: 3}}]
-      responses: {'200': {description: Search page, content: {application/json: {schema: {$ref: '#/components/schemas/ReleasePage'}}}}}
+      parameters:
+        [
+          {
+            in: query,
+            name: query,
+            required: true,
+            schema: { type: string, minLength: 3 },
+          },
+        ]
+      responses:
+        {
+          "200":
+            {
+              description: Search page,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/ReleasePage" } },
+                },
+            },
+        }
     post:
       operationId: searchCanonicalCatalog
-      requestBody: {required: true, content: {application/json: {schema: {type: object, required: [query], properties: {query: {type: string, minLength: 3}}}}}}
-      responses: {'202': {description: Cached canonical results returned immediately with a persistent asynchronous FileList search job; completion is published by SSE}}
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    {
+                      type: object,
+                      required: [query],
+                      properties: { query: { type: string, minLength: 3 } },
+                    },
+                },
+            },
+        }
+      responses:
+        {
+          "202":
+            {
+              description: Cached canonical results returned immediately with a persistent asynchronous FileList search job; completion is published by SSE,
+            },
+        }
   /catalog/titles:
     get:
       operationId: listCatalogTitles
       parameters:
-        - {in: query, name: search, schema: {type: string}}
-        - {in: query, name: category, schema: {type: string}}
-        - {in: query, name: kind, schema: {type: string, enum: [movie, series]}}
-        - {in: query, name: resolution, schema: {type: string}}
-        - {in: query, name: hdr, schema: {type: string}}
-        - {in: query, name: source, schema: {type: string}}
-        - {in: query, name: codec, schema: {type: string}}
-        - {in: query, name: minSeeders, schema: {type: integer, minimum: 0}}
-        - {in: query, name: freeleech, schema: {type: boolean}}
-        - {in: query, name: internal, schema: {type: boolean}}
-        - {in: query, name: moderated, schema: {type: boolean}}
-        - {in: query, name: sort, schema: {type: string, enum: [newest, oldest, title, title-desc, seeders, size]}}
-        - {in: query, name: cursor, schema: {type: string}}
-        - {in: query, name: pageSize, schema: {type: integer, minimum: 1, maximum: 100, default: 24}}
-      responses: {'200': {description: Canonical title page, content: {application/json: {schema: {$ref: '#/components/schemas/CatalogTitlePage'}}}}}
+        - { in: query, name: search, schema: { type: string } }
+        - { in: query, name: category, schema: { type: string } }
+        - {
+            in: query,
+            name: kind,
+            schema: { type: string, enum: [movie, series] },
+          }
+        - { in: query, name: resolution, schema: { type: string } }
+        - { in: query, name: hdr, schema: { type: string } }
+        - { in: query, name: source, schema: { type: string } }
+        - { in: query, name: codec, schema: { type: string } }
+        - { in: query, name: minSeeders, schema: { type: integer, minimum: 0 } }
+        - { in: query, name: freeleech, schema: { type: boolean } }
+        - { in: query, name: internal, schema: { type: boolean } }
+        - { in: query, name: moderated, schema: { type: boolean } }
+        - {
+            in: query,
+            name: sort,
+            schema:
+              {
+                type: string,
+                enum: [newest, oldest, title, title-desc, seeders, size],
+              },
+          }
+        - { in: query, name: cursor, schema: { type: string } }
+        - {
+            in: query,
+            name: pageSize,
+            schema: { type: integer, minimum: 1, maximum: 100, default: 24 },
+          }
+      responses:
+        {
+          "200":
+            {
+              description: Canonical title page,
+              content:
+                {
+                  application/json:
+                    {
+                      schema: { $ref: "#/components/schemas/CatalogTitlePage" },
+                    },
+                },
+            },
+        }
   /catalog/titles/{id}:
     get:
       operationId: getCatalogTitle
-      parameters: [{in: path, name: id, required: true, schema: {type: string}}]
-      responses: {'200': {description: Movie versions or series hierarchy, content: {application/json: {schema: {$ref: '#/components/schemas/CatalogDetail'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+      parameters:
+        [{ in: path, name: id, required: true, schema: { type: string } }]
+      responses:
+        {
+          "200":
+            {
+              description: Movie versions or series hierarchy,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/CatalogDetail" } },
+                },
+            },
+          "404": { $ref: "#/components/responses/Problem" },
+        }
   /catalog/titles/{id}/refresh:
     post:
       operationId: refreshCatalogTitle
-      parameters: [{in: path, name: id, required: true, schema: {type: string}}]
-      requestBody: {content: {application/json: {schema: {type: object, properties: {query: {type: string, minLength: 3}}}}}}
-      responses: {'202': {description: Deduplicated persistent title-expansion job; successful refreshes are limited to once per title per hour}}
+      parameters:
+        [{ in: path, name: id, required: true, schema: { type: string } }]
+      requestBody:
+        {
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    {
+                      type: object,
+                      properties: { query: { type: string, minLength: 3 } },
+                    },
+                },
+            },
+        }
+      responses:
+        {
+          "202":
+            {
+              description: Deduplicated persistent title-expansion job; successful refreshes are limited to once per title per hour,
+            },
+        }
   /catalog/facets:
-    get: {operationId: getCatalogFacets, responses: {'200': {description: Available catalog filter values, content: {application/json: {schema: {$ref: '#/components/schemas/CatalogFacets'}}}}}}
+    get:
+      {
+        operationId: getCatalogFacets,
+        responses:
+          {
+            "200":
+              {
+                description: Available catalog filter values,
+                content:
+                  {
+                    application/json:
+                      {
+                        schema: { $ref: "#/components/schemas/CatalogFacets" },
+                      },
+                  },
+              },
+          },
+      }
   /artwork/{titleId}/{kind}:
     get:
       operationId: getArtwork
-      parameters: [{in: path, name: titleId, required: true, schema: {type: string}}, {in: path, name: kind, required: true, schema: {type: string, enum: [poster, backdrop]}}]
-      responses: {'200': {description: Cached poster or backdrop}, '404': {$ref: '#/components/responses/Problem'}}
+      parameters:
+        [
+          { in: path, name: titleId, required: true, schema: { type: string } },
+          {
+            in: path,
+            name: kind,
+            required: true,
+            schema: { type: string, enum: [poster, backdrop] },
+          },
+        ]
+      responses:
+        {
+          "200": { description: Cached poster or backdrop },
+          "404": { $ref: "#/components/responses/Problem" },
+        }
   /catalog/sync:
     post:
       operationId: syncCatalog
-      requestBody: {content: {application/json: {schema: {type: object, properties: {mode: {type: string, enum: [latest, rebuild], default: latest}}}}}}
-      responses: {'202': {description: Persistent catalog job}}
+      requestBody:
+        {
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    {
+                      type: object,
+                      properties:
+                        {
+                          mode:
+                            {
+                              type: string,
+                              enum: [latest, rebuild],
+                              default: latest,
+                            },
+                        },
+                    },
+                },
+            },
+        }
+      responses: { "202": { description: Persistent catalog job } }
   /catalog/status:
-    get: {operationId: getCatalogStatus, responses: {'200': {description: Append-only observed-cache coverage, discoverable and hidden counts, and FileList history limitations}}}
+    get:
+      {
+        operationId: getCatalogStatus,
+        responses:
+          {
+            "200":
+              {
+                description: Append-only observed-cache coverage,
+                discoverable and hidden counts,
+                and FileList history limitations,
+              },
+          },
+      }
   /metadata/ensure:
     post:
       operationId: ensureMetadata
-      requestBody: {required: true, content: {application/json: {schema: {type: object, required: [titleIds], properties: {titleIds: {type: array, maxItems: 24, items: {type: string}}}}}}}
-      responses: {'202': {description: Visible-title metadata work accepted}}
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    {
+                      type: object,
+                      required: [titleIds],
+                      properties:
+                        {
+                          titleIds:
+                            {
+                              type: array,
+                              maxItems: 24,
+                              items: { type: string },
+                            },
+                        },
+                    },
+                },
+            },
+        }
+      responses:
+        { "202": { description: Visible-title metadata work accepted } }
   /releases/{id}/prepare:
     post:
       operationId: prepareRelease
-      parameters: [{in: path, name: id, required: true, schema: {type: string}}]
-      requestBody: {content: {application/json: {schema: {type: object, properties: {fileIndex: {type: integer, default: -1}}}}}}
-      responses: {'202': {description: Managed download, content: {application/json: {schema: {$ref: '#/components/schemas/Download'}}}}, '502': {$ref: '#/components/responses/Problem'}}
+      parameters:
+        [{ in: path, name: id, required: true, schema: { type: string } }]
+      requestBody:
+        {
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    {
+                      type: object,
+                      properties: { fileIndex: { type: integer, default: -1 } },
+                    },
+                },
+            },
+        }
+      responses:
+        {
+          "202":
+            {
+              description: Managed download,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/Download" } },
+                },
+            },
+          "502": { $ref: "#/components/responses/Problem" },
+        }
   /releases/{id}/prepare-season:
     post:
       operationId: prepareSeason
-      parameters: [{in: path, name: id, required: true, schema: {type: string}}]
-      requestBody: {required: true, content: {application/json: {schema: {type: object, required: [season], properties: {season: {type: integer, minimum: 1}}}}}}
-      responses: {'202': {description: One managed download per playable episode selected from the season pack, content: {application/json: {schema: {type: object, required: [items, total], properties: {items: {type: array, items: {$ref: '#/components/schemas/Download'}}, total: {type: integer}}}}}}, '502': {$ref: '#/components/responses/Problem'}}
+      parameters:
+        [{ in: path, name: id, required: true, schema: { type: string } }]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    {
+                      type: object,
+                      required: [season],
+                      properties: { season: { type: integer, minimum: 1 } },
+                    },
+                },
+            },
+        }
+      responses:
+        {
+          "202":
+            {
+              description: One managed download per playable episode selected from the season pack,
+              content:
+                {
+                  application/json:
+                    {
+                      schema:
+                        {
+                          type: object,
+                          required: [items, total],
+                          properties:
+                            {
+                              items:
+                                {
+                                  type: array,
+                                  items:
+                                    { $ref: "#/components/schemas/Download" },
+                                },
+                              total: { type: integer },
+                            },
+                        },
+                    },
+                },
+            },
+          "502": { $ref: "#/components/responses/Problem" },
+        }
   /downloads:
-    get: {operationId: listDownloads, responses: {'200': {description: Managed download page}}}
+    get:
+      {
+        operationId: listDownloads,
+        responses: { "200": { description: Managed download page } },
+      }
   /downloads/{id}/media-info:
     get:
       operationId: getDownloadMediaInfo
-      parameters: [{in: path, name: id, required: true, schema: {type: string}}]
-      responses: {'200': {description: Stable metadata probed from the original selected media, content: {application/json: {schema: {$ref: '#/components/schemas/MediaInfo'}}}}, '404': {$ref: '#/components/responses/Problem'}, '503': {description: Progressive media headers are not readable yet, headers: {Retry-After: {schema: {type: integer}}}}, '422': {$ref: '#/components/responses/Problem'}}
-  /streams/{id}/browser:
-    get:
-      operationId: streamBrowserCompatible
-      parameters: [{in: path, name: id, required: true, schema: {type: string}}, {in: query, name: audioTrack, schema: {type: integer, minimum: 0}, description: Original-file audio stream index returned by media-info}, {in: query, name: startMs, schema: {type: integer, format: int64, minimum: 0}, description: Logical seek position within the original media}]
-      responses: {'200': {description: Fragmented MP4 with copied video and AAC stereo audio for desktop-browser compatibility}, '503': {$ref: '#/components/responses/Problem'}}
+      parameters:
+        [{ in: path, name: id, required: true, schema: { type: string } }]
+      responses:
+        {
+          "200":
+            {
+              description: Stable metadata probed from the original selected media,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/MediaInfo" } },
+                },
+            },
+          "404": { $ref: "#/components/responses/Problem" },
+          "503":
+            {
+              description: Progressive media headers are not readable yet,
+              headers: { Retry-After: { schema: { type: integer } } },
+            },
+          "422": { $ref: "#/components/responses/Problem" },
+        }
   /jobs:
     get:
       operationId: listJobs
-      parameters: [{in: query, name: search, schema: {type: string}}, {in: query, name: state, schema: {type: string}}, {in: query, name: kind, schema: {type: string}}, {in: query, name: cursor, schema: {type: string}}, {in: query, name: pageSize, schema: {type: integer, minimum: 1, maximum: 100, default: 24}}]
-      responses: {'200': {description: Searchable cursor-paginated persistent background job page}}
+      parameters:
+        [
+          { in: query, name: search, schema: { type: string } },
+          { in: query, name: state, schema: { type: string } },
+          { in: query, name: kind, schema: { type: string } },
+          { in: query, name: cursor, schema: { type: string } },
+          {
+            in: query,
+            name: pageSize,
+            schema: { type: integer, minimum: 1, maximum: 100, default: 24 },
+          },
+        ]
+      responses:
+        {
+          "200":
+            {
+              description: Searchable cursor-paginated persistent background job page,
+            },
+        }
   /jobs/{id}:
     get:
       operationId: getJob
-      parameters: [{in: path, name: id, required: true, schema: {type: string}}]
-      responses: {'200': {description: Job and diagnostic log entries}, '404': {$ref: '#/components/responses/Problem'}}
+      parameters:
+        [{ in: path, name: id, required: true, schema: { type: string } }]
+      responses:
+        {
+          "200": { description: Job and diagnostic log entries },
+          "404": { $ref: "#/components/responses/Problem" },
+        }
   /jobs/{id}/logs:
     get:
       operationId: getJobLogs
-      parameters: [{in: path, name: id, required: true, schema: {type: string}}, {in: query, name: cursor, schema: {type: string}}, {in: query, name: pageSize, schema: {type: integer, minimum: 1, maximum: 200, default: 100}}]
-      responses: {'200': {description: Cursor-paginated structured attempt and phase logs for a persistent job}, '404': {$ref: '#/components/responses/Problem'}}
+      parameters:
+        [
+          { in: path, name: id, required: true, schema: { type: string } },
+          { in: query, name: cursor, schema: { type: string } },
+          {
+            in: query,
+            name: pageSize,
+            schema: { type: integer, minimum: 1, maximum: 200, default: 100 },
+          },
+        ]
+      responses:
+        {
+          "200":
+            {
+              description: Cursor-paginated structured attempt and phase logs for a persistent job,
+            },
+          "404": { $ref: "#/components/responses/Problem" },
+        }
   /jobs/{id}/retry:
     post:
       operationId: retryJob
-      parameters: [{in: path, name: id, required: true, schema: {type: string}}]
-      responses: {'202': {description: Terminal job queued again}, '409': {$ref: '#/components/responses/Problem'}}
+      parameters:
+        [{ in: path, name: id, required: true, schema: { type: string } }]
+      responses:
+        {
+          "202": { description: Terminal job queued again },
+          "409": { $ref: "#/components/responses/Problem" },
+        }
   /events:
     get:
       operationId: receiveEvents
-      parameters: [{in: query, name: after, schema: {type: integer, minimum: 0}, description: Explicit journal resume cursor; omitted cold connections receive live events only}]
-      responses: {'200': {description: Live server events with bounded journal replay only when after or Last-Event-ID is supplied, content: {text/event-stream: {schema: {type: string}}}}}
+      parameters:
+        [
+          {
+            in: query,
+            name: after,
+            schema: { type: integer, minimum: 0 },
+            description: Explicit journal resume cursor; omitted cold connections receive live events only,
+          },
+        ]
+      responses:
+        {
+          "200":
+            {
+              description: Live server events with bounded journal replay only when after or Last-Event-ID is supplied,
+              content: { text/event-stream: { schema: { type: string } } },
+            },
+        }
   /downloads/{id}/{action}:
     post:
       operationId: manageDownloadLegacy
-      parameters: [{in: path, name: id, required: true, schema: {type: string}}, {in: path, name: action, required: true, schema: {type: string, enum: [pause, resume, retry, remove]}}, {in: query, name: deleteFiles, schema: {type: boolean}, description: Legacy remove requests must set this true; keeping files is no longer supported}]
-      responses: {'204': {description: Action accepted}, '400': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
+      parameters:
+        [
+          { in: path, name: id, required: true, schema: { type: string } },
+          {
+            in: path,
+            name: action,
+            required: true,
+            schema: { type: string, enum: [pause, resume, retry, remove] },
+          },
+          {
+            in: query,
+            name: deleteFiles,
+            schema: { type: boolean },
+            description: Legacy remove requests must set this true; keeping files is no longer supported,
+          },
+        ]
+      responses:
+        {
+          "204": { description: Action accepted },
+          "400": { $ref: "#/components/responses/Problem" },
+          "409": { $ref: "#/components/responses/Problem" },
+        }
   /downloads/{id}:
     delete:
       operationId: deleteDownload
-      parameters: [{in: path, name: id, required: true, schema: {type: string}}]
-      responses: {'204': {description: Torrent and all downloaded files deleted}, '409': {$ref: '#/components/responses/Problem'}}
+      parameters:
+        [{ in: path, name: id, required: true, schema: { type: string } }]
+      responses:
+        {
+          "204": { description: Torrent and all downloaded files deleted },
+          "409": { $ref: "#/components/responses/Problem" },
+        }
   /downloads/{id}/next-episode:
     post:
       operationId: prepareNextEpisode
-      parameters: [{in: path, name: id, required: true, schema: {type: string}}]
-      responses: {'200': {description: No later episode, content: {application/json: {schema: {type: 'null'}}}}, '202': {description: Prepared next episode, content: {application/json: {schema: {$ref: '#/components/schemas/Download'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+      parameters:
+        [{ in: path, name: id, required: true, schema: { type: string } }]
+      responses:
+        {
+          "200":
+            {
+              description: No later episode,
+              content: { application/json: { schema: { type: "null" } } },
+            },
+          "202":
+            {
+              description: Prepared next episode,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/Download" } },
+                },
+            },
+          "404": { $ref: "#/components/responses/Problem" },
+        }
   /downloads/{id}/subtitles:
     get:
       operationId: searchSubtitles
-      parameters: [{in: path, name: id, required: true, schema: {type: string}}, {in: query, name: language, schema: {type: string, default: ro}}, {in: query, name: scope, schema: {type: string, enum: [all, local, remote], default: all}, description: local searches torrent-contained and server-probed embedded tracks without provider calls; remote searches configured online providers only}]
-      responses: {'200': {description: Ranked contained and provider subtitle candidates plus sanitized provider warnings}}
+      parameters:
+        [
+          { in: path, name: id, required: true, schema: { type: string } },
+          {
+            in: query,
+            name: language,
+            schema: { type: string, default: ro },
+            description: Canonical lowercase ISO-639-1 language filter; every returned candidate carries its language in the same canonical form,
+          },
+          {
+            in: query,
+            name: scope,
+            schema: { type: string, enum: [all, local, remote], default: all },
+            description: local searches torrent-contained and server-probed embedded tracks without provider calls; remote searches configured online providers only,
+          },
+        ]
+      responses:
+        {
+          "200":
+            {
+              description: "Ranked contained, embedded, and provider subtitle candidates plus sanitized provider warnings",
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/SubtitlePage" } },
+                },
+            },
+        }
   /downloads/{id}/subtitles/prepare:
     post:
       operationId: prepareSubtitle
-      parameters: [{in: path, name: id, required: true, schema: {type: string}}]
-      requestBody: {required: true, content: {application/json: {schema: {type: object, required: [provider, id], properties: {provider: {type: string, enum: [contained, embedded, subdl]}, id: {type: string}, format: {type: string, enum: [sami, vtt], default: sami}}}}}}
-      responses: {'201': {description: Cached SAMI or WebVTT subtitle asset}}
+      parameters:
+        [{ in: path, name: id, required: true, schema: { type: string } }]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    {
+                      type: object,
+                      required: [provider, id],
+                      properties:
+                        {
+                          provider:
+                            {
+                              type: string,
+                              enum: [contained, embedded, subdl],
+                            },
+                          id: { type: string },
+                          format:
+                            { type: string, enum: [sami, vtt], default: sami },
+                        },
+                    },
+                },
+            },
+        }
+      responses:
+        {
+          "201":
+            {
+              description: Cached SAMI or WebVTT subtitle asset persisting the candidate's canonical language,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/SubtitleAsset" } },
+                },
+            },
+        }
   /subtitles/{asset}.smi:
     get:
       operationId: downloadSubtitleAsset
-      parameters: [{in: path, name: asset, required: true, schema: {type: string}}]
-      responses: {'200': {description: UTF-8 SAMI subtitle, content: {application/x-sami: {schema: {type: string}}}}}
+      parameters:
+        [{ in: path, name: asset, required: true, schema: { type: string } }]
+      responses:
+        {
+          "200":
+            {
+              description: UTF-8 SAMI subtitle,
+              content: { application/x-sami: { schema: { type: string } } },
+            },
+        }
   /subtitles/{asset}.vtt:
     get:
       operationId: downloadWebVTTSubtitleAsset
-      parameters: [{in: path, name: asset, required: true, schema: {type: string}}]
-      responses: {'200': {description: UTF-8 WebVTT subtitle, content: {text/vtt: {schema: {type: string}}}}}
+      parameters:
+        [{ in: path, name: asset, required: true, schema: { type: string } }]
+      responses:
+        {
+          "200":
+            {
+              description: UTF-8 WebVTT subtitle,
+              content: { text/vtt: { schema: { type: string } } },
+            },
+        }
   /state:
-    get: {operationId: getHouseholdState, responses: {'200': {description: Favorites and playback collections grouped to one newest representative per canonical title, content: {application/json: {schema: {$ref: '#/components/schemas/HouseholdState'}}}}}}
+    get:
+      {
+        operationId: getHouseholdState,
+        responses:
+          {
+            "200":
+              {
+                description: Favorites and playback collections grouped to one newest representative per canonical title,
+                content:
+                  {
+                    application/json:
+                      {
+                        schema: { $ref: "#/components/schemas/HouseholdState" },
+                      },
+                  },
+              },
+          },
+      }
   /library/{section}:
     get:
       operationId: getLibrarySection
-      parameters: [{in: path, name: section, required: true, schema: {type: string, enum: [dashboard, continue-watching, favorites, watched, recent, categories]}}, {in: query, name: category, schema: {type: string}}]
-      responses: {'200': {description: Household dashboard or requested library page}}
+      parameters:
+        [
+          {
+            in: path,
+            name: section,
+            required: true,
+            schema:
+              {
+                type: string,
+                enum:
+                  [
+                    dashboard,
+                    continue-watching,
+                    favorites,
+                    watched,
+                    recent,
+                    categories,
+                  ],
+              },
+          },
+          { in: query, name: category, schema: { type: string } },
+        ]
+      responses:
+        {
+          "200": { description: Household dashboard or requested library page },
+        }
   /library/favorites/{titleId}:
     put:
       operationId: addTitleFavorite
-      parameters: [{in: path, name: titleId, required: true, schema: {type: string}}]
-      responses: {'204': {description: Canonical title favorite saved}}
+      parameters:
+        [{ in: path, name: titleId, required: true, schema: { type: string } }]
+      responses: { "204": { description: Canonical title favorite saved } }
     delete:
       operationId: removeTitleFavorite
-      parameters: [{in: path, name: titleId, required: true, schema: {type: string}}]
-      responses: {'204': {description: Canonical title favorite removed}}
+      parameters:
+        [{ in: path, name: titleId, required: true, schema: { type: string } }]
+      responses: { "204": { description: Canonical title favorite removed } }
   /favorites/{releaseId}:
     put:
       operationId: addFavorite
-      parameters: [{in: path, name: releaseId, required: true, schema: {type: string}}]
-      responses: {'204': {description: Favorite saved}}
+      parameters:
+        [
+          {
+            in: path,
+            name: releaseId,
+            required: true,
+            schema: { type: string },
+          },
+        ]
+      responses: { "204": { description: Favorite saved } }
     delete:
       operationId: removeFavorite
-      parameters: [{in: path, name: releaseId, required: true, schema: {type: string}}]
-      responses: {'204': {description: Favorite removed}}
+      parameters:
+        [
+          {
+            in: path,
+            name: releaseId,
+            required: true,
+            schema: { type: string },
+          },
+        ]
+      responses: { "204": { description: Favorite removed } }
   /playback/{sourceId}:
     get:
       operationId: getPlaybackState
-      parameters: [{in: path, name: sourceId, required: true, schema: {type: string}}]
-      responses: {'200': {description: Playback state, content: {application/json: {schema: {$ref: '#/components/schemas/PlaybackState'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+      parameters:
+        [{ in: path, name: sourceId, required: true, schema: { type: string } }]
+      responses:
+        {
+          "200":
+            {
+              description: Playback state,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/PlaybackState" } },
+                },
+            },
+          "404": { $ref: "#/components/responses/Problem" },
+        }
     put:
       operationId: updatePlaybackState
-      parameters: [{in: path, name: sourceId, required: true, schema: {type: string}}]
-      requestBody: {required: true, content: {application/json: {schema: {type: object, required: [positionMs, durationMs], properties: {positionMs: {type: integer, format: int64, minimum: 0}, durationMs: {type: integer, format: int64, minimum: 0}}}}}}
-      responses: {'200': {description: Saved playback state, content: {application/json: {schema: {$ref: '#/components/schemas/PlaybackState'}}}}}
+      parameters:
+        [{ in: path, name: sourceId, required: true, schema: { type: string } }]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    {
+                      type: object,
+                      required: [positionMs, durationMs],
+                      properties:
+                        {
+                          positionMs:
+                            { type: integer, format: int64, minimum: 0 },
+                          durationMs:
+                            { type: integer, format: int64, minimum: 0 },
+                        },
+                    },
+                },
+            },
+        }
+      responses:
+        {
+          "200":
+            {
+              description: Saved playback state,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/PlaybackState" } },
+                },
+            },
+        }
   /playback/{sourceId}/watched:
     put:
       operationId: setWatched
-      parameters: [{in: path, name: sourceId, required: true, schema: {type: string}}]
-      requestBody: {required: true, content: {application/json: {schema: {type: object, required: [watched], properties: {watched: {type: boolean}}}}}}
-      responses: {'200': {description: Saved playback state, content: {application/json: {schema: {$ref: '#/components/schemas/PlaybackState'}}}}}
+      parameters:
+        [{ in: path, name: sourceId, required: true, schema: { type: string } }]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    {
+                      type: object,
+                      required: [watched],
+                      properties: { watched: { type: boolean } },
+                    },
+                },
+            },
+        }
+      responses:
+        {
+          "200":
+            {
+              description: Saved playback state,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/PlaybackState" } },
+                },
+            },
+        }
   /playback/{sourceId}/preferences:
     get:
       operationId: getPlaybackPreferences
-      parameters: [{in: path, name: sourceId, required: true, schema: {type: string}}]
-      responses: {'200': {description: Saved or configured default track preferences, content: {application/json: {schema: {$ref: '#/components/schemas/PlaybackPreferences'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+      parameters:
+        [{ in: path, name: sourceId, required: true, schema: { type: string } }]
+      responses:
+        {
+          "200":
+            {
+              description: Saved or configured default track preferences,
+              content:
+                {
+                  application/json:
+                    {
+                      schema:
+                        { $ref: "#/components/schemas/PlaybackPreferences" },
+                    },
+                },
+            },
+          "404": { $ref: "#/components/responses/Problem" },
+        }
     put:
       operationId: updatePlaybackPreferences
-      parameters: [{in: path, name: sourceId, required: true, schema: {type: string}}]
-      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/PlaybackPreferences'}}}}
-      responses: {'200': {description: Saved track preferences, content: {application/json: {schema: {$ref: '#/components/schemas/PlaybackPreferences'}}}}, '400': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}}
+      parameters:
+        [{ in: path, name: sourceId, required: true, schema: { type: string } }]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                {
+                  schema: { $ref: "#/components/schemas/PlaybackPreferences" },
+                },
+            },
+        }
+      responses:
+        {
+          "200":
+            {
+              description: Saved track preferences,
+              content:
+                {
+                  application/json:
+                    {
+                      schema:
+                        { $ref: "#/components/schemas/PlaybackPreferences" },
+                    },
+                },
+            },
+          "400": { $ref: "#/components/responses/Problem" },
+          "404": { $ref: "#/components/responses/Problem" },
+        }
   /streams/{id}:
     get:
       operationId: streamSource
-      parameters: [{in: path, name: id, required: true, schema: {type: string}}, {in: header, name: Range, schema: {type: string}}]
-      responses: {'200': {description: Full media stream}, '206': {description: Partial media stream}, '416': {$ref: '#/components/responses/Problem'}}
+      parameters:
+        [
+          { in: path, name: id, required: true, schema: { type: string } },
+          { in: header, name: Range, schema: { type: string } },
+        ]
+      responses:
+        {
+          "200": { description: Full media stream },
+          "206": { description: Partial media stream },
+          "416": { $ref: "#/components/responses/Problem" },
+        }
     head:
       operationId: inspectStream
-      parameters: [{in: path, name: id, required: true, schema: {type: string}}, {in: header, name: Range, schema: {type: string}}]
-      responses: {'200': {description: Stream headers}, '206': {description: Range headers}, '416': {$ref: '#/components/responses/Problem'}}
+      parameters:
+        [
+          { in: path, name: id, required: true, schema: { type: string } },
+          { in: header, name: Range, schema: { type: string } },
+        ]
+      responses:
+        {
+          "200": { description: Stream headers },
+          "206": { description: Range headers },
+          "416": { $ref: "#/components/responses/Problem" },
+        }
 components:
   responses:
-    Problem: {description: RFC-style problem response, content: {application/json: {schema: {$ref: '#/components/schemas/Problem'}}}}
+    Problem:
+      {
+        description: RFC-style problem response,
+        content:
+          {
+            application/json:
+              { schema: { $ref: "#/components/schemas/Problem" } },
+          },
+      }
   schemas:
-    SystemInfo: {type: object, required: [name, version, apiVersion, configured, capabilities], properties: {name: {type: string}, version: {type: string}, apiVersion: {type: string}, configured: {type: boolean}, capabilities: {type: array, items: {type: string}}}}
-    Release: {type: object, required: [id, name, category, sizeBytes, seeders, leechers], properties: {id: {type: string}, name: {type: string}, category: {type: string}, sizeBytes: {type: integer, format: int64}, imdbId: {type: string}, seeders: {type: integer}, leechers: {type: integer}, freeleech: {type: boolean}}}
-    ReleasePage: {type: object, required: [items, total], properties: {items: {type: array, items: {$ref: '#/components/schemas/Release'}}, nextCursor: {type: [string, 'null']}, total: {type: integer}, stale: {type: boolean}}}
-    ParsedRelease: {type: object, required: [title, sortTitle, kind], properties: {title: {type: string}, sortTitle: {type: string}, kind: {type: string, enum: [movie, series]}, year: {type: integer}, seasonStart: {type: integer}, seasonEnd: {type: integer}, episodeStart: {type: integer}, episodeEnd: {type: integer}, episodeTitle: {type: string}, resolution: {type: string}, source: {type: string}, videoCodec: {type: string}, audio: {type: string}, hdr: {type: string}, edition: {type: string}, releaseGroup: {type: string}}}
-    MediaState: {type: object, required: [downloadState, watchState], properties: {downloadState: {type: string, enum: [none, queued, downloading, partial, downloaded, error]}, watchState: {type: string, enum: [unwatched, inProgress, partial, watched]}, downloadId: {type: string}, progress: {type: number, minimum: 0, maximum: 1}, positionMs: {type: integer, format: int64}, durationMs: {type: integer, format: int64}}}
-    CatalogSource: {type: object, required: [release, parsed, libraryState], properties: {release: {$ref: '#/components/schemas/Release'}, parsed: {$ref: '#/components/schemas/ParsedRelease'}, fileIndex: {type: integer}, filePath: {type: string}, fileSizeBytes: {type: integer, format: int64}, libraryState: {$ref: '#/components/schemas/MediaState'}}}
-    CatalogTitle: {type: object, required: [id, title, kind, categories, resolutions, sourceCount, bestSeeders, largestSizeBytes, libraryState], properties: {id: {type: string}, title: {type: string}, originalTitle: {type: string}, kind: {type: string, enum: [movie, series]}, year: {type: integer}, imdbId: {type: string}, overview: {type: string}, posterUrl: {type: string}, backdropUrl: {type: string}, categories: {type: array, items: {type: string}}, resolutions: {type: array, items: {type: string}}, sourceCount: {type: integer}, seasonCount: {type: integer}, episodeCount: {type: integer}, bestSeeders: {type: integer}, largestSizeBytes: {type: integer, format: int64}, newestUpload: {type: string, format: date-time}, libraryState: {$ref: '#/components/schemas/MediaState'}}}
-    CatalogTitlePage: {type: object, required: [items, total], properties: {items: {type: array, items: {$ref: '#/components/schemas/CatalogTitle'}}, nextCursor: {type: [string, 'null']}, total: {type: integer}}}
-    CatalogEpisode: {type: object, required: [number, title, season, sourceCount, sources, libraryState], properties: {number: {type: integer}, title: {type: string}, season: {type: integer}, sourceCount: {type: integer}, sources: {type: array, items: {$ref: '#/components/schemas/CatalogSource'}}, libraryState: {$ref: '#/components/schemas/MediaState'}}}
-    CatalogSeason: {type: object, required: [number, title, episodeCount, episodes, libraryState], properties: {number: {type: integer}, title: {type: string}, episodeCount: {type: integer}, episodes: {type: array, items: {$ref: '#/components/schemas/CatalogEpisode'}}, packSources: {type: array, items: {$ref: '#/components/schemas/CatalogSource'}}, libraryState: {$ref: '#/components/schemas/MediaState'}}}
-    CatalogDetail: {type: object, required: [title, seasons, sources], properties: {title: {$ref: '#/components/schemas/CatalogTitle'}, seasons: {type: array, items: {$ref: '#/components/schemas/CatalogSeason'}}, sources: {type: array, items: {$ref: '#/components/schemas/CatalogSource'}}}}
-    CatalogFacets: {type: object, required: [categories, kinds, resolutions, hdr, sources, codecs], properties: {categories: {type: array, items: {type: string}}, kinds: {type: array, items: {type: string}}, resolutions: {type: array, items: {type: string}}, hdr: {type: array, items: {type: string}}, sources: {type: array, items: {type: string}}, codecs: {type: array, items: {type: string}}}}
-    Download: {type: object, required: [id, releaseId, engineId, filePath, fileIndex, mimeType, sizeBytes, state, progress, playbackMode, streamUrl], properties: {id: {type: string}, releaseId: {type: string}, releaseName: {type: string}, releaseSizeBytes: {type: integer, format: int64}, titleId: {type: string}, displayTitle: {type: string}, category: {type: string}, parsed: {$ref: '#/components/schemas/ParsedRelease'}, engineId: {type: string}, filePath: {type: string}, fileIndex: {type: integer}, mimeType: {type: string}, sizeBytes: {type: integer, format: int64}, state: {type: string}, progress: {type: number}, playbackMode: {type: string, enum: [local, progressive]}, downloadedBytes: {type: integer, format: int64}, speedBytesPerSecond: {type: integer, format: int64}, etaSeconds: {type: integer, format: int64}, peers: {type: integer}, seeds: {type: integer}, trackerSeeders: {type: integer}, leased: {type: boolean}, error: {type: string}, streamUrl: {type: string}, browserStreamUrl: {type: string}}}
-    MediaAudioTrack: {type: object, required: [streamIndex], properties: {streamIndex: {type: integer, minimum: 0}, language: {type: string}, title: {type: string}, codec: {type: string}, channels: {type: integer, minimum: 0}, default: {type: boolean}}}
-    MediaInfo: {type: object, required: [durationMs, audioTracks], properties: {durationMs: {type: integer, format: int64, minimum: 1}, audioTracks: {type: array, items: {$ref: '#/components/schemas/MediaAudioTrack'}}, probedAt: {type: string, format: date-time}}}
-    Job: {type: object, required: [id, kind, state, label, dedupeKey, progress, attempt, createdAt, updatedAt], properties: {id: {type: string}, kind: {type: string}, state: {type: string, enum: [queued, running, completed, failed]}, label: {type: string}, dedupeKey: {type: string}, progress: {type: number, minimum: 0, maximum: 1}, attempt: {type: integer}, error: {type: string}, createdAt: {type: string, format: date-time}, updatedAt: {type: string, format: date-time}}}
-    PlaybackState: {type: object, required: [profileId, sourceId, releaseId, fileIndex, filePath, positionMs, durationMs, watched, updatedAt], properties: {profileId: {type: string}, sourceId: {type: string}, releaseId: {type: string}, fileIndex: {type: integer}, filePath: {type: string}, positionMs: {type: integer, format: int64}, durationMs: {type: integer, format: int64}, watched: {type: boolean}, updatedAt: {type: string, format: date-time}}}
-    PlaybackPreferences: {type: object, required: [audioLanguage, audioTrackIndex, subtitleLanguage, subtitleMode], properties: {profileId: {type: string}, sourceId: {type: string}, audioLanguage: {type: string}, audioTrackIndex: {type: integer, minimum: -1}, subtitleLanguage: {type: string}, subtitleProvider: {type: string}, subtitleCandidateId: {type: string}, subtitleMode: {type: string, enum: [auto, 'off', selected]}, updatedAt: {type: string, format: date-time}}}
-    HouseholdItem: {allOf: [{$ref: '#/components/schemas/PlaybackState'}, {type: object, required: [release, favorite], properties: {release: {$ref: '#/components/schemas/Release'}, catalog: {$ref: '#/components/schemas/CatalogTitle'}, favorite: {type: boolean}, titleId: {type: string}, seasonNumber: {type: integer}, episodeNumber: {type: integer}}}]}
-    HouseholdState: {type: object, required: [favorites, continueWatching, recent, watched], properties: {favorites: {type: array, items: {$ref: '#/components/schemas/HouseholdItem'}}, continueWatching: {type: array, items: {$ref: '#/components/schemas/HouseholdItem'}}, recent: {type: array, items: {$ref: '#/components/schemas/HouseholdItem'}}, watched: {type: array, items: {$ref: '#/components/schemas/HouseholdItem'}}}}
-    Problem: {type: object, required: [title, status, detail], properties: {type: {type: string}, title: {type: string}, status: {type: integer}, detail: {type: string}}}
+    SystemInfo:
+      {
+        type: object,
+        required: [name, version, apiVersion, configured, capabilities],
+        properties:
+          {
+            name: { type: string },
+            version: { type: string },
+            apiVersion: { type: string },
+            configured: { type: boolean },
+            capabilities: { type: array, items: { type: string } },
+          },
+      }
+    Release:
+      {
+        type: object,
+        required: [id, name, category, sizeBytes, seeders, leechers],
+        properties:
+          {
+            id: { type: string },
+            name: { type: string },
+            category: { type: string },
+            sizeBytes: { type: integer, format: int64 },
+            imdbId: { type: string },
+            seeders: { type: integer },
+            leechers: { type: integer },
+            freeleech: { type: boolean },
+          },
+      }
+    ReleasePage:
+      {
+        type: object,
+        required: [items, total],
+        properties:
+          {
+            items:
+              { type: array, items: { $ref: "#/components/schemas/Release" } },
+            nextCursor: { type: [string, "null"] },
+            total: { type: integer },
+            stale: { type: boolean },
+          },
+      }
+    ParsedRelease:
+      {
+        type: object,
+        required: [title, sortTitle, kind],
+        properties:
+          {
+            title: { type: string },
+            sortTitle: { type: string },
+            kind: { type: string, enum: [movie, series] },
+            year: { type: integer },
+            seasonStart: { type: integer },
+            seasonEnd: { type: integer },
+            episodeStart: { type: integer },
+            episodeEnd: { type: integer },
+            episodeTitle: { type: string },
+            resolution: { type: string },
+            source: { type: string },
+            videoCodec: { type: string },
+            audio: { type: string },
+            hdr: { type: string },
+            edition: { type: string },
+            releaseGroup: { type: string },
+          },
+      }
+    MediaState:
+      {
+        type: object,
+        required: [downloadState, watchState],
+        properties:
+          {
+            downloadState:
+              {
+                type: string,
+                enum: [none, queued, downloading, partial, downloaded, error],
+              },
+            watchState:
+              { type: string, enum: [unwatched, inProgress, partial, watched] },
+            downloadId: { type: string },
+            progress: { type: number, minimum: 0, maximum: 1 },
+            positionMs: { type: integer, format: int64 },
+            durationMs: { type: integer, format: int64 },
+          },
+      }
+    CatalogSource:
+      {
+        type: object,
+        required: [release, parsed, libraryState],
+        properties:
+          {
+            release: { $ref: "#/components/schemas/Release" },
+            parsed: { $ref: "#/components/schemas/ParsedRelease" },
+            fileIndex: { type: integer },
+            filePath: { type: string },
+            fileSizeBytes: { type: integer, format: int64 },
+            libraryState: { $ref: "#/components/schemas/MediaState" },
+          },
+      }
+    CatalogTitle:
+      {
+        type: object,
+        required:
+          [
+            id,
+            title,
+            kind,
+            categories,
+            resolutions,
+            sourceCount,
+            bestSeeders,
+            largestSizeBytes,
+            libraryState,
+          ],
+        properties:
+          {
+            id: { type: string },
+            title: { type: string },
+            originalTitle: { type: string },
+            kind: { type: string, enum: [movie, series] },
+            year: { type: integer },
+            imdbId: { type: string },
+            overview: { type: string },
+            posterUrl: { type: string },
+            backdropUrl: { type: string },
+            categories: { type: array, items: { type: string } },
+            resolutions: { type: array, items: { type: string } },
+            sourceCount: { type: integer },
+            seasonCount: { type: integer },
+            episodeCount: { type: integer },
+            bestSeeders: { type: integer },
+            largestSizeBytes: { type: integer, format: int64 },
+            newestUpload: { type: string, format: date-time },
+            libraryState: { $ref: "#/components/schemas/MediaState" },
+          },
+      }
+    CatalogTitlePage:
+      {
+        type: object,
+        required: [items, total],
+        properties:
+          {
+            items:
+              {
+                type: array,
+                items: { $ref: "#/components/schemas/CatalogTitle" },
+              },
+            nextCursor: { type: [string, "null"] },
+            total: { type: integer },
+          },
+      }
+    CatalogEpisode:
+      {
+        type: object,
+        required: [number, title, season, sourceCount, sources, libraryState],
+        properties:
+          {
+            number: { type: integer },
+            title: { type: string },
+            season: { type: integer },
+            sourceCount: { type: integer },
+            sources:
+              {
+                type: array,
+                items: { $ref: "#/components/schemas/CatalogSource" },
+              },
+            libraryState: { $ref: "#/components/schemas/MediaState" },
+          },
+      }
+    CatalogSeason:
+      {
+        type: object,
+        required: [number, title, episodeCount, episodes, libraryState],
+        properties:
+          {
+            number: { type: integer },
+            title: { type: string },
+            episodeCount: { type: integer },
+            episodes:
+              {
+                type: array,
+                items: { $ref: "#/components/schemas/CatalogEpisode" },
+              },
+            packSources:
+              {
+                type: array,
+                items: { $ref: "#/components/schemas/CatalogSource" },
+              },
+            libraryState: { $ref: "#/components/schemas/MediaState" },
+          },
+      }
+    CatalogDetail:
+      {
+        type: object,
+        required: [title, seasons, sources],
+        properties:
+          {
+            title: { $ref: "#/components/schemas/CatalogTitle" },
+            seasons:
+              {
+                type: array,
+                items: { $ref: "#/components/schemas/CatalogSeason" },
+              },
+            sources:
+              {
+                type: array,
+                items: { $ref: "#/components/schemas/CatalogSource" },
+              },
+          },
+      }
+    CatalogFacets:
+      {
+        type: object,
+        required: [categories, kinds, resolutions, hdr, sources, codecs],
+        properties:
+          {
+            categories: { type: array, items: { type: string } },
+            kinds: { type: array, items: { type: string } },
+            resolutions: { type: array, items: { type: string } },
+            hdr: { type: array, items: { type: string } },
+            sources: { type: array, items: { type: string } },
+            codecs: { type: array, items: { type: string } },
+          },
+      }
+    Download:
+      {
+        type: object,
+        required:
+          [
+            id,
+            releaseId,
+            engineId,
+            filePath,
+            fileIndex,
+            mimeType,
+            sizeBytes,
+            state,
+            progress,
+            playbackMode,
+            streamUrl,
+          ],
+        properties:
+          {
+            id: { type: string },
+            releaseId: { type: string },
+            releaseName: { type: string },
+            releaseSizeBytes: { type: integer, format: int64 },
+            titleId: { type: string },
+            displayTitle: { type: string },
+            category: { type: string },
+            parsed: { $ref: "#/components/schemas/ParsedRelease" },
+            engineId: { type: string },
+            filePath: { type: string },
+            fileIndex: { type: integer },
+            mimeType: { type: string },
+            sizeBytes: { type: integer, format: int64 },
+            state: { type: string },
+            progress: { type: number },
+            playbackMode: { type: string, enum: [local, progressive] },
+            downloadedBytes: { type: integer, format: int64 },
+            speedBytesPerSecond: { type: integer, format: int64 },
+            etaSeconds: { type: integer, format: int64 },
+            peers: { type: integer },
+            seeds: { type: integer },
+            trackerSeeders: { type: integer },
+            leased: { type: boolean },
+            error: { type: string },
+            streamUrl: { type: string },
+          },
+      }
+    MediaAudioTrack:
+      {
+        type: object,
+        required: [streamIndex],
+        properties:
+          {
+            streamIndex: { type: integer, minimum: 0 },
+            language: { type: string },
+            title: { type: string },
+            codec: { type: string },
+            channels: { type: integer, minimum: 0 },
+            default: { type: boolean },
+          },
+      }
+    MediaInfo:
+      {
+        type: object,
+        required: [durationMs, audioTracks],
+        properties:
+          {
+            durationMs: { type: integer, format: int64, minimum: 1 },
+            audioTracks:
+              {
+                type: array,
+                items: { $ref: "#/components/schemas/MediaAudioTrack" },
+              },
+            probedAt: { type: string, format: date-time },
+          },
+      }
+    Job:
+      {
+        type: object,
+        required:
+          [
+            id,
+            kind,
+            state,
+            label,
+            dedupeKey,
+            progress,
+            attempt,
+            createdAt,
+            updatedAt,
+          ],
+        properties:
+          {
+            id: { type: string },
+            kind: { type: string },
+            state: { type: string, enum: [queued, running, completed, failed] },
+            label: { type: string },
+            dedupeKey: { type: string },
+            progress: { type: number, minimum: 0, maximum: 1 },
+            attempt: { type: integer },
+            error: { type: string },
+            createdAt: { type: string, format: date-time },
+            updatedAt: { type: string, format: date-time },
+          },
+      }
+    PlaybackState:
+      {
+        type: object,
+        required:
+          [
+            profileId,
+            sourceId,
+            releaseId,
+            fileIndex,
+            filePath,
+            positionMs,
+            durationMs,
+            watched,
+            updatedAt,
+          ],
+        properties:
+          {
+            profileId: { type: string },
+            sourceId: { type: string },
+            releaseId: { type: string },
+            fileIndex: { type: integer },
+            filePath: { type: string },
+            positionMs: { type: integer, format: int64 },
+            durationMs: { type: integer, format: int64 },
+            watched: { type: boolean },
+            updatedAt: { type: string, format: date-time },
+          },
+      }
+    PlaybackPreferences:
+      {
+        type: object,
+        required:
+          [audioLanguage, audioTrackIndex, subtitleLanguage, subtitleMode],
+        properties:
+          {
+            profileId: { type: string },
+            sourceId: { type: string },
+            audioLanguage: { type: string },
+            audioTrackIndex: { type: integer, minimum: -1 },
+            subtitleLanguage: { type: string },
+            subtitleProvider: { type: string },
+            subtitleCandidateId: { type: string },
+            subtitleMode: { type: string, enum: [auto, "off", selected] },
+            updatedAt: { type: string, format: date-time },
+          },
+      }
+    HouseholdItem:
+      {
+        allOf:
+          [
+            { $ref: "#/components/schemas/PlaybackState" },
+            {
+              type: object,
+              required: [release, favorite],
+              properties:
+                {
+                  release: { $ref: "#/components/schemas/Release" },
+                  catalog: { $ref: "#/components/schemas/CatalogTitle" },
+                  favorite: { type: boolean },
+                  titleId: { type: string },
+                  seasonNumber: { type: integer },
+                  episodeNumber: { type: integer },
+                },
+            },
+          ],
+      }
+    HouseholdState:
+      {
+        type: object,
+        required: [favorites, continueWatching, recent, watched],
+        properties:
+          {
+            favorites:
+              {
+                type: array,
+                items: { $ref: "#/components/schemas/HouseholdItem" },
+              },
+            continueWatching:
+              {
+                type: array,
+                items: { $ref: "#/components/schemas/HouseholdItem" },
+              },
+            recent:
+              {
+                type: array,
+                items: { $ref: "#/components/schemas/HouseholdItem" },
+              },
+            watched:
+              {
+                type: array,
+                items: { $ref: "#/components/schemas/HouseholdItem" },
+              },
+          },
+      }
+    Problem:
+      {
+        type: object,
+        required: [title, status, detail],
+        properties:
+          {
+            type: { type: string },
+            title: { type: string },
+            status: { type: integer },
+            detail: { type: string },
+          },
+      }
+    SubtitleCandidate:
+      {
+        type: object,
+        required: [id, provider, language, title, score, cached],
+        properties:
+          {
+            id: { type: string },
+            provider:
+              {
+                type: string,
+                enum: [contained, embedded, subdl],
+                description: "Subtitle source: contained (sidecar bundled with the torrent), embedded (stream inside the media container), or subdl (remote SubDL provider)",
+              },
+            providerLabel: { type: string },
+            language:
+              {
+                type: string,
+                description: Canonical lowercase ISO-639-1 code,
+                for example ja; empty when undetermined,
+              },
+            title: { type: string },
+            fileName: { type: string },
+            releaseName: { type: string },
+            format: { type: string },
+            uploader: { type: string },
+            hearingImpaired: { type: boolean },
+            description: { type: string },
+            score: { type: number },
+            cached: { type: boolean },
+          },
+      }
+    SubtitlePage:
+      {
+        type: object,
+        required: [items, total],
+        properties:
+          {
+            items:
+              {
+                type: array,
+                items: { $ref: "#/components/schemas/SubtitleCandidate" },
+              },
+            nextCursor: { type: [string, "null"] },
+            total: { type: integer },
+            warnings:
+              {
+                type: array,
+                items:
+                  {
+                    type: object,
+                    required: [provider, message],
+                    properties:
+                      { provider: { type: string }, message: { type: string } },
+                  },
+              },
+          },
+      }
+    SubtitleAsset:
+      {
+        type: object,
+        required: [id, language, url, format, mimeType],
+        properties:
+          {
+            id: { type: string },
+            sourceId: { type: string },
+            provider: { type: string, enum: [contained, embedded, subdl] },
+            candidateId: { type: string },
+            name: { type: string },
+            language:
+              {
+                type: string,
+                description: Canonical lowercase ISO-639-1 language the candidate was selected for; persists across restarts,
+              },
+            url: { type: string },
+            format: { type: string, enum: [sami, vtt] },
+            mimeType: { type: string },
+            createdAt: { type: string, format: date-time },
+            lastUsedAt: { type: string, format: date-time },
+          },
+      }

@@ -71,12 +71,16 @@ type candidateID struct {
 	Path   string `json:"p,omitempty"`
 	Name   string `json:"m,omitempty"`
 	Format string `json:"x,omitempty"`
+	// Language keeps the canonical candidate language so a later Download
+	// can persist it without re-deriving it from the file name.
+	Language string `json:"l,omitempty"`
 }
 
 func encodeCandidate(v candidateID) string {
 	b, _ := json.Marshal(v)
 	return base64.RawURLEncoding.EncodeToString(b)
 }
+
 func decodeCandidate(raw string) (candidateID, error) {
 	var v candidateID
 	b, err := base64.RawURLEncoding.DecodeString(raw)
@@ -88,6 +92,7 @@ func decodeCandidate(raw string) (candidateID, error) {
 	}
 	return v, nil
 }
+
 func safeID(v string) bool {
 	if v == "" || len(v) > 160 {
 		return false
@@ -99,6 +104,7 @@ func safeID(v string) bool {
 	}
 	return true
 }
+
 func safeDownloadPath(v string) bool {
 	return strings.HasPrefix(v, "/subtitle/") && !strings.Contains(v, "..") && !strings.ContainsAny(v, "?#\\")
 }
@@ -188,11 +194,11 @@ func (p *SubDL) Search(ctx context.Context, q application.SubtitleQuery) ([]doma
 			if !validPath || parent != pathParent || fileID != pathFileID || !safeID(parent) || !safeID(fileID) {
 				continue
 			}
-			fileLang := strings.ToLower(first(file, "language"))
-			if fileLang == "" {
-				fileLang = lang
+			language := domain.NormalizeLanguage(first(file, "language"))
+			if language == "" {
+				language = domain.NormalizeLanguage(lang)
 			}
-			items = append(items, domain.SubtitleCandidate{ID: encodeCandidate(candidateID{NID: parent, FileID: fileID, Path: path, Name: name, Format: format}), ProviderLabel: "SubDL", Language: normalizeLanguage(fileLang), Title: name, FileName: name, ReleaseName: release, Format: format, Uploader: uploader, HearingImpaired: hi || boolValue(file["hi"]), Score: similarity(filepath.Base(q.MediaPath), name+" "+release)})
+			items = append(items, domain.SubtitleCandidate{ID: encodeCandidate(candidateID{NID: parent, FileID: fileID, Path: path, Name: name, Format: format, Language: language}), ProviderLabel: "SubDL", Language: language, Title: name, FileName: name, ReleaseName: release, Format: format, Uploader: uploader, HearingImpaired: hi || boolValue(file["hi"]), Score: similarity(filepath.Base(q.MediaPath), name+" "+release)})
 			matchedFile = true
 		}
 		if matchedFile || !safeID(parent) {
@@ -200,7 +206,8 @@ func (p *SubDL) Search(ctx context.Context, q application.SubtitleQuery) ([]doma
 		}
 		name := first(row, "release_name", "name")
 		format := strings.TrimPrefix(strings.ToLower(filepath.Ext(name)), ".")
-		items = append(items, domain.SubtitleCandidate{ID: encodeCandidate(candidateID{NID: parent, Name: name, Format: format}), ProviderLabel: "SubDL", Language: normalizeLanguage(lang), Title: name, FileName: name, ReleaseName: release, Format: format, Uploader: uploader, HearingImpaired: hi, Score: similarity(filepath.Base(q.MediaPath), name+" "+release)})
+		language := domain.NormalizeLanguage(lang)
+		items = append(items, domain.SubtitleCandidate{ID: encodeCandidate(candidateID{NID: parent, Name: name, Format: format, Language: language}), ProviderLabel: "SubDL", Language: language, Title: name, FileName: name, ReleaseName: release, Format: format, Uploader: uploader, HearingImpaired: hi, Score: similarity(filepath.Base(q.MediaPath), name+" "+release)})
 	}
 	if len(items) > 30 {
 		items = items[:30]
@@ -265,7 +272,7 @@ func (p *SubDL) Download(ctx context.Context, id string) (application.SubtitleDo
 	if name == "" {
 		name = "subdl-" + candidate.NID + detected
 	}
-	return application.SubtitleDownload{Data: body, Format: format, Name: name}, nil
+	return application.SubtitleDownload{Data: body, Format: format, Name: name, Language: candidate.Language}, nil
 }
 
 func (p *SubDL) get(ctx context.Context, path string, values url.Values) ([]byte, http.Header, error) {
@@ -336,19 +343,8 @@ func subDLError(result map[string]any) string {
 	return "provider returned an unsuccessful response"
 }
 
-func subDLLanguage(v string) string {
-	switch strings.ToLower(strings.TrimSpace(v)) {
-	case "ro", "ron", "rum":
-		return "ro"
-	case "en", "eng":
-		return "en"
-	default:
-		return strings.ToLower(v)
-	}
-}
-
 func subDLLanguages(primary, fallback string) string {
-	first, second := subDLLanguage(primary), subDLLanguage(fallback)
+	first, second := domain.NormalizeLanguage(primary), domain.NormalizeLanguage(fallback)
 	if first == "" {
 		return second
 	}
@@ -357,16 +353,7 @@ func subDLLanguages(primary, fallback string) string {
 	}
 	return first + "," + second
 }
-func normalizeLanguage(v string) string {
-	switch strings.ToLower(v) {
-	case "ro", "ron", "rum":
-		return "ro"
-	case "en", "eng":
-		return "en"
-	default:
-		return strings.ToLower(v)
-	}
-}
+
 func first(m map[string]any, keys ...string) string {
 	for _, key := range keys {
 		if v := stringValue(m[key]); v != "" {
@@ -395,6 +382,7 @@ func detectSubtitleFormat(data []byte) string {
 	}
 	return ""
 }
+
 func stringValue(value any) string {
 	switch v := value.(type) {
 	case string:
@@ -407,6 +395,7 @@ func stringValue(value any) string {
 		return ""
 	}
 }
+
 func similarity(left, right string) float64 {
 	normalize := func(v string) []string {
 		return strings.Fields(strings.NewReplacer(".", " ", "_", " ", "-", " ").Replace(strings.ToLower(v)))
