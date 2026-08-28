@@ -1,6 +1,6 @@
 import {render} from 'preact';
 import {useEffect, useMemo, useRef, useState} from 'preact/hooks';
-import {API, canonicalHouseholdItems, CatalogDetail, CatalogSource, CatalogTitle, Download, DownloadSort, formatBytes, HouseholdItem, HouseholdState, Job, JobLog, languageDisplayName, LibraryCategory, logicalPlaybackPosition, MediaAudioTrack, MediaInfo, MediaState, canonicalLanguage, subtitleRank, orderDownloadIDs, PlaybackPreferences, preferredAudioTrack, reconcileDownloads, resumeActionLabel, resumeForTitle, resumeSummary, seasonPackActionLabel, SettingsField, SubtitleCandidate, subtitleItemLabel, subtitleMenuGroups, SubtitleWarning} from '@filelist/shared';
+import {API, canonicalHouseholdItems, CatalogDetail, CatalogSource, CatalogTitle, ControlsVisibility, Download, DownloadSort, formatBytes, HouseholdItem, HouseholdState, Job, JobLog, languageDisplayName, LibraryCategory, logicalPlaybackPosition, MediaAudioTrack, MediaInfo, MediaState, canonicalLanguage, subtitleRank, orderDownloadIDs, PlaybackPreferences, preferredAudioTrack, reconcileDownloads, resumeActionLabel, resumeForTitle, resumeSummary, seasonPackActionLabel, SettingsField, SubtitleCandidate, subtitleItemLabel, subtitleMenuGroups, SubtitleWarning} from '@filelist/shared';
 import {AudioDecodeController, audioPlaybackRoute} from './audio-decode';
 import './style.css';
 
@@ -80,9 +80,9 @@ function BrowserPlayer({active,onClose,onStateChanged,onAdvance}:{active:ActiveP
   const decoderRef=useRef<AudioDecodeController|null>(null);
   const[selectedSubtitle,setSelectedSubtitle]=useState('off');
   const[controlsVisible,setControlsVisible]=useState(true);
-  const hideTimer=useRef(0);
-  const controlsHold=useRef(false);
-  controlsHold.current=subtitleOpen||audioOpen||message!=='';
+  const controls=useMemo(()=>new ControlsVisibility({policy:{armWhilePaused:true,statusHolds:true},onChange:setControlsVisible}),[]);
+  controls.setStatus(message!=='');
+  controls.setPanelOpen(subtitleOpen||audioOpen);
   useModalFocus(root,onClose);
 
   const playbackURL=useMemo(()=>mediaInfo?active.download.streamUrl:'',[active.download.id,mediaInfo]);
@@ -156,13 +156,13 @@ function BrowserPlayer({active,onClose,onStateChanged,onAdvance}:{active:ActiveP
     })();
     return()=>{cancelled=true};
   },[active.download.id]);
-  // Player chrome auto-hide, mirroring the TV player's spec: controls stay while
-  // a panel or a status message is shown; otherwise 5 idle seconds hide them
-  // until the next mouse move or key press, windowed and fullscreen alike.
+  // Player chrome auto-hide: the shared controller holds controls while a panel
+  // or a status message is shown; otherwise 5 idle seconds hide them until the
+  // next mouse move or key press, windowed and fullscreen alike.
   useEffect(()=>{
-    if(controlsVisible)armHideTimer();
-    return()=>window.clearTimeout(hideTimer.current);
-  },[controlsVisible,subtitleOpen,audioOpen,message]);
+    if(controlsVisible)controls.refresh();
+    return()=>controls.dispose();
+  },[controlsVisible,subtitleOpen,audioOpen,message,controls]);
   useEffect(()=>{
     const element=root.current;
     if(!element)return;
@@ -195,8 +195,7 @@ function BrowserPlayer({active,onClose,onStateChanged,onAdvance}:{active:ActiveP
   }
   async function chooseAudio(track:MediaAudioTrack){setSelectedAudio(track.streamIndex);setAudioOpen(false);await savePreferences({...preferenceRef.current,audioTrackIndex:track.streamIndex,audioLanguage:track.language||'en'})}
   function togglePlayback(){const element=video.current;if(!element)return;if(element.paused){shouldPlay.current=true;void element.play().catch(error=>setMessage(`Playback could not start: ${error.message}`))}else{shouldPlay.current=false;element.pause()}}
-  function armHideTimer(){window.clearTimeout(hideTimer.current);if(controlsHold.current)return;hideTimer.current=window.setTimeout(()=>setControlsVisible(false),5000)}
-  function revealControls(){setControlsVisible(true);armHideTimer()}
+  function revealControls(){controls.reveal()}
   function setPlayerVolume(value:number){const element=video.current;if(!element)return;if(decoderRef.current){decoderRef.current.setVolume(value);decoderRef.current.setMuted(value===0);setVolume(value);setMuted(value===0);return}element.volume=value;element.muted=value===0;setVolume(value);setMuted(value===0)}
   async function toggleFullscreen(){try{if(document.fullscreenElement)await document.exitFullscreen();else await root.current?.requestFullscreen()}catch(error){setMessage(`Fullscreen unavailable: ${(error as Error).message}`)}}
 

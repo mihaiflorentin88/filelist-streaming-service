@@ -1,6 +1,6 @@
 import {Fragment, render} from 'preact';
 import {useEffect, useMemo, useRef, useState} from 'preact/hooks';
-import {API, canonicalHouseholdItems, canonicalLanguage, subtitleRank, CatalogDetail, CatalogFacets, CatalogSource, CatalogTitle, Download, DownloadSort, formatBytes, HouseholdItem, HouseholdState, Job, JobLog, LibraryCategory, MediaState, orderDownloadIDs, PlaybackPreferences, reconcileDownloads, Release, resumeActionLabel, resumeForTitle, resumeSummary, seasonPackActionLabel, SettingsField, SubtitleCandidate, subtitleItemLabel, subtitleMenuGroups} from '@filelist/shared';
+import {API, canonicalHouseholdItems, canonicalLanguage, ControlsVisibility, subtitleRank, CatalogDetail, CatalogFacets, CatalogSource, CatalogTitle, Download, DownloadSort, formatBytes, HouseholdItem, HouseholdState, Job, JobLog, LibraryCategory, MediaState, orderDownloadIDs, PlaybackPreferences, reconcileDownloads, Release, resumeActionLabel, resumeForTitle, resumeSummary, seasonPackActionLabel, SettingsField, SubtitleCandidate, subtitleItemLabel, subtitleMenuGroups} from '@filelist/shared';
 import {chooseStructuredTarget, focusElement, remoteAction, useTVNavigation} from './navigation';
 import {AVTrack, clampSeek, formatTime, isDownloadComplete, normalizeTrack, parseVTT, playerAction, preferredAudio, SubtitleCue, subtitleAt} from './player';
 import {householdSections,trackerCategories} from './catalog-data';
@@ -60,7 +60,6 @@ function Player({api, download, resumeMs, preferences, onClose, onStateChanged, 
   const session = useRef(0);
   const completedRetryUsed = useRef(false);
   const pollTimer = useRef(0);
-  const hideTimer = useRef(0);
   const scrubTimer = useRef(0);
   const messageTimer = useRef(0);
   const scrubTarget = useRef<number|null>(null);
@@ -81,6 +80,7 @@ function Player({api, download, resumeMs, preferences, onClose, onStateChanged, 
   menuRef.current = menu;
   controlsVisibleRef.current = controlsVisible;
   subtitleDelayRef.current = subtitleDelay;
+  const controls=useMemo(()=>new ControlsVisibility({policy:{armWhilePaused:false,statusHolds:false},onChange:value=>{controlsVisibleRef.current=value;setControlsVisible(value);}}),[]);
   const save = async () => {if (duration.current > 0) try{await api.updatePlayback(download.id, current.current, duration.current);onStateChanged()}catch{}};
   const savePreferences=async(value:PlaybackPreferences)=>{preferenceRef.current=value;try{preferenceRef.current=await api.updatePlaybackPreferences(download.id,value)}catch{}};
 
@@ -93,8 +93,7 @@ function Player({api, download, resumeMs, preferences, onClose, onStateChanged, 
   function revealControls(sticky = false) {
     controlsVisibleRef.current = true;
     setControlsVisible(true);
-    window.clearTimeout(hideTimer.current);
-    if (!sticky && playing.current && !menuRef.current) hideTimer.current = window.setTimeout(() => {controlsVisibleRef.current=false;setControlsVisible(false);}, 5000);
+    controls.reveal(sticky);
   }
 
   function showTransientMessage(value:string, duration=3000) {
@@ -112,6 +111,7 @@ function Player({api, download, resumeMs, preferences, onClose, onStateChanged, 
     menuLauncher.current = launcher;
     lastControlFocus.current = launcher;
     setMenu(next);
+    controls.setPanelOpen(true);
     revealControls(true);
     window.setTimeout(() => focusElement(document.querySelector<HTMLElement>('.player-dialog button')), 0);
   }
@@ -120,10 +120,12 @@ function Player({api, download, resumeMs, preferences, onClose, onStateChanged, 
     const launcher = menuLauncher.current;
     setMenu(null);
     revealControls();
+    controls.setPanelOpen(false);
     focusControl(launcher);
   }
   function switchMenu(next: Exclude<typeof menu, null>, openerKey: string) {
     setMenu(next);
+    controls.setPanelOpen(true);
     revealControls(true);
     window.setTimeout(() => focusElement(document.querySelector<HTMLElement>(`[data-focus-key="${openerKey}"]`)), 0);
   }
@@ -144,8 +146,8 @@ function Player({api, download, resumeMs, preferences, onClose, onStateChanged, 
     const av = window.webapis?.avplay;
     try {
       const shouldPlay = force ?? !playing.current;
-      if (shouldPlay) {av.play(); playing.current = true; setPhase('playing'); setMessage(''); revealControls();}
-      else {av.pause(); playing.current = false; setPhase('paused'); setMessage('Paused'); revealControls(true); save();}
+      if (shouldPlay) {av.play(); playing.current = true; setPhase('playing'); setMessage(''); controls.setPlaying(true); revealControls();}
+      else {av.pause(); playing.current = false; setPhase('paused'); setMessage('Paused'); controls.setPlaying(false); revealControls(true); save();}
     } catch {}
   }
 
@@ -158,6 +160,7 @@ function Player({api, download, resumeMs, preferences, onClose, onStateChanged, 
     const terminal = /error|missing|unavailable|unknown/i.test(latest.state);
     if (!isDownloadComplete(latest) && !terminal) {
       playing.current = false;
+      controls.setPlaying(false);
       setPhase('waiting');
 	  setMessage('Waiting for the next downloaded segment…');
       revealControls(true);
@@ -179,6 +182,7 @@ function Player({api, download, resumeMs, preferences, onClose, onStateChanged, 
     }
 	if (isDownloadComplete(latest) && !completedRetryUsed.current) {completedRetryUsed.current = true; void openPlayer(current.current); return;}
     playing.current = false;
+    controls.setPlaying(false);
     setPhase('failed');
     setMessage(`Playback failed: ${error}`);
     revealControls(true);
@@ -197,9 +201,9 @@ function Player({api, download, resumeMs, preferences, onClose, onStateChanged, 
       av.setDisplayMethod(aspect);
       if (externalSubtitlePath.current) av.setExternalSubtitlePath(externalSubtitlePath.current);
       av.setListener({
-        onbufferingstart: () => {if (token === session.current) {playing.current = false; setPhase('buffering'); setMessage('Buffering…'); revealControls(true);}},
+        onbufferingstart: () => {if (token === session.current) {playing.current = false; setPhase('buffering'); setMessage('Buffering…'); controls.setPlaying(false); revealControls(true);}},
         onbufferingprogress: (progress: number) => {if (token === session.current) setMessage(`Buffering ${progress}%`);},
-        onbufferingcomplete: () => {if (token === session.current) {playing.current = true; setPhase('playing'); setMessage(''); refreshTracks(); revealControls();}},
+        onbufferingcomplete: () => {if (token === session.current) {playing.current = true; setPhase('playing'); setMessage(''); refreshTracks(); controls.setPlaying(true); revealControls();}},
         onstreamcompleted: () => {if (token === session.current) {current.current = duration.current;void save().then(()=>onComplete(preferenceRef.current));}},
         oncurrentplaytime: (value: number) => {if (token === session.current) {current.current = value;if(scrubTarget.current===null)setPosition(value);if(subtitleCues.current.length)setExternalSubtitle(subtitleAt(subtitleCues.current,value,subtitleDelayRef.current));if (Date.now() - lastSaved.current >= 10_000) {lastSaved.current = Date.now(); save();}}},
         onsubtitlechange: (_duration:number, text:string) => {if(token===session.current)setExternalSubtitle(String(text||''));},
@@ -212,8 +216,8 @@ function Player({api, download, resumeMs, preferences, onClose, onStateChanged, 
         if (externalSubtitlePath.current) {try {av.setSilentSubtitle(false);} catch {}}
         else if (!autoSubtitleAttempted.current) {autoSubtitleAttempted.current = true; void autoSelectSubtitles(allTracks);}
         if (startAt > 0 && startAt < duration.current) av.seekTo(clampSeek(startAt, duration.current));
-        if (shouldPlay) {av.play(); playing.current = true; setPhase('playing'); setMessage(''); revealControls();}
-        else {playing.current = false; setPhase('paused'); setMessage('Paused'); revealControls(true);}
+        if (shouldPlay) {av.play(); playing.current = true; setPhase('playing'); setMessage(''); controls.setPlaying(true); revealControls();}
+        else {playing.current = false; setPhase('paused'); setMessage('Paused'); controls.setPlaying(false); revealControls(true);}
       }, (error: string) => void recover(error || 'AVPlay could not prepare this source.', token));
     } catch (error) {void recover((error as Error).message, token);}
   }
@@ -221,7 +225,7 @@ function Player({api, download, resumeMs, preferences, onClose, onStateChanged, 
   useEffect(() => {
     let cancelled=false;void (async()=>{try{preferenceRef.current=preferences||await api.playbackPreferences(download.id)}catch{}if(!cancelled)openPlayer(resumeMs)})();
     const focusTimer = window.setTimeout(() => focusElement(document.querySelector<HTMLElement>('[data-player-control="play"]')), 0);
-    return () => {cancelled=true;session.current++; window.clearTimeout(focusTimer); window.clearTimeout(pollTimer.current); window.clearTimeout(hideTimer.current);window.clearTimeout(scrubTimer.current);window.clearTimeout(messageTimer.current); void save(); stopAVPlay();};
+    return () => {cancelled=true;session.current++; window.clearTimeout(focusTimer); window.clearTimeout(pollTimer.current); controls.dispose();window.clearTimeout(scrubTimer.current);window.clearTimeout(messageTimer.current); void save(); stopAVPlay();};
   }, [download.id]);
   useEffect(() => {
     const remember = (event: FocusEvent) => {
