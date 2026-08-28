@@ -39,9 +39,16 @@ const DRIFT_LIMIT_SECONDS = 0.25;
 const ANCHOR_LEAD_SECONDS = 0.08;
 const PENDING_PAUSE_SECONDS = 120;
 const PENDING_RESUME_SECONDS = 45;
+// How long playback may run with a context that never reaches 'running' before
+// the silence is declared a failure instead of a transient suspension.
+const SUSPENDED_GRACE_SECONDS = 5;
 
 export type DecodeStatus = { status: 'ready' | 'stalling' | 'error'; message: string };
-export type DecodeOptions = { video: HTMLVideoElement; url: string; startSec: number; totalBytes: number; durationSec: number; audioOrdinal: number; onStatus: (status: DecodeStatus) => void };
+export type DecodeOptions = { video: HTMLVideoElement; url: string; startSec: number; totalBytes: number; durationSec: number; audioOrdinal: number; onStatus: (status: DecodeStatus) => void; createContext?: () => AudioContext; createWorker?: () => Worker };
+
+// Production defaults for the injection seam; tests inject fakes instead.
+function defaultCreateContext(): AudioContext { return new AudioContext({ latencyHint: 'playback' }) }
+function defaultCreateWorker(): Worker { return new Worker(new URL('./audio-decode-worker.ts', import.meta.url), { type: 'module' }) }
 
 export class AudioDecodeController {
   private readonly video: HTMLVideoElement;
@@ -69,6 +76,9 @@ export class AudioDecodeController {
   private muted = false;
   private destroyed = false;
   private frame = 0;
+  private suspendedNote = false;
+  private suspendedSeconds = 0;
+  private lastVideoTime = 0;
 
   private constructor(video: HTMLVideoElement, ctx: AudioContext, worker: Worker, options: DecodeOptions) {
     this.video = video;
@@ -79,21 +89,34 @@ export class AudioDecodeController {
     this.totalBytes = options.totalBytes;
     this.audioOrdinal = options.audioOrdinal;
     this.bytesPerSecond = options.durationSec > 0 && options.totalBytes > 0 ? options.totalBytes / options.durationSec : 0;
+    this.lastVideoTime = video.currentTime;
     this.gain = ctx.createGain();
     this.gain.connect(ctx.destination);
     this.gain.gain.value = this.volume;
   }
 
   static async create(options: DecodeOptions): Promise<AudioDecodeController> {
-    const ctx = new AudioContext({ latencyHint: 'playback' });
-    ctx.onstatechange = () => console.debug(`[audio-decode] audio context state: ${ctx.state}`);
-    console.debug(`[audio-decode] controller created (audio context ${ctx.state}, video ${options.video.muted ? 'muted' : 'audible'})`);
-    const worker = new Worker(new URL('./audio-decode-worker.ts', import.meta.url), { type: 'module' });
-    const controller = new AudioDecodeController(options.video, ctx, worker, options);
-    worker.onmessage = event => controller.receive(event.data as WorkerOutMessage);
-    controller.startSession(options.startSec);
-    controller.tickLoop();
-    return controller;
+    const ctx = (options.createContext ?? defaultCreateContext)();
+    let worker: Worker | null = null;
+    let controller: AudioDecodeController | null = null;
+    try {
+      worker = (options.createWorker ?? defaultCreateWorker)();
+      ctx.onstatechange = () => console.debug(`[audio-decode] audio context state: ${ctx.state}`);
+      const created = new AudioDecodeController(options.video, ctx, worker, options);
+      controller = created;
+      options.video.muted = true;
+      console.debug(`[audio-decode] controller created (audio context ${ctx.state}, video element muted for the decode session)`);
+      worker.onmessage = event => created.receive(event.data as WorkerOutMessage);
+      worker.onerror = () => created.fail('Audio decode failed: the audio decoder could not be loaded.');
+      created.startSession(options.startSec);
+      created.tickLoop();
+      return created;
+    } catch (error) {
+      controller?.destroy();
+      worker?.terminate();
+      void ctx.close();
+      throw error;
+    }
   }
 
   /** Restart decoding at a video position; ignores echoes of the current anchor (resume, resync). */
@@ -108,14 +131,25 @@ export class AudioDecodeController {
   setVolume(value: number) { this.volume = value; this.applyGain() }
   setMuted(value: boolean) { this.muted = value; this.applyGain() }
 
+  // Terminal decode failure: surface the message once, then release everything —
+  // the video element returns to the native path (audible) instead of staying
+  // muted with no decoder behind it.
+  private fail(message: string) {
+    if (this.destroyed) return;
+    console.debug(`[audio-decode] ${message}`);
+    this.onStatus({ status: 'error', message });
+    this.destroy();
+  }
+
   destroy() {
     if (this.destroyed) return;
     this.destroyed = true;
-    console.debug('[audio-decode] controller destroyed');
+    console.debug('[audio-decode] controller destroyed; video element audible again');
     cancelAnimationFrame(this.frame);
     this.worker.terminate();
     this.stopSources();
     void this.ctx.close();
+    this.video.muted = false;
   }
 
   private startSession(seconds: number) {
@@ -148,7 +182,7 @@ export class AudioDecodeController {
       this.onStatus({ status: 'stalling', message: 'Audio decoder is waiting for more downloaded data…' });
     } else if (message.type === 'error') {
       this.stalledNote = false;
-      this.onStatus({ status: 'error', message: `Audio decode failed: ${message.message}` });
+      this.fail(`Audio decode failed: ${message.message}`);
     }
   }
 
@@ -167,7 +201,26 @@ export class AudioDecodeController {
   private tickLoop = () => {
     if (this.destroyed) return;
     this.frame = requestAnimationFrame(this.tickLoop);
-    if (this.ctx.state !== 'running' || this.video.paused || this.video.ended) return;
+    // Playback delta for this frame, clamped so seeks cannot masquerade as silence.
+    const elapsed = Math.max(0, Math.min(0.5, this.video.currentTime - this.lastVideoTime));
+    this.lastVideoTime = this.video.currentTime;
+    if (this.video.paused || this.video.ended) { this.suspendedSeconds = 0; return }
+    if (this.ctx.state !== 'running') {
+      // The video keeps playing while the audio context schedules nothing:
+      // silent video. Explain it while it lasts instead of failing silently.
+      if (!this.suspendedNote) {
+        this.suspendedNote = true;
+        this.onStatus({ status: 'stalling', message: 'Audio is suspended — press Play or interact with the page so the browser allows sound.' });
+      }
+      this.suspendedSeconds += elapsed;
+      if (this.suspendedSeconds >= SUSPENDED_GRACE_SECONDS) this.fail('Audio decode failed: the browser did not allow audio to start, so no sound could be scheduled.');
+      return;
+    }
+    this.suspendedSeconds = 0;
+    if (this.suspendedNote) {
+      this.suspendedNote = false;
+      this.onStatus({ status: 'ready', message: '' });
+    }
     const audible = this.sources.size > 0 || this.pending.length > 0;
     const drift = this.anchored && audible ? this.anchorMediaAt + (this.ctx.currentTime - this.anchorCtxAt) - this.video.currentTime : 0;
     if (Math.abs(drift) > DRIFT_LIMIT_SECONDS) {

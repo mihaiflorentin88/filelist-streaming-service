@@ -1,7 +1,7 @@
-import {render} from 'preact';
-import {useEffect, useMemo, useRef, useState} from 'preact/hooks';
-import {API, canonicalHouseholdItems, CatalogDetail, CatalogSource, CatalogTitle, ControlsVisibility, Download, DownloadSort, formatBytes, HouseholdItem, HouseholdState, Job, JobLog, languageDisplayName, LibraryCategory, logicalPlaybackPosition, MediaAudioTrack, MediaInfo, MediaState, canonicalLanguage, subtitleRank, orderDownloadIDs, PlaybackPreferences, preferredAudioTrack, reconcileDownloads, resumeActionLabel, resumeForTitle, resumeSummary, seasonPackActionLabel, SettingsField, SubtitleCandidate, subtitleItemLabel, subtitleMenuGroups, SubtitleWarning} from '@filelist/shared';
-import {AudioDecodeController, audioPlaybackRoute} from './audio-decode';
+import { render } from 'preact';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { API, canonicalHouseholdItems, CatalogDetail, CatalogSource, CatalogTitle, ControlsVisibility, Download, DownloadSort, formatBytes, HouseholdItem, HouseholdState, Job, JobLog, languageDisplayName, LibraryCategory, logicalPlaybackPosition, MediaAudioTrack, MediaInfo, MediaState, canonicalLanguage, subtitleRank, orderDownloadIDs, PlaybackPreferences, preferredAudioTrack, reconcileDownloads, resumeActionLabel, resumeForTitle, resumeSummary, seasonPackActionLabel, SettingsField, SubtitleCandidate, subtitleItemLabel, subtitleMenuGroups, SubtitleWarning } from '@filelist/shared';
+import { AudioDecodeController, audioPlaybackRoute } from './audio-decode';
 import './style.css';
 
 const api = new API(location.origin);
@@ -54,36 +54,37 @@ function Rail({ title, children, empty, landscape = false }: { title: string; ch
 function useModalFocus(root: { current: HTMLElement | null }, onClose: () => void) { useEffect(() => { const previous = document.activeElement as HTMLElement | null; const background = Array.from(document.querySelectorAll<HTMLElement>('.sidebar,.content')); background.forEach(element => element.setAttribute('inert', '')); const focusable = () => Array.from(root.current?.querySelectorAll<HTMLElement>('button:not([disabled]),input:not([disabled]),select:not([disabled]),video[controls],[tabindex]:not([tabindex="-1"])') || []); const timer = window.setTimeout(() => focusable()[0]?.focus(), 0); const key = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); onClose(); return } if (event.key !== 'Tab') return; const items = focusable(); if (items.length === 0) return; const index = items.indexOf(document.activeElement as HTMLElement); event.preventDefault(); items[(index + (event.shiftKey ? -1 : 1) + items.length) % items.length].focus() }; document.addEventListener('keydown', key); return () => { window.clearTimeout(timer); document.removeEventListener('keydown', key); background.forEach(element => element.removeAttribute('inert')); previous?.focus() }; }, []) }
 function useOverlayFocus(active: boolean, onClose: () => void) { useEffect(() => { if (!active) return; const root = { get current() { const overlays = document.querySelectorAll<HTMLElement>('.overlay'); return overlays[overlays.length - 1] || null } }; const previous = document.activeElement as HTMLElement | null; const overlay = root.current; const background = Array.from(document.querySelectorAll<HTMLElement>('.sidebar,.content')).filter(element => !overlay || !element.contains(overlay)); background.forEach(element => element.setAttribute('inert', '')); const focusable = () => Array.from(root.current?.querySelectorAll<HTMLElement>('button:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])') || []); const timer = window.setTimeout(() => focusable()[0]?.focus(), 0); const key = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); onClose(); return } if (event.key !== 'Tab') return; const items = focusable(); if (!items.length) return; const index = items.indexOf(document.activeElement as HTMLElement); event.preventDefault(); items[(index + (event.shiftKey ? -1 : 1) + items.length) % items.length].focus() }; document.addEventListener('keydown', key); return () => { window.clearTimeout(timer); document.removeEventListener('keydown', key); background.forEach(element => element.removeAttribute('inert')); previous?.focus() }; }, [active]) }
 
-function BrowserPlayer({active,onClose,onStateChanged,onAdvance}:{active:ActivePlayer;onClose:()=>void;onStateChanged:()=>void;onAdvance:(preferences:PlaybackPreferences)=>Promise<void>}) {
-  const defaults:PlaybackPreferences={audioLanguage:'en',audioTrackIndex:-1,subtitleLanguage:'ro',subtitleMode:'auto'};
-  const video=useRef<HTMLVideoElement>(null);
-  const root=useRef<HTMLDivElement>(null);
-  const lastSaved=useRef(0);
-  const lastRendered=useRef(0);
-  const retryTimer=useRef(0);
-  const mediaRetryTimer=useRef(0);
-  const recovering=useRef(false);
-  const shouldPlay=useRef(true);
-  const preferenceRef=useRef<PlaybackPreferences>(active.preferences||defaults);
-  const durationRef=useRef(0);
-  const[message,setMessage]=useState('Reading media details…');
-  const[mediaInfo,setMediaInfo]=useState<MediaInfo|null>(null);
-  const[selectedAudio,setSelectedAudio]=useState(-1);
-  const[position,setPosition]=useState(0);
-  const[playing,setPlaying]=useState(false);
-  const[volume,setVolume]=useState(1);
-  const[muted,setMuted]=useState(false);
-  const[candidates,setCandidates]=useState<SubtitleCandidate[]>([]);
-  const[warnings,setWarnings]=useState<SubtitleWarning[]>([]);
-  const[subtitleOpen,setSubtitleOpen]=useState(false);
-  const[audioOpen,setAudioOpen]=useState(false);
-  const decoderRef=useRef<AudioDecodeController|null>(null);
-  const[selectedSubtitle,setSelectedSubtitle]=useState('off');
-  const[controlsVisible,setControlsVisible]=useState(true);
-  const controls=useMemo(()=>new ControlsVisibility({policy:{armWhilePaused:true,statusHolds:true},onChange:setControlsVisible}),[]);
-  controls.setStatus(message!=='');
-  controls.setPanelOpen(subtitleOpen||audioOpen);
-  useModalFocus(root,onClose);
+function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { active: ActivePlayer; onClose: () => void; onStateChanged: () => void; onAdvance: (preferences: PlaybackPreferences) => Promise<void> }) {
+  const defaults: PlaybackPreferences = { audioLanguage: 'en', audioTrackIndex: -1, subtitleLanguage: 'ro', subtitleMode: 'auto' };
+  const video = useRef<HTMLVideoElement>(null);
+  const root = useRef<HTMLDivElement>(null);
+  const lastSaved = useRef(0);
+  const lastRendered = useRef(0);
+  const retryTimer = useRef(0);
+  const mediaRetryTimer = useRef(0);
+  const recovering = useRef(false);
+  const shouldPlay = useRef(true);
+  const preferenceRef = useRef<PlaybackPreferences>(active.preferences || defaults);
+  const durationRef = useRef(0);
+  const [message, setMessage] = useState('Reading media details…');
+  const [mediaInfo, setMediaInfo] = useState<MediaInfo | null>(null);
+  const [selectedAudio, setSelectedAudio] = useState(-1);
+  const [position, setPosition] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [volume, setVolume] = useState(1);
+  const [muted, setMuted] = useState(false);
+  const [candidates, setCandidates] = useState<SubtitleCandidate[]>([]);
+  const [warnings, setWarnings] = useState<SubtitleWarning[]>([]);
+  const [subtitleOpen, setSubtitleOpen] = useState(false);
+  const [audioOpen, setAudioOpen] = useState(false);
+  const decoderRef = useRef<AudioDecodeController | null>(null);
+  const decodeFailed = useRef(false);
+  const [selectedSubtitle, setSelectedSubtitle] = useState('off');
+  const [controlsVisible, setControlsVisible] = useState(true);
+  const controls = useMemo(() => new ControlsVisibility({ policy: { armWhilePaused: true, statusHolds: true }, onChange: setControlsVisible }), []);
+  controls.setStatus(message !== '');
+  controls.setPanelOpen(subtitleOpen || audioOpen);
+  useModalFocus(root, onClose);
 
   const playbackURL = useMemo(() => mediaInfo ? active.download.streamUrl : '', [active.download.id, mediaInfo]);
   const currentTrack = mediaInfo?.audioTracks.find(track => track.streamIndex === selectedAudio);
@@ -123,16 +124,15 @@ function BrowserPlayer({active,onClose,onStateChanged,onAdvance}:{active:ActiveP
     const track = mediaInfo?.audioTracks.find(item => item.streamIndex === selectedAudio);
     const element = video.current;
     if (!mediaInfo || !playbackURL || !element || !track) return; const ordinal = Math.max(0, mediaInfo.audioTracks.findIndex(item => item.streamIndex === selectedAudio)); const route = audioPlaybackRoute(track.codec); const multiTrackSwitch = mediaInfo.audioTracks.length > 1 && !track.default; console.debug(`[audio] route=${route} reason=${route === 'decode' ? `codec "${track.codec}" is not natively decodable` : multiTrackSwitch ? 'selected track is a non-default track in a multi-track file' : `codec "${track.codec}" plays through the element`} (track ${ordinal})`); if (route !== 'decode' && !multiTrackSwitch) return;
-    let cancelled = false;
+    let cancelled = false; decodeFailed.current = false;
     let instance: AudioDecodeController | null = null;
     const startSec = Math.min(Math.max(0, active.resumeMs), Math.max(0, mediaInfo.durationMs - 1000)) / 1000;
-    void AudioDecodeController.create({ video: element, audioOrdinal: ordinal, url: api.streamURL(playbackURL), startSec, totalBytes: active.download.sizeBytes, durationSec: mediaInfo.durationMs / 1000, onStatus: status => { if (!cancelled) setMessage(status.message) } }).then(value => {
+    void AudioDecodeController.create({ video: element, audioOrdinal: ordinal, url: api.streamURL(playbackURL), startSec, totalBytes: active.download.sizeBytes, durationSec: mediaInfo.durationMs / 1000, onStatus: status => { if (cancelled) return; if (status.status === 'error') { decodeFailed.current = true; decoderRef.current = null } setMessage(status.message) } }).then(value => {
       if (cancelled) { value.destroy(); return }
       instance = value;
       decoderRef.current = value;
-      element.muted = true; console.debug('[audio] video element muted, WebAudio graph takes over');
     }).catch(error => { if (!cancelled) setMessage(`Audio decode unavailable: ${(error as Error).message}`) });
-    return () => { cancelled = true; decoderRef.current = null; instance?.destroy(); if (video.current) { video.current.muted = false; console.debug('[audio] decoder released, video element audible again') } };
+    return () => { cancelled = true; decoderRef.current = null; instance?.destroy() };
   }, [mediaInfo, selectedAudio, playbackURL]);
   useEffect(() => {
     let cancelled = false;
@@ -154,22 +154,22 @@ function BrowserPlayer({active,onClose,onStateChanged,onAdvance}:{active:ActiveP
         setMessage((page.warnings || []).map(w => `${w.provider}: ${w.message}`).join(' · ') || 'No Romanian or English subtitle was found.');
       } catch (error) { if (!cancelled) setMessage(`Subtitles unavailable: ${(error as Error).message}`) }
     })();
-    return()=>{cancelled=true};
-  },[active.download.id]);
+    return () => { cancelled = true };
+  }, [active.download.id]);
   // Player chrome auto-hide: the shared controller holds controls while a panel
   // or a status message is shown; otherwise 2 idle seconds hide them until the
   // next mouse move or key press, windowed and fullscreen alike.
-  useEffect(()=>{
-    if(controlsVisible)controls.refresh();
-    return()=>controls.dispose();
-  },[controlsVisible,subtitleOpen,audioOpen,message,controls]);
-  useEffect(()=>{
-    const element=root.current;
-    if(!element)return;
-    element.addEventListener('mousemove',revealControls);
-    element.addEventListener('keydown',revealControls);
-    return()=>{element.removeEventListener('mousemove',revealControls);element.removeEventListener('keydown',revealControls)};
-  },[]);
+  useEffect(() => {
+    if (controlsVisible) controls.refresh();
+    return () => controls.dispose();
+  }, [controlsVisible, subtitleOpen, audioOpen, message, controls]);
+  useEffect(() => {
+    const element = root.current;
+    if (!element) return;
+    element.addEventListener('mousemove', revealControls);
+    element.addEventListener('keydown', revealControls);
+    return () => { element.removeEventListener('mousemove', revealControls); element.removeEventListener('keydown', revealControls) };
+  }, []);
 
   async function chooseSubtitle(candidate: SubtitleCandidate, automatic = false, persist = true) {
     try {
@@ -186,21 +186,21 @@ function BrowserPlayer({active,onClose,onStateChanged,onAdvance}:{active:ActiveP
     } catch (error) { if (!automatic) setMessage(`Subtitle failed: ${(error as Error).message}`); return false }
   }
   function disableSubtitles(persist = true) { if (video.current) Array.from(video.current.textTracks).forEach(track => track.mode = 'disabled'); setSelectedSubtitle('off'); setSubtitleOpen(false); if (persist) void savePreferences({ ...preferenceRef.current, subtitleMode: 'off', subtitleProvider: '', subtitleCandidateId: '' }) }
-  async function recover() { if (recovering.current) return; recovering.current = true; setMessage('Waiting for the next downloaded segment…'); retryTimer.current = window.setTimeout(async () => { try { const latest = (await api.downloads()).items.find(item => item.id === active.download.id); if (!latest) throw new Error('The download is no longer managed.'); setMessage(latest.playbackMode === 'progressive' ? `Streaming while downloading · ${Math.round(latest.progress * 100)}%` : 'Downloaded file ready · retrying playback…'); video.current?.load(); await video.current?.play(); recovering.current = false } catch (error) { recovering.current = false; setMessage(`Playback retry failed: ${(error as Error).message}`); void recover() } }, 2000) }
+  async function recover() { if (recovering.current) return; recovering.current = true; if (!decodeFailed.current) setMessage('Waiting for the next downloaded segment…'); retryTimer.current = window.setTimeout(async () => { try { const latest = (await api.downloads()).items.find(item => item.id === active.download.id); if (!latest) throw new Error('The download is no longer managed.'); if (!decodeFailed.current) setMessage(latest.playbackMode === 'progressive' ? `Streaming while downloading · ${Math.round(latest.progress * 100)}%` : 'Downloaded file ready · retrying playback…'); video.current?.load(); await video.current?.play(); recovering.current = false } catch (error) { recovering.current = false; setMessage(`Playback retry failed: ${(error as Error).message}`); void recover() } }, 2000) }
   function restartAt(value: number) {
     if (!mediaInfo || !video.current) return;
     const target = Math.min(Math.max(0, value), Math.max(0, mediaInfo.durationMs - 1000));
     video.current.currentTime = target / 1000;
     setPosition(target);
   }
-  async function chooseAudio(track:MediaAudioTrack){setSelectedAudio(track.streamIndex);setAudioOpen(false);await savePreferences({...preferenceRef.current,audioTrackIndex:track.streamIndex,audioLanguage:track.language||'en'})}
-  function togglePlayback(){const element=video.current;if(!element)return;if(element.paused){shouldPlay.current=true;void element.play().catch(error=>setMessage(`Playback could not start: ${error.message}`))}else{shouldPlay.current=false;element.pause()}}
-  function revealControls(){controls.reveal()}
-  function setPlayerVolume(value:number){const element=video.current;if(!element)return;if(decoderRef.current){decoderRef.current.setVolume(value);decoderRef.current.setMuted(value===0);setVolume(value);setMuted(value===0);return}element.volume=value;element.muted=value===0;setVolume(value);setMuted(value===0)}
-  async function toggleFullscreen(){try{if(document.fullscreenElement)await document.exitFullscreen();else await root.current?.requestFullscreen()}catch(error){setMessage(`Fullscreen unavailable: ${(error as Error).message}`)}}
+  async function chooseAudio(track: MediaAudioTrack) { setSelectedAudio(track.streamIndex); setAudioOpen(false); await savePreferences({ ...preferenceRef.current, audioTrackIndex: track.streamIndex, audioLanguage: track.language || 'en' }) }
+  function togglePlayback() { const element = video.current; if (!element) return; if (element.paused) { shouldPlay.current = true; void element.play().catch(error => setMessage(`Playback could not start: ${error.message}`)) } else { shouldPlay.current = false; element.pause() } }
+  function revealControls() { controls.reveal() }
+  function setPlayerVolume(value: number) { const element = video.current; if (!element) return; if (decoderRef.current) { decoderRef.current.setVolume(value); decoderRef.current.setMuted(value === 0); setVolume(value); setMuted(value === 0); return } element.volume = value; element.muted = value === 0; setVolume(value); setMuted(value === 0) }
+  async function toggleFullscreen() { try { if (document.fullscreenElement) await document.exitFullscreen(); else await root.current?.requestFullscreen() } catch (error) { setMessage(`Fullscreen unavailable: ${(error as Error).message}`) } }
 
   return <div ref={root} class={`video ${controlsVisible ? 'controls-visible' : ''}`} role="dialog" aria-modal="true" aria-label={`Playing ${active.download.displayTitle || active.download.filePath}`}>
-    <video ref={video} src={playbackURL ? api.streamURL(playbackURL) : undefined} autoplay playsInline onLoadedMetadata={event => { if (active.resumeMs > 0) event.currentTarget.currentTime = active.resumeMs / 1000; if (shouldPlay.current) void event.currentTarget.play().catch(() => setMessage('Press Play to start playback.')) }} onWaiting={() => setMessage(active.download.playbackMode === 'progressive' ? 'Buffering the next downloaded segment…' : 'Buffering…')} onCanPlay={() => { recovering.current = false; setMessage('') }} onPlaying={() => { decoderRef.current?.resume(); recovering.current = false; setPlaying(true); setMessage('') }} onTimeUpdate={event => { const next = logicalPlaybackPosition(0, event.currentTarget.currentTime, durationRef.current); const now = Date.now(); if (now - lastRendered.current >= 250) { lastRendered.current = now; setPosition(next) } if (now - lastSaved.current > 10000) { lastSaved.current = now; void save() } }} onVolumeChange={event => { setVolume(event.currentTarget.volume); setMuted(event.currentTarget.muted) }} onPause={() => { decoderRef.current?.suspend(); setPlaying(false); void save() }} onEnded={() => void save().then(() => onAdvance(preferenceRef.current))} onError={() => void recover()} onSeeking={event => decoderRef.current?.seek(event.currentTarget.currentTime)} />
+    <video ref={video} src={playbackURL ? api.streamURL(playbackURL) : undefined} autoplay playsInline onLoadedMetadata={event => { if (active.resumeMs > 0) event.currentTarget.currentTime = active.resumeMs / 1000; if (shouldPlay.current) void event.currentTarget.play().catch(() => setMessage('Press Play to start playback.')) }} onWaiting={() => { if (!decodeFailed.current) setMessage(active.download.playbackMode === 'progressive' ? 'Buffering the next downloaded segment…' : 'Buffering…') }} onCanPlay={() => { recovering.current = false; if (!decodeFailed.current) setMessage('') }} onPlaying={() => { decoderRef.current?.resume(); recovering.current = false; setPlaying(true); if (!decodeFailed.current) setMessage('') }} onTimeUpdate={event => { const next = logicalPlaybackPosition(0, event.currentTarget.currentTime, durationRef.current); const now = Date.now(); if (now - lastRendered.current >= 250) { lastRendered.current = now; setPosition(next) } if (now - lastSaved.current > 10000) { lastSaved.current = now; void save() } }} onVolumeChange={event => { setVolume(event.currentTarget.volume); setMuted(event.currentTarget.muted) }} onPause={() => { decoderRef.current?.suspend(); setPlaying(false); void save() }} onEnded={() => void save().then(() => onAdvance(preferenceRef.current))} onError={() => void recover()} onSeeking={event => decoderRef.current?.seek(event.currentTarget.currentTime)} />
     <div class="player-chrome">
       <div class="player-heading"><strong>{active.download.displayTitle || active.download.filePath}</strong><span>{active.download.playbackMode === 'progressive' ? 'Streaming while downloading' : 'Downloaded file'}</span></div>
       <div class="player-scrubber"><input aria-label="Playback position" type="range" min="0" max={mediaInfo?.durationMs || 1} step="1000" value={Math.min(position, mediaInfo?.durationMs || 1)} disabled={!mediaInfo} onInput={event => setPosition(Number(event.currentTarget.value))} onChange={event => restartAt(Number(event.currentTarget.value))} /><div><time>{formatPlaybackTime(position)}</time><time>{mediaInfo ? formatPlaybackTime(mediaInfo.durationMs) : 'Preparing…'}</time></div></div>
