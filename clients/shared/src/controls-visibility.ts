@@ -7,6 +7,8 @@ export interface ControlsVisibilityPolicy {
   armWhilePaused: boolean;
   /** True holds controls while a transient status message shows (browser); false ignores status (TV). */
   statusHolds: boolean;
+  /** Web capability: reveal triggers within this many milliseconds of a manual hide are ignored, so the pointer cannot instantly undo the button. 0 or omitted disables it (TV). */
+  manualHideSuppressionMs?: number;
 }
 
 export interface ControlsVisibilityOptions {
@@ -25,6 +27,8 @@ export class ControlsVisibility {
   #playing: boolean;
   #panelOpen: boolean;
   #statusShowing: boolean;
+  #suppressMs: number;
+  #suppressUntil = 0;
   #visible = true;
   // Pending-hide timeout id. Both consumers run under the DOM lib, where
   // setTimeout yields a numeric id.
@@ -37,19 +41,31 @@ export class ControlsVisibility {
     this.#playing = options.playing ?? false;
     this.#panelOpen = options.panelOpen ?? false;
     this.#statusShowing = options.statusShowing ?? false;
+    this.#suppressMs = options.policy.manualHideSuppressionMs ?? 0;
   }
 
   get visible(): boolean {
     return this.#visible;
   }
 
-  /** A qualifying input arrived (pointer move, key press, remote key). `hold` reveals without arming the hide timer (TV sticky reveals). */
+  /** A qualifying input arrived (pointer move, key press, remote key, tap). `hold` reveals without arming the hide timer (TV sticky reveals). */
   reveal(hold = false): void {
+    if (Date.now() < this.#suppressUntil) return;
     if (!this.#visible) {
       this.#visible = true;
       this.#onChange(true);
     }
     this.#schedule(!hold);
+  }
+
+  /** Manual hide (the hide button): dismiss now, holds notwithstanding, and open the reveal-suppression window. */
+  hide(): void {
+    this.#cancelHide();
+    this.#suppressUntil = this.#suppressMs > 0 ? Date.now() + this.#suppressMs : 0;
+    if (this.#visible) {
+      this.#visible = false;
+      this.#onChange(false);
+    }
   }
 
   setPlaying(playing: boolean): void {

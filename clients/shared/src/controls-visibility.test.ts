@@ -1,15 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ControlsVisibility } from '@filelist/shared';
+import type { ControlsVisibilityPolicy } from '@filelist/shared';
 
 type Harness = { controls: ControlsVisibility; changes: boolean[] };
 
-const create = (overrides: Partial<{ playing: boolean; panelOpen: boolean; statusShowing: boolean }> = {}): Harness => {
+const create = (overrides: Partial<{ playing: boolean; panelOpen: boolean; statusShowing: boolean; policy: Partial<ControlsVisibilityPolicy> }> = {}): Harness => {
   const changes: boolean[] = [];
-  const controls = new ControlsVisibility({
-    policy: { armWhilePaused: true, statusHolds: true },
-    onChange: visible => changes.push(visible),
-    ...overrides,
-  });
+  const { policy, ...rest } = overrides;
+  const options = {
+    policy: { armWhilePaused: true, statusHolds: true, ...policy },
+    onChange: (visible: boolean) => changes.push(visible),
+    ...rest,
+  };
+  const controls = new ControlsVisibility(options);
   return { controls, changes };
 };
 
@@ -213,5 +216,69 @@ describe('Controls visibility — TV policy', () => {
     expect(controls.visible).toBe(true);
     vi.advanceTimersByTime(1);
     expect(controls.visible).toBe(false);
+  });
+});
+
+describe('Controls visibility — manual hide and reveal suppression (web)', () => {
+  it('hides instantly on the manual-hide event, holds included', () => {
+    const { controls, changes } = create({ policy: { manualHideSuppressionMs: 500 } });
+    controls.reveal();
+    controls.hide();
+    expect(controls.visible).toBe(false);
+    expect(changes).toEqual([false]);
+  });
+
+  it('ignores reveal triggers for 500 ms after a manual hide, then reveals on the first one after', () => {
+    const { controls, changes } = create({ policy: { manualHideSuppressionMs: 500 } });
+    controls.hide();
+    vi.advanceTimersByTime(499);
+    controls.reveal();
+    expect(controls.visible).toBe(false);
+    vi.advanceTimersByTime(1);
+    controls.reveal();
+    expect(controls.visible).toBe(true);
+    expect(changes).toEqual([false, true]);
+  });
+
+  it('the first reveal after the window re-arms a full auto-hide countdown', () => {
+    const { controls, changes } = create({ policy: { manualHideSuppressionMs: 500 } });
+    controls.hide();
+    vi.advanceTimersByTime(500);
+    controls.reveal();
+    vi.advanceTimersByTime(1999);
+    expect(controls.visible).toBe(true);
+    vi.advanceTimersByTime(1);
+    expect(controls.visible).toBe(false);
+    expect(changes).toEqual([false, true, false]);
+  });
+
+  it('a manual hide supersedes the armed auto-hide countdown without a second hide', () => {
+    const { controls, changes } = create({ policy: { manualHideSuppressionMs: 500 } });
+    controls.reveal();
+    vi.advanceTimersByTime(1000);
+    controls.hide();
+    vi.advanceTimersByTime(60_000);
+    expect(controls.visible).toBe(false);
+    expect(changes).toEqual([false]);
+  });
+
+  it('natural auto-hides do not open a suppression window — reveals stay instant', () => {
+    const { controls, changes } = create({ policy: { manualHideSuppressionMs: 500 } });
+    controls.reveal();
+    vi.advanceTimersByTime(2000);
+    expect(controls.visible).toBe(false);
+    controls.reveal();
+    expect(controls.visible).toBe(true);
+    expect(changes).toEqual([false, true]);
+  });
+
+  it('hides even while a panel hold is active', () => {
+    const { controls, changes } = create({ panelOpen: true, policy: { manualHideSuppressionMs: 500 } });
+    controls.reveal();
+    vi.advanceTimersByTime(5000);
+    expect(controls.visible).toBe(true);
+    controls.hide();
+    expect(controls.visible).toBe(false);
+    expect(changes).toEqual([false]);
   });
 });
