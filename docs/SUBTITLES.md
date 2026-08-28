@@ -30,7 +30,7 @@ When either player opens it first tries a remembered exact choice, then local Ro
 
 ## Web playback
 
-The browser tries ranked candidates in order, prepares the first usable one as WebVTT, and attaches it as a generated `<track>`. A user can disable subtitles or choose another ranked candidate. The server probes audio tracks from the original file, and the custom browser controls request the chosen stream through the audio-only compatibility route. When that route is restarted for a seek or audio change, generated WebVTT cue times are shifted to the same logical original-file offset. Playback position uses the original duration and is saved every ten seconds, on pause, and at completion.
+The browser tries ranked candidates in order, prepares the first usable one as WebVTT, and attaches it as a generated `<track>`. A user can disable subtitles or choose another ranked candidate. The server probes the original file's audio tracks, and the browser plays the single progressive stream directly: codecs the browser handles natively play from the video element, while AC3/EAC3/DTS-class audio is decoded client-side by the WASM decoder — the server never transcodes (see `docs/adr/0001`). Seeks and audio changes reuse the same stream, so prepared cue times stay aligned with the original file's timeline. Playback position uses the original duration and is saved every ten seconds, on pause, and at completion.
 
 ## Tizen playback
 
