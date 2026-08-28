@@ -20,7 +20,8 @@ declare module '@ffmpeg/core' {
     FS: FFmpegCoreFS;
   }
   export interface FFmpegCoreConfig {
-    locateFile?(path: string, prefix: string): string;
+    /** '#'+base64 JSON of {wasmURL, workerURL}; the factory's own resolver reads only this (it overwrites any locateFile option). */
+    mainScriptUrlOrBlob?: string;
   }
   export default function createFFmpegCore(config?: FFmpegCoreConfig): Promise<FFmpegCoreModule>;
 }

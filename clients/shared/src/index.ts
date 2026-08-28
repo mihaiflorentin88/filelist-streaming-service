@@ -88,3 +88,5 @@ export class API {
   setWatched(sourceId: string, watched: boolean) { return this.call<PlaybackState>(`/playback/${encodeURIComponent(sourceId)}/watched`, { method: 'PUT', body: JSON.stringify({ watched }) }) }
   streamURL(path: string) { return new URL(path, this.base).toString() }
 }
+export { ControlsVisibility } from './controls-visibility';
+export type { ControlsVisibilityOptions, ControlsVisibilityPolicy } from './controls-visibility';

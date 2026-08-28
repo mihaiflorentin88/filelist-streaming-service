@@ -42,9 +42,16 @@ function delay(ms: number) {
 
 async function loadCore() {
   if (core) return;
-  const instance = await createFFmpegCore({ locateFile: path => path.endsWith('.wasm') ? wasmURL : path });
+  // @ffmpeg/core's factory overwrites any `locateFile` option with its own
+  // resolver, which reads only `mainScriptUrlOrBlob`: '#' + base64 JSON of
+  // {wasmURL, workerURL} (the @ffmpeg/ffmpeg loader contract). Without that
+  // payload the resolver falls back to the unhashed ffmpeg-core.wasm beside
+  // the worker script; the server 404s and WebAssembly.instantiate dies on
+  // the 404 page — the audio path goes silent on every decode-route title.
+  const instance = await createFFmpegCore({ mainScriptUrlOrBlob: `#${btoa(JSON.stringify({ wasmURL }))}` });
   instance.setLogger(event => { if (event.type !== 'info') console.debug('[audio-decode]', event.type, event.message) });
   core = instance;
+  console.debug(`[audio-decode] core ready, wasm at ${wasmURL}`);
 }
 
 self.onmessage = (event: MessageEvent) => {
@@ -80,11 +87,17 @@ async function runSession(start: Extract<WorkerInMessage, { type: 'start' }>, se
   // Sessions that would begin inside the container-header region start from byte 0
   // instead; the controller trims the decoded front down to the requested position.
   const begin = start.startByte > 0 && start.startByte < HEADER_BYTES ? 0 : start.startByte;
+  console.debug(`[audio-decode] session ${sessionID} start at byte ${begin}/${start.totalBytes} (~${Math.round(windowBytes / Math.max(1, start.bytesPerSecond))}s windows)`);
+  // Every window after the first begins mid-stream, where the container header is
+  // absent and per-track maps (0:a:N, N>0) resolve to no streams at all; prepending
+  // the header region keeps the demuxer able to address every audio track. Windows
+  // that already contain it are decoded as-is via decodeWindow's decodePos check.
   let headerBytes: Uint8Array | null = null;
-  if (begin > 0) {
-    try { headerBytes = await fetchRange(start.url, 0, Math.min(HEADER_BYTES, start.totalBytes) - 1, sessionID, abort) } catch { headerBytes = null }
-    if (session !== sessionID) return;
-  }
+  try { headerBytes = await fetchRange(start.url, 0, Math.min(HEADER_BYTES, start.totalBytes) - 1, sessionID, abort) } catch { headerBytes = null }
+  if (session !== sessionID) return;
+  // The prepended header decodes to real audio from the file start; those frames are
+  // dropped so only the window's own bytes reach the audio graph.
+  const headerFrames = headerBytes ? Math.round(headerBytes.length / Math.max(1, start.bytesPerSecond) * DECODE_SAMPLE_RATE) : 0;
   let fetchPos = begin;
   let decodePos = begin;
   let queued: Uint8Array[] = [];
@@ -104,18 +117,21 @@ async function runSession(start: Extract<WorkerInMessage, { type: 'start' }>, se
     queuedBytes += chunk.length;
     fetchPos += chunk.length;
     if (queuedBytes < windowBytes && fetchPos < start.totalBytes) continue;
-    const decoded = decodeWindow(concatBytes(queued, queuedBytes), decodePos, headerBytes, sessionID, start.audioOrdinal);
+    const windowStart = decodePos;
+    const decoded = decodeWindow(concatBytes(queued, queuedBytes), decodePos, headerBytes, headerFrames, sessionID, start.audioOrdinal);
     queued = [];
     queuedBytes = 0;
     decodePos = fetchPos;
     if (decoded) { failures = 0; continue }
     failures++;
+    console.debug(`[audio-decode] window decode failed at byte ${windowStart} (${failures}/${MAX_DECODE_FAILURES})`);
     if (failures >= MAX_DECODE_FAILURES) {
+      console.debug(`[audio-decode] session ${sessionID} aborted: stream cannot be decoded`);
       post({ type: 'error', session: sessionID, message: 'The audio stream in this file could not be decoded.' });
       return;
     }
   }
-  if (session === sessionID) post({ type: 'eos', session: sessionID });
+  if (session === sessionID) { console.debug(`[audio-decode] session ${sessionID} end-of-stream at byte ${fetchPos}`); post({ type: 'eos', session: sessionID }) }
 }
 
 // One range fetch with the full stall contract: 503 + Retry-After while pieces are
@@ -179,10 +195,14 @@ async function fetchRange(url: string, start: number, end: number, sessionID: nu
 // Decode one window to interleaved f32 stereo at the fixed output rate and transfer
 // the PCM buffer to the main thread. beginByte is the stream position the window's
 // content starts at, so the controller can trim header-region sessions to position.
-function decodeWindow(slice: Uint8Array, decodePos: number, headerBytes: Uint8Array | null, sessionID: number, audioOrdinal: number): boolean {
+// Windows that received a prepended header decode the header's audio in front of
+// their own bytes; headerFrames drops exactly that region so the schedule never
+// hears the file's start twice.
+function decodeWindow(slice: Uint8Array, decodePos: number, headerBytes: Uint8Array | null, headerFrames: number, sessionID: number, audioOrdinal: number): boolean {
   const instance = core;
   if (!instance) return false;
-  const input = headerBytes && decodePos >= headerBytes.length ? concatBytes([headerBytes, slice], headerBytes.length + slice.length) : slice;
+  const prepended = !!headerBytes && decodePos >= headerBytes.length;
+  const input = prepended && headerBytes ? concatBytes([headerBytes, slice], headerBytes.length + slice.length) : slice;
   try {
     instance.FS.writeFile(WINDOW_FILE, input);
     instance.exec('-hide_banner', '-loglevel', 'error', '-nostdin', '-i', WINDOW_FILE, '-vn', '-sn', '-dn', '-map', `0:a:${audioOrdinal}`, '-f', 'f32le', '-acodec', 'pcm_f32le', '-ac', String(DECODE_CHANNELS), '-ar', String(DECODE_SAMPLE_RATE), OUTPUT_FILE);
@@ -190,9 +210,11 @@ function decodeWindow(slice: Uint8Array, decodePos: number, headerBytes: Uint8Ar
     instance.reset();
     if (code !== 0) return false;
     const raw = instance.FS.readFile(OUTPUT_FILE);
-    const frames = Math.floor(raw.length / (DECODE_CHANNELS * 4));
+    const decoded = Math.floor(raw.length / (DECODE_CHANNELS * 4));
+    const drop = prepended ? Math.min(headerFrames, decoded) : 0;
+    const frames = decoded - drop;
     if (frames <= 0) return false;
-    const pcm = new Float32Array(raw.buffer, 0, frames * DECODE_CHANNELS);
+    const pcm = new Float32Array(raw.buffer, drop * DECODE_CHANNELS * 4, frames * DECODE_CHANNELS);
     post({ type: 'pcm', session: sessionID, data: pcm, frames, beginByte: decodePos }, [pcm.buffer]);
     return true;
   } catch {

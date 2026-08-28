@@ -86,6 +86,8 @@ export class AudioDecodeController {
 
   static async create(options: DecodeOptions): Promise<AudioDecodeController> {
     const ctx = new AudioContext({ latencyHint: 'playback' });
+    ctx.onstatechange = () => console.debug(`[audio-decode] audio context state: ${ctx.state}`);
+    console.debug(`[audio-decode] controller created (audio context ${ctx.state}, video ${options.video.muted ? 'muted' : 'audible'})`);
     const worker = new Worker(new URL('./audio-decode-worker.ts', import.meta.url), { type: 'module' });
     const controller = new AudioDecodeController(options.video, ctx, worker, options);
     worker.onmessage = event => controller.receive(event.data as WorkerOutMessage);
@@ -109,6 +111,7 @@ export class AudioDecodeController {
   destroy() {
     if (this.destroyed) return;
     this.destroyed = true;
+    console.debug('[audio-decode] controller destroyed');
     cancelAnimationFrame(this.frame);
     this.worker.terminate();
     this.stopSources();
@@ -116,6 +119,7 @@ export class AudioDecodeController {
   }
 
   private startSession(seconds: number) {
+    console.debug(`[audio-decode] session ${this.session + 1} from ${seconds.toFixed(2)}s`);
     this.session++;
     this.sessionStartSec = seconds;
     this.anchored = false;
