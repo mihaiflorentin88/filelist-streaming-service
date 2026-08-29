@@ -47,8 +47,9 @@ diagnosed per-case if it reappears.
    client-side decode, no WebAudio scheduling, no anchor planner in the
    player. Seeking a compatibility stream re-issues the request at the new
    position (`startMs`); subtitle cues are shifted client-side to match.
-3. Seeks snap back to the last video keyframe (ffprobe packet scan, 3s
-   budget, raw-target fallback). Stream-copied video can only start on a
+3. Seeks snap back to the last video keyframe at or before the target
+   (ffprobe packet scan, 15 s look-back window, 3 s probe budget, raw-target
+   fallback). Stream-copied video can only start on a
    keyframe while the re-encoded audio starts exactly at the target, so an
    unsnapped seek leaves audio leading picture by up to one GOP — measured
    0.2-1.7s at representative positions in this library before the snap.

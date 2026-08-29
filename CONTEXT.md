@@ -13,6 +13,10 @@ _Avoid_: torrent (when talking about catalog data)
 **Parsed release**:
 The structured interpretation of a Release name: title, Kind, season/episode, quality attributes.
 
+**Quality attributes**:
+The technical characteristics parsed from a Release name: resolution, codec, and release class (REMUX, WEB-DL, WEBRIP, ...).
+_Avoid_: source
+
 **Kind**:
 The media class of a Release: `movie` or `series`. Never inferred from the tracker category alone.
 
@@ -49,8 +53,9 @@ _Avoid_: streaming (unqualified)
 **Direct play**:
 Serving original bytes so the client device decodes everything; on both screens for natively playable content.
 
-**Client decode**:
-The browser decoding audio it cannot play natively (AC3/DTS class) with its own decoder while video bytes are still served as-is; the browser-side counterpart of Direct play under the no-transcode rule.
+**Compatibility stream**:
+The server-built playback route for browser-hostile audio in a Source: video bytes copied untouched, audio transcoded to AAC. Introduced by ADR-0003, superseding the removed client-side decode.
+_Avoid_: browser stream (code name), client decode
 
 ### Subtitles
 
@@ -60,6 +65,10 @@ A selectable subtitle offering listed for a download, from any Subtitle source.
 **Subtitle source**:
 Where a Subtitle candidate came from: `contained` (sidecar file shipped with the torrent), `embedded` (stream inside the media container), `subdl` (fetched from the SubDL provider).
 _Avoid_: local/remote as the primary taxonomy
+
+**Subtitle asset**:
+Persisted subtitle bytes prepared for one download, identified by an id scoped to that download.
+
 Menus display `contained` — and provider candidates already downloaded — as **Local**, `embedded` as **Built-in**, and providers by their own name.
 
 ### Household & jobs
@@ -69,3 +78,11 @@ The single server-side profile: favorites, resume positions, watched state. Surv
 
 **Job**:
 A persisted unit of background work with a dedupe key, states, and retries.
+
+### Retention
+
+**Allocation**:
+The configured cap on total bytes of the service's stored torrent content, incomplete downloads included.
+
+**Eviction**:
+Automatic deletion of a torrent and its files — every Managed download sharing that Engine route — to bring stored content back within the Allocation. Catalog rows and Household state survive.
