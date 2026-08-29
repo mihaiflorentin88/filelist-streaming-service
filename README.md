@@ -71,6 +71,10 @@ Open `http://127.0.0.1:8097`, enter FileList and qBittorrent settings, and save 
 
 The default trusted networks are loopback and RFC1918 private address ranges. Narrow them in Settings when practical. Do not expose this no-login service to the internet.
 
+## Docker
+
+Docker Compose runs the server and a credential-free qBittorrent sidecar from one private `.env.docker` file. Create it with `make docker-configure`, check it with `make docker-validate`, and start with `make docker-up`. Every variable is documented in the [Docker environment reference](docs/DOCKER_ENV.md).
+
 ## Frontend and TV package
 
 `make frontend` builds and tests the browser and Tizen clients in Docker, then creates and validates the unsigned Apps2Samsung artifact at `clients/tizen/.build/artifacts/FileListTV-0.2.7.wgt`. Apps2Samsung signs it for the selected TV during installation. See [the Tizen build and installation guide](docs/TIZEN.md), including the living physical-TV verification log.

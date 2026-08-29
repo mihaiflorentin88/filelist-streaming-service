@@ -1,1 +1,20 @@
-{"name":"@filelist/tizen","version":"0.2.7","private":true,"type":"module","scripts":{"test":"vitest run","build":"npm run test && tsc --noEmit && vite build"},"dependencies":{"@filelist/shared":"0.1.0","preact":"10.29.8"},"devDependencies":{"@preact/preset-vite":"2.10.2","typescript":"5.9.2","vite":"7.3.6","vitest":"4.1.10"}}
+{
+  "name": "@filelist/tizen",
+  "version": "0.2.18",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "build": "npm run test && tsc --noEmit && vite build"
+  },
+  "dependencies": {
+    "@filelist/shared": "0.1.0",
+    "preact": "10.29.8"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "2.10.2",
+    "typescript": "5.9.2",
+    "vite": "7.3.6",
+    "vitest": "4.1.10"
+  }
+}

@@ -42,13 +42,22 @@ class QBittorrentConfigTests(unittest.TestCase):
         self.assertIn(b"WebUI\\AuthSubnetWhitelistEnabled=true\n", merged)
         self.assertIn(b"WebUI\\AuthSubnetWhitelist=0.0.0.0/0\n", merged)
         self.assertIn(b"WebUI\\Username=admin\n", merged)
+        self.assertIn(b"WebUI\\HostHeaderValidation=false\n", merged)
         self.assertNotIn(b"olduser", merged)
 
+    def test_noauth_flag_overrides_existing_host_header_validation(self):
+        original = b"[Preferences]\nWebUI\\HostHeaderValidation=true\n"
+        merged = merge_config(original, "/big/temp", noauth_webui=True)
+        self.assertIn(b"WebUI\\HostHeaderValidation=false\n", merged)
+        self.assertNotIn(b"HostHeaderValidation=true", merged)
+
     def test_noauth_flag_off_leaves_webui_keys_untouched(self):
-        original = b"[Preferences]\nWebUI\\Username=keepme\n"
+        original = b"[Preferences]\nWebUI\\Username=keepme\nWebUI\\HostHeaderValidation=true\n"
         merged = merge_config(original, "/big/temp")
         self.assertIn(b"WebUI\\Username=keepme\n", merged)
+        self.assertIn(b"WebUI\\HostHeaderValidation=true\n", merged)
         self.assertNotIn(b"AuthSubnetWhitelist", merged)
+
 
 
 if __name__ == "__main__":

@@ -19,6 +19,11 @@ NOAUTH_WEBUI = {
     "WebUI\\AuthSubnetWhitelistEnabled": "true",
     "WebUI\\AuthSubnetWhitelist": "0.0.0.0/0",
     "WebUI\\Username": "admin",
+    # qBittorrent compares the Host header port against the in-container
+    # listening port, so any published host port (e.g. 8081 -> 8080) gets a
+    # 401 before the auth bypass applies. The credential-free sidecar gains
+    # nothing from this check (no sessions/cookies to protect), turn it off.
+    "WebUI\\HostHeaderValidation": "false",
 }
 
 

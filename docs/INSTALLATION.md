@@ -61,7 +61,7 @@ cp .env.docker.example .env.docker
 chmod 0600 .env.docker
 ```
 
-At minimum, replace `APP_DATA_DIR`, `QBITTORRENT_CONFIG_DIR`, and `DOWNLOADS_DIR`. All three paths must be absolute. `DOWNLOADS_DIR` must point to the large disk; incomplete pieces are stored at its `.incomplete` child. The example documents every supported port, bind address, identity, provider, cache, language, buffer, quota, and worker setting.
+At minimum, replace `APP_DATA_DIR`, `QBITTORRENT_CONFIG_DIR`, and `DOWNLOADS_DIR`. All three paths must be absolute. `DOWNLOADS_DIR` must point to the large disk; incomplete pieces are stored at its `.incomplete` child. The example documents every supported port, bind address, identity, provider, cache, language, buffer, quota, and worker setting. The [Docker environment reference](DOCKER_ENV.md) lists the meaning, default, and accepted format of every `.env.docker` variable and how to migrate keys removed by earlier releases.
 
 Start and verify everything with one command:
 

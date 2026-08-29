@@ -7,31 +7,16 @@ env_file=${1:-.env.docker}
   exit 2
 }
 
+# The validator is the single source of truth for every .env.docker check.
+script_dir=$(dirname "$0")
+python3 "$script_dir/../../tools/docker_env_validate.py" "$env_file"
+
 value() {
   awk -F= -v wanted="$1" '$1 == wanted {sub(/^[^=]*=/, ""); value=$0} END {print value}' "$env_file"
 }
 
 for key in APP_DATA_DIR QBITTORRENT_CONFIG_DIR DOWNLOADS_DIR; do
-  result=$(value "$key")
-  [ -n "$result" ] || {
-    echo "$key must be set in $env_file" >&2
-    exit 2
-  }
-  case "$result" in CHANGE_ME* | /absolute/path*)
-    echo "$key still contains an example value in $env_file" >&2
-    exit 2
-    ;;
-  esac
-done
-
-for key in APP_DATA_DIR QBITTORRENT_CONFIG_DIR DOWNLOADS_DIR; do
-  result=$(value "$key")
-  case "$result" in /*) ;; *)
-    echo "$key must be an absolute path: $result" >&2
-    exit 2
-    ;;
-  esac
-  mkdir -p "$result"
+  mkdir -p "$(value "$key")"
 done
 mkdir -p "$(value DOWNLOADS_DIR)/.incomplete"
 chmod u+rwX "$(value APP_DATA_DIR)" "$(value QBITTORRENT_CONFIG_DIR)" "$(value DOWNLOADS_DIR)" "$(value DOWNLOADS_DIR)/.incomplete"

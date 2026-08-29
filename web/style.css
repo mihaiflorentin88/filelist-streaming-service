@@ -1,2205 +1,2205 @@
 :root {
-  font: 16px/1.5 "Segoe UI Variable", "Aptos", system-ui, sans-serif;
-  color: #f4f7f8;
-  background: #071014;
-  --ink: #071014;
-  --panel: #101c24;
-  --panel-2: #162630;
-  --line: #29404b;
-  --text: #f4f7f8;
-  --muted: #a9bac2;
-  --teal: #59d6ad;
-  --teal-soft: #163b35;
-  --amber: #f2b84b;
-  --danger: #ff8383;
-  --radius: 14px
+ font: 16px/1.5 "Segoe UI Variable", "Aptos", system-ui, sans-serif;
+ color: #f4f7f8;
+ background: #071014;
+ --ink: #071014;
+ --panel: #101c24;
+ --panel-2: #162630;
+ --line: #29404b;
+ --text: #f4f7f8;
+ --muted: #a9bac2;
+ --teal: #59d6ad;
+ --teal-soft: #163b35;
+ --amber: #f2b84b;
+ --danger: #ff8383;
+ --radius: 14px
 }
 
 * {
-  box-sizing: border-box
+ box-sizing: border-box
 }
 
 html {
-  background: var(--ink)
+ background: var(--ink)
 }
 
 body {
-  margin: 0;
-  min-height: 100vh;
-  background: var(--ink);
-  color: var(--text)
+ margin: 0;
+ min-height: 100vh;
+ background: var(--ink);
+ color: var(--text)
 }
 
 button,
 input,
 select {
-  font: inherit
+ font: inherit
 }
 
 button {
-  color: inherit
+ color: inherit
 }
 
 button:focus-visible,
 input:focus-visible,
 select:focus-visible {
-  outline: 3px solid var(--teal);
-  outline-offset: 3px
+ outline: 3px solid var(--teal);
+ outline-offset: 3px
 }
 
 .app-shell {
-  min-height: 100vh
+ min-height: 100vh
 }
 
 .sidebar {
-  position: fixed;
-  inset: 0 auto 0 0;
-  z-index: 40;
-  width: 82px;
-  background: #0a151bdd;
-  border-right: 1px solid var(--line);
-  overflow: hidden;
-  transition: width .2s cubic-bezier(.16, 1, .3, 1);
-  padding: 20px 12px
+ position: fixed;
+ inset: 0 auto 0 0;
+ z-index: 40;
+ width: 82px;
+ background: #0a151bdd;
+ border-right: 1px solid var(--line);
+ overflow: hidden;
+ transition: width .2s cubic-bezier(.16, 1, .3, 1);
+ padding: 20px 12px
 }
 
 .sidebar:hover,
 .sidebar:focus-within {
-  width: 270px;
-  background: #0a151bfa;
-  box-shadow: 22px 0 45px #0008
+ width: 270px;
+ background: #0a151bfa;
+ box-shadow: 22px 0 45px #0008
 }
 
 .brand {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  height: 54px;
-  white-space: nowrap;
-  margin-bottom: 25px
+ display: flex;
+ align-items: center;
+ gap: 14px;
+ height: 54px;
+ white-space: nowrap;
+ margin-bottom: 25px
 }
 
 .brand-mark {
-  display: grid;
-  place-items: center;
-  flex: 0 0 52px;
-  height: 52px;
-  border-radius: 13px;
-  background: var(--teal);
-  color: #06231b;
-  font-weight: 900;
-  letter-spacing: -.03em
+ display: grid;
+ place-items: center;
+ flex: 0 0 52px;
+ height: 52px;
+ border-radius: 13px;
+ background: var(--teal);
+ color: #06231b;
+ font-weight: 900;
+ letter-spacing: -.03em
 }
 
 .brand strong {
-  font-size: 18px
+ font-size: 18px
 }
 
 .brand strong span {
-  color: var(--teal)
+ color: var(--teal)
 }
 
 .nav-group {
-  padding: 10px 0;
-  border-top: 1px solid #ffffff0d
+ padding: 10px 0;
+ border-top: 1px solid #ffffff0d
 }
 
 .nav-group:first-child {
-  border: 0
+ border: 0
 }
 
 .nav-group p {
-  margin: 2px 12px 7px 62px;
-  color: var(--muted);
-  font-size: 12px;
-  white-space: nowrap;
-  text-transform: uppercase;
-  letter-spacing: .08em
+ margin: 2px 12px 7px 62px;
+ color: var(--muted);
+ font-size: 12px;
+ white-space: nowrap;
+ text-transform: uppercase;
+ letter-spacing: .08em
 }
 
 .nav-group button {
-  display: flex;
-  align-items: center;
-  width: 246px;
-  height: 48px;
-  gap: 18px;
-  border: 0;
-  border-radius: 12px;
-  background: transparent;
-  text-align: left;
-  cursor: pointer;
-  color: #c7d3d8
+ display: flex;
+ align-items: center;
+ width: 246px;
+ height: 48px;
+ gap: 18px;
+ border: 0;
+ border-radius: 12px;
+ background: transparent;
+ text-align: left;
+ cursor: pointer;
+ color: #c7d3d8
 }
 
 .nav-group button:hover {
-  background: #ffffff0b
+ background: #ffffff0b
 }
 
 .nav-group button.selected {
-  background: var(--teal-soft);
-  color: var(--text)
+ background: var(--teal-soft);
+ color: var(--text)
 }
 
 .nav-group button.selected:after {
-  content: "";
-  position: absolute;
-  left: 7px;
-  width: 3px;
-  height: 24px;
-  border-radius: 3px;
-  background: var(--teal)
+ content: "";
+ position: absolute;
+ left: 7px;
+ width: 3px;
+ height: 24px;
+ border-radius: 3px;
+ background: var(--teal)
 }
 
 svg {
-  width: 24px;
-  height: 24px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round
+ width: 24px;
+ height: 24px;
+ fill: none;
+ stroke: currentColor;
+ stroke-width: 1.8;
+ stroke-linecap: round;
+ stroke-linejoin: round
 }
 
 .nav-group svg {
-  flex: 0 0 24px;
-  margin-left: 14px
+ flex: 0 0 24px;
+ margin-left: 14px
 }
 
 .content {
-  min-height: 100vh;
-  margin-left: 82px;
-  padding: 28px 4vw 70px;
-  overflow: hidden
+ min-height: 100vh;
+ margin-left: 82px;
+ padding: 28px 4vw 70px;
+ overflow: hidden
 }
 
 .topbar {
-  display: flex;
-  align-items: center;
-  min-height: 60px;
-  margin-bottom: 22px
+ display: flex;
+ align-items: center;
+ min-height: 60px;
+ margin-bottom: 22px
 }
 
 .topbar h1 {
-  margin: 0;
-  font-size: 25px;
-  letter-spacing: -.02em
+ margin: 0;
+ font-size: 25px;
+ letter-spacing: -.02em
 }
 
 .topbar p {
-  margin: 2px 0 0;
-  color: var(--muted)
+ margin: 2px 0 0;
+ color: var(--muted)
 }
 
 .avatar {
-  margin-left: auto;
-  width: 42px;
-  height: 42px;
-  border: 1px solid var(--line);
-  border-radius: 50%;
-  background: var(--panel);
-  font-weight: 800
+ margin-left: auto;
+ width: 42px;
+ height: 42px;
+ border: 1px solid var(--line);
+ border-radius: 50%;
+ background: var(--panel);
+ font-weight: 800
 }
 
 .hero {
-  position: relative;
-  min-height: 440px;
-  margin: 0 -4vw 30px;
-  overflow: hidden;
-  background: var(--panel)
+ position: relative;
+ min-height: 440px;
+ margin: 0 -4vw 30px;
+ overflow: hidden;
+ background: var(--panel)
 }
 
 .hero-art {
-  position: absolute;
-  inset: 0
+ position: absolute;
+ inset: 0
 }
 
 .hero-art img,
 .detail-hero>img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover
+ width: 100%;
+ height: 100%;
+ object-fit: cover
 }
 
 .hero .art-fallback {
-  width: 100%;
-  height: 100%;
-  background: linear-gradient(120deg, #10242c, #1a3138);
-  display: grid;
-  place-items: center
+ width: 100%;
+ height: 100%;
+ background: linear-gradient(120deg, #10242c, #1a3138);
+ display: grid;
+ place-items: center
 }
 
 .art-fallback span {
-  font-size: 64px;
-  font-weight: 900;
-  color: #ffffff17
+ font-size: 64px;
+ font-weight: 900;
+ color: #ffffff17
 }
 
 .hero-shade {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(90deg, var(--ink) 4%, #071014e8 29%, #07101455 64%, transparent), linear-gradient(0deg, var(--ink), transparent 38%)
+ position: absolute;
+ inset: 0;
+ background: linear-gradient(90deg, var(--ink) 4%, #071014e8 29%, #07101455 64%, transparent), linear-gradient(0deg, var(--ink), transparent 38%)
 }
 
 .hero-copy {
-  position: relative;
-  z-index: 1;
-  width: min(620px, 55%);
-  padding: 85px 4vw
+ position: relative;
+ z-index: 1;
+ width: min(620px, 55%);
+ padding: 85px 4vw
 }
 
 .hero-copy h2 {
-  font-size: 54px;
-  line-height: 1.04;
-  letter-spacing: -.035em;
-  margin: 0 0 14px
+ font-size: 54px;
+ line-height: 1.04;
+ letter-spacing: -.035em;
+ margin: 0 0 14px
 }
 
 .hero-copy>p:not(.hero-meta) {
-  max-width: 65ch;
-  color: #d1dbdf
+ max-width: 65ch;
+ color: #d1dbdf
 }
 
 .hero-meta {
-  color: var(--muted)
+ color: var(--muted)
 }
 
 button {
-  border: 1px solid var(--line);
-  border-radius: 11px;
-  background: var(--panel-2);
-  padding: 10px 14px;
-  cursor: pointer
+ border: 1px solid var(--line);
+ border-radius: 11px;
+ background: var(--panel-2);
+ padding: 10px 14px;
+ cursor: pointer
 }
 
 .primary {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 9px;
-  background: var(--teal);
-  border-color: var(--teal);
-  color: #06231b;
-  font-weight: 800
+ display: inline-flex;
+ align-items: center;
+ justify-content: center;
+ gap: 9px;
+ background: var(--teal);
+ border-color: var(--teal);
+ color: #06231b;
+ font-weight: 800
 }
 
 .primary svg {
-  width: 19px
+ width: 19px
 }
 
 .rail-section {
-  margin: 32px 0 44px
+ margin: 32px 0 44px
 }
 
 .section-heading {
-  display: flex;
-  align-items: center;
-  margin-bottom: 13px
+ display: flex;
+ align-items: center;
+ margin-bottom: 13px
 }
 
 .section-heading h2 {
-  font-size: 21px;
-  margin: 0;
-  letter-spacing: -.015em
+ font-size: 21px;
+ margin: 0;
+ letter-spacing: -.015em
 }
 
 .rail {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(180px, 220px);
-  gap: 14px;
-  overflow-x: auto;
-  padding: 5px 5px 14px;
-  scrollbar-width: thin
+ display: grid;
+ grid-auto-flow: column;
+ grid-auto-columns: minmax(180px, 220px);
+ gap: 14px;
+ overflow-x: auto;
+ padding: 5px 5px 14px;
+ scrollbar-width: thin
 }
 
 .media-card {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  text-align: left;
-  transition: transform .18s cubic-bezier(.16, 1, .3, 1)
+ position: relative;
+ display: flex;
+ flex-direction: column;
+ min-width: 0;
+ padding: 0;
+ border: 0;
+ background: transparent;
+ text-align: left;
+ transition: transform .18s cubic-bezier(.16, 1, .3, 1)
 }
 
 .media-card:hover,
 .media-card:focus-visible {
-  transform: translateY(-4px)
+ transform: translateY(-4px)
 }
 
 .card-art {
-  position: relative;
-  aspect-ratio: 2/3;
-  border-radius: var(--radius);
-  overflow: hidden;
-  background: var(--panel);
-  box-shadow: 0 10px 28px #0005
+ position: relative;
+ aspect-ratio: 2/3;
+ border-radius: var(--radius);
+ overflow: hidden;
+ background: var(--panel);
+ box-shadow: 0 10px 28px #0005
 }
 
 .card-art img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover
+ width: 100%;
+ height: 100%;
+ object-fit: cover
 }
 
 .media-card.wide .card-art,
 .media-card.wide>.art-fallback {
-  aspect-ratio: 16/9;
-  border-radius: var(--radius);
-  overflow: hidden
+ aspect-ratio: 16/9;
+ border-radius: var(--radius);
+ overflow: hidden
 }
 
 .media-card.wide {
-  min-width: 320px
+ min-width: 320px
 }
 
 .media-card:focus-visible .card-art {
-  box-shadow: 0 0 0 3px var(--ink), 0 0 0 6px var(--teal), 0 14px 32px #0008
+ box-shadow: 0 0 0 3px var(--ink), 0 0 0 6px var(--teal), 0 14px 32px #0008
 }
 
 .card-copy {
-  padding: 10px 2px 0;
-  display: flex;
-  flex-direction: column
+ padding: 10px 2px 0;
+ display: flex;
+ flex-direction: column
 }
 
 .card-copy strong {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis
+ white-space: nowrap;
+ overflow: hidden;
+ text-overflow: ellipsis
 }
 
 .card-copy small {
-  color: var(--muted)
+ color: var(--muted)
 }
 
 .card-progress {
-  position: absolute;
-  left: 10px;
-  right: 10px;
-  bottom: 9px;
-  height: 4px;
-  background: #071014aa;
-  border-radius: 4px
+ position: absolute;
+ left: 10px;
+ right: 10px;
+ bottom: 9px;
+ height: 4px;
+ background: #071014aa;
+ border-radius: 4px
 }
 
 .card-progress i {
-  display: block;
-  height: 100%;
-  background: var(--teal);
-  border-radius: 4px
+ display: block;
+ height: 100%;
+ background: var(--teal);
+ border-radius: 4px
 }
 
 .legacy-wrap {
-  position: relative
+ position: relative
 }
 
 .quick-play {
-  position: absolute;
-  right: 10px;
-  bottom: 55px;
-  display: flex;
-  gap: 7px;
-  align-items: center;
-  opacity: 0;
-  transition: opacity .15s
+ position: absolute;
+ right: 10px;
+ bottom: 55px;
+ display: flex;
+ gap: 7px;
+ align-items: center;
+ opacity: 0;
+ transition: opacity .15s
 }
 
 .legacy-wrap:hover .quick-play,
 .legacy-wrap:focus-within .quick-play {
-  opacity: 1
+ opacity: 1
 }
 
 .poster-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(165px, 1fr));
-  gap: 22px 16px
+ display: grid;
+ grid-template-columns: repeat(auto-fill, minmax(165px, 1fr));
+ gap: 22px 16px
 }
 
 .catalog-tools {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  margin: 0 0 25px;
-  flex-wrap: wrap
+ display: flex;
+ gap: 10px;
+ align-items: center;
+ margin: 0 0 25px;
+ flex-wrap: wrap
 }
 
 .catalog-tools .search {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: min(420px, 100%);
-  flex: 1;
-  border: 1px solid var(--line);
-  border-radius: 11px;
-  background: var(--panel);
-  padding: 0 12px
+ display: flex;
+ align-items: center;
+ gap: 8px;
+ min-width: min(420px, 100%);
+ flex: 1;
+ border: 1px solid var(--line);
+ border-radius: 11px;
+ background: var(--panel);
+ padding: 0 12px
 }
 
 .catalog-tools input {
-  width: 100%;
-  border: 0;
-  background: transparent;
-  color: var(--text);
-  padding: 12px 0;
-  outline: 0
+ width: 100%;
+ border: 0;
+ background: transparent;
+ color: var(--text);
+ padding: 12px 0;
+ outline: 0
 }
 
 .catalog-tools select {
-  border: 1px solid var(--line);
-  border-radius: 11px;
-  background: var(--panel);
-  color: var(--text);
-  padding: 12px
+ border: 1px solid var(--line);
+ border-radius: 11px;
+ background: var(--panel);
+ color: var(--text);
+ padding: 12px
 }
 
 .skeleton {
-  aspect-ratio: 2/3;
-  border-radius: var(--radius);
-  background: linear-gradient(105deg, var(--panel) 30%, #1b303a 45%, var(--panel) 60%);
-  background-size: 220% 100%;
-  animation: shimmer 1.2s infinite
+ aspect-ratio: 2/3;
+ border-radius: var(--radius);
+ background: linear-gradient(105deg, var(--panel) 30%, #1b303a 45%, var(--panel) 60%);
+ background-size: 220% 100%;
+ animation: shimmer 1.2s infinite
 }
 
 @keyframes shimmer {
-  to {
-    background-position: -220% 0
-  }
+ to {
+  background-position: -220% 0
+ }
 }
 
 @media(prefers-reduced-motion:reduce) {
 
-  *,
-  *:before,
-  *:after {
-    scroll-behavior: auto !important;
-    transition: none !important;
-    animation: none !important
-  }
+ *,
+ *:before,
+ *:after {
+  scroll-behavior: auto !important;
+  transition: none !important;
+  animation: none !important
+ }
 }
 
 .category-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 14px
+ display: grid;
+ grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+ gap: 14px
 }
 
 .category-grid button {
-  min-height: 130px;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 22px;
-  text-align: left
+ min-height: 130px;
+ display: flex;
+ flex-direction: column;
+ align-items: flex-start;
+ gap: 8px;
+ padding: 22px;
+ text-align: left
 }
 
 .category-grid svg {
-  color: var(--teal)
+ color: var(--teal)
 }
 
 .category-grid span {
-  color: var(--muted)
+ color: var(--muted)
 }
 
 .error {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 14px 18px;
-  margin-bottom: 20px;
-  border: 1px solid #7d4141;
-  border-radius: 12px;
-  background: #2b191c
+ display: flex;
+ align-items: center;
+ gap: 14px;
+ padding: 14px 18px;
+ margin-bottom: 20px;
+ border: 1px solid #7d4141;
+ border-radius: 12px;
+ background: #2b191c
 }
 
 .error span {
-  color: #ffc7c7
+ color: #ffc7c7
 }
 
 .error button {
-  margin-left: auto
+ margin-left: auto
 }
 
 .empty {
-  padding: 24px;
-  border: 1px dashed var(--line);
-  border-radius: var(--radius);
-  color: var(--muted)
+ padding: 24px;
+ border: 1px dashed var(--line);
+ border-radius: var(--radius);
+ color: var(--muted)
 }
 
 .overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 80;
-  background: #03090dbd;
-  display: grid;
-  place-items: center;
-  padding: 3vw
+ position: fixed;
+ inset: 0;
+ z-index: 80;
+ background: #03090dbd;
+ display: grid;
+ place-items: center;
+ padding: 3vw
 }
 
 .detail {
-  position: relative;
-  width: min(1200px, 96vw);
-  max-height: 92vh;
-  overflow: auto;
-  background: var(--ink);
-  border-radius: 18px;
-  box-shadow: 0 26px 80px #000a
+ position: relative;
+ width: min(1200px, 96vw);
+ max-height: 92vh;
+ overflow: auto;
+ background: var(--ink);
+ border-radius: 18px;
+ box-shadow: 0 26px 80px #000a
 }
 
 .close {
-  position: absolute;
-  right: 20px;
-  top: 20px;
-  z-index: 4
+ position: absolute;
+ right: 20px;
+ top: 20px;
+ z-index: 4
 }
 
 .detail-hero {
-  position: relative;
-  height: 420px;
-  overflow: hidden;
-  border-radius: 18px 18px 0 0
+ position: relative;
+ height: 420px;
+ overflow: hidden;
+ border-radius: 18px 18px 0 0
 }
 
 .detail-hero>div {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(90deg, var(--ink), #07101488 60%, transparent), linear-gradient(0deg, var(--ink), transparent 45%)
+ position: absolute;
+ inset: 0;
+ background: linear-gradient(90deg, var(--ink), #07101488 60%, transparent), linear-gradient(0deg, var(--ink), transparent 45%)
 }
 
 .detail-hero>section {
-  position: absolute;
-  left: 45px;
-  bottom: 45px;
-  width: min(620px, 60%)
+ position: absolute;
+ left: 45px;
+ bottom: 45px;
+ width: min(620px, 60%)
 }
 
 .detail-hero h2 {
-  font-size: 45px;
-  line-height: 1.05;
-  margin: 0 0 10px
+ font-size: 45px;
+ line-height: 1.05;
+ margin: 0 0 10px
 }
 
 .detail-hero p {
-  color: #d3dde1
+ color: #d3dde1
 }
 
 .actions {
-  display: flex;
-  gap: 10px
+ display: flex;
+ gap: 10px
 }
 
 .actions button {
-  display: flex;
-  align-items: center;
-  gap: 8px
+ display: flex;
+ align-items: center;
+ gap: 8px
 }
 
 .season-tabs {
-  display: flex;
-  gap: 8px;
-  padding: 12px 35px;
-  border-bottom: 1px solid var(--line)
+ display: flex;
+ gap: 8px;
+ padding: 12px 35px;
+ border-bottom: 1px solid var(--line)
 }
 
 .season-tabs button.selected {
-  background: var(--teal-soft);
-  border-color: var(--teal);
-  color: var(--teal)
+ background: var(--teal-soft);
+ border-color: var(--teal);
+ color: var(--teal)
 }
 
 .episode-list {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-  padding: 25px 35px 40px
+ display: grid;
+ grid-template-columns: repeat(2, minmax(0, 1fr));
+ gap: 14px;
+ padding: 25px 35px 40px
 }
 
 .episode-list article {
-  display: grid;
-  grid-template-columns: 190px 1fr;
-  gap: 16px;
-  background: var(--panel);
-  border-radius: var(--radius);
-  overflow: hidden
+ display: grid;
+ grid-template-columns: 190px 1fr;
+ gap: 16px;
+ background: var(--panel);
+ border-radius: var(--radius);
+ overflow: hidden
 }
 
 .episode-art {
-  min-height: 120px
+ min-height: 120px
 }
 
 .episode-art img,
 .episode-art .art-fallback {
-  width: 100%;
-  height: 100%;
-  object-fit: cover
+ width: 100%;
+ height: 100%;
+ object-fit: cover
 }
 
 .episode-list h3 {
-  margin: 14px 0 2px
+ margin: 14px 0 2px
 }
 
 .episode-list p {
-  color: var(--muted);
-  margin: 0 0 10px
+ color: var(--muted);
+ margin: 0 0 10px
 }
 
 .source-rows {
-  display: grid;
-  gap: 10px;
-  padding: 28px 35px 40px
+ display: grid;
+ gap: 10px;
+ padding: 28px 35px 40px
 }
 
 .source-rows button {
-  display: grid;
-  grid-template-columns: 120px 1fr auto;
-  text-align: left;
-  gap: 14px;
-  align-items: center;
-  padding: 17px
+ display: grid;
+ grid-template-columns: 120px 1fr auto;
+ text-align: left;
+ gap: 14px;
+ align-items: center;
+ padding: 17px
 }
 
 .source-rows b {
-  color: var(--amber)
+ color: var(--amber)
 }
 
 .picker>section {
-  width: min(760px, 92vw);
-  max-height: 85vh;
-  overflow: auto;
-  border-radius: 16px;
-  background: var(--ink)
+ width: min(760px, 92vw);
+ max-height: 85vh;
+ overflow: auto;
+ border-radius: 16px;
+ background: var(--ink)
 }
 
 .picker header {
-  display: flex;
-  align-items: center;
-  padding: 20px 28px;
-  border-bottom: 1px solid var(--line)
+ display: flex;
+ align-items: center;
+ padding: 20px 28px;
+ border-bottom: 1px solid var(--line)
 }
 
 .picker h2 {
-  margin: 0
+ margin: 0
 }
 
 .picker header button {
-  margin-left: auto
+ margin-left: auto
 }
 
 .download-list,
 .jobs {
-  display: grid;
-  gap: 14px
+ display: grid;
+ gap: 14px
 }
 
 .download-list article {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 25px;
-  padding: 22px;
-  border-radius: var(--radius);
-  background: var(--panel)
+ display: grid;
+ grid-template-columns: 1fr auto;
+ gap: 25px;
+ padding: 22px;
+ border-radius: var(--radius);
+ background: var(--panel)
 }
 
 .download-list h2,
 .jobs h2 {
-  font-size: 18px;
-  margin: 0 0 5px
+ font-size: 18px;
+ margin: 0 0 5px
 }
 
 .download-list p,
 .jobs p {
-  color: var(--muted)
+ color: var(--muted)
 }
 
 progress {
-  width: 100%;
-  height: 7px;
-  accent-color: var(--teal)
+ width: 100%;
+ height: 7px;
+ accent-color: var(--teal)
 }
 
 .download-actions {
-  display: flex;
-  gap: 8px;
-  align-items: center
+ display: flex;
+ gap: 8px;
+ align-items: center
 }
 
 .danger,
 .danger-button {
-  color: var(--danger)
+ color: var(--danger)
 }
 
 .jobs article {
-  display: grid;
-  grid-template-columns: 32px 1fr;
-  gap: 15px;
-  padding: 20px;
-  background: var(--panel);
-  border-radius: var(--radius)
+ display: grid;
+ grid-template-columns: 32px 1fr;
+ gap: 15px;
+ padding: 20px;
+ background: var(--panel);
+ border-radius: var(--radius)
 }
 
 .jobs article svg {
-  color: var(--teal)
+ color: var(--teal)
 }
 
 .page-actions {
-  display: flex;
-  justify-content: flex-end;
-  margin-bottom: 15px
+ display: flex;
+ justify-content: flex-end;
+ margin-bottom: 15px
 }
 
 .supporting {
-  color: var(--muted)
+ color: var(--muted)
 }
 
 .settings {
-  max-width: 1000px
+ max-width: 1000px
 }
 
 .settings fieldset {
-  border: 0;
-  border-top: 1px solid var(--line);
-  padding: 24px 0;
-  margin: 0
+ border: 0;
+ border-top: 1px solid var(--line);
+ padding: 24px 0;
+ margin: 0
 }
 
 .settings legend {
-  font-size: 20px;
-  font-weight: 750;
-  padding: 0 18px 0 0
+ font-size: 20px;
+ font-weight: 750;
+ padding: 0 18px 0 0
 }
 
 .fields {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 15px
+ display: grid;
+ grid-template-columns: repeat(2, minmax(0, 1fr));
+ gap: 15px
 }
 
 .fields label {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  color: var(--muted)
+ display: flex;
+ flex-direction: column;
+ gap: 6px;
+ color: var(--muted)
 }
 
 .fields input {
-  width: 100%;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--panel);
-  color: var(--text);
-  padding: 11px
+ width: 100%;
+ border: 1px solid var(--line);
+ border-radius: 10px;
+ background: var(--panel);
+ color: var(--text);
+ padding: 11px
 }
 
 .settings-actions {
-  display: flex;
-  gap: 15px;
-  align-items: center
+ display: flex;
+ gap: 15px;
+ align-items: center
 }
 
 .video {
-  position: fixed;
-  inset: 0;
-  z-index: 120;
-  background: #000
+ position: fixed;
+ inset: 0;
+ z-index: 120;
+ background: #000
 }
 
 .video video {
-  width: 100%;
-  height: 100%
+ width: 100%;
+ height: 100%
 }
 
 .player-close {
-  position: absolute;
-  right: 24px;
-  top: 24px
+ position: absolute;
+ right: 24px;
+ top: 24px
 }
 
 .player-status {
-  position: absolute;
-  left: 50%;
-  bottom: 45px;
-  transform: translateX(-50%);
-  padding: 13px 18px;
-  border-radius: 10px;
-  background: #071014e8
+ position: absolute;
+ left: 50%;
+ bottom: 45px;
+ transform: translateX(-50%);
+ padding: 13px 18px;
+ border-radius: 10px;
+ background: #071014e8
 }
 
 .empty-hero {
-  padding: 80px 4vw
+ padding: 80px 4vw
 }
 
 .empty-hero h2 {
-  font-size: 40px
+ font-size: 40px
 }
 
 .art-fallback {
-  background: linear-gradient(135deg, #172b34, #0d1a21);
-  display: grid;
-  place-items: center
+ background: linear-gradient(135deg, #172b34, #0d1a21);
+ display: grid;
+ place-items: center
 }
 
 .raw>.art-fallback {
-  aspect-ratio: 16/9
+ aspect-ratio: 16/9
 }
 
 .raw .card-copy strong {
-  white-space: normal
+ white-space: normal
 }
 
 .hero+.rail-section {
-  margin-top: -10px;
-  position: relative;
-  z-index: 2
+ margin-top: -10px;
+ position: relative;
+ z-index: 2
 }
 
 @media(max-width:900px) {
-  .sidebar {
-    position: fixed;
-    inset: auto 0 0;
-    width: 100%;
-    height: 66px;
-    padding: 7px 10px;
-    border: 0;
-    border-top: 1px solid var(--line);
-    overflow-x: auto
-  }
+ .sidebar {
+  position: fixed;
+  inset: auto 0 0;
+  width: 100%;
+  height: 66px;
+  padding: 7px 10px;
+  border: 0;
+  border-top: 1px solid var(--line);
+  overflow-x: auto
+ }
 
-  .sidebar:hover,
-  .sidebar:focus-within {
-    width: 100%;
-    box-shadow: none
-  }
+ .sidebar:hover,
+ .sidebar:focus-within {
+  width: 100%;
+  box-shadow: none
+ }
 
-  .brand,
-  .nav-group p,
-  .nav-group:nth-of-type(n+3) {
-    display: none
-  }
+ .brand,
+ .nav-group p,
+ .nav-group:nth-of-type(n+3) {
+  display: none
+ }
 
-  .sidebar nav {
-    display: flex
-  }
+ .sidebar nav {
+  display: flex
+ }
 
-  .nav-group {
-    display: flex;
-    padding: 0;
-    border: 0
-  }
+ .nav-group {
+  display: flex;
+  padding: 0;
+  border: 0
+ }
 
-  .nav-group button {
-    width: 64px;
-    height: 52px;
-    justify-content: center
-  }
+ .nav-group button {
+  width: 64px;
+  height: 52px;
+  justify-content: center
+ }
 
-  .nav-group button span {
-    display: none
-  }
+ .nav-group button span {
+  display: none
+ }
 
-  .nav-group svg {
-    margin: 0
-  }
+ .nav-group svg {
+  margin: 0
+ }
 
-  .content {
-    margin-left: 0;
-    padding-bottom: 90px
-  }
+ .content {
+  margin-left: 0;
+  padding-bottom: 90px
+ }
 
-  .hero {
-    min-height: 380px
-  }
+ .hero {
+  min-height: 380px
+ }
 
-  .hero-copy {
-    width: 80%;
-    padding-top: 70px
-  }
+ .hero-copy {
+  width: 80%;
+  padding-top: 70px
+ }
 
-  .hero-copy h2 {
-    font-size: 40px
-  }
+ .hero-copy h2 {
+  font-size: 40px
+ }
 
-  .fields,
-  .episode-list {
-    grid-template-columns: 1fr
-  }
+ .fields,
+ .episode-list {
+  grid-template-columns: 1fr
+ }
 
-  .poster-grid {
-    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr))
-  }
+ .poster-grid {
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr))
+ }
 
-  .detail-hero>section {
-    width: 80%
-  }
+ .detail-hero>section {
+  width: 80%
+ }
 
-  .download-list article {
-    grid-template-columns: 1fr
-  }
+ .download-list article {
+  grid-template-columns: 1fr
+ }
 
-  .download-actions {
-    flex-wrap: wrap
-  }
+ .download-actions {
+  flex-wrap: wrap
+ }
 }
 
 @media(max-width:560px) {
-  .content {
-    padding-left: 18px;
-    padding-right: 18px
-  }
+ .content {
+  padding-left: 18px;
+  padding-right: 18px
+ }
 
-  .topbar p {
-    display: none
-  }
+ .topbar p {
+  display: none
+ }
 
-  .hero {
-    margin-left: -18px;
-    margin-right: -18px;
-    min-height: 410px
-  }
+ .hero {
+  margin-left: -18px;
+  margin-right: -18px;
+  min-height: 410px
+ }
 
-  .hero-shade {
-    background: linear-gradient(0deg, var(--ink) 5%, #07101499 75%, transparent)
-  }
+ .hero-shade {
+  background: linear-gradient(0deg, var(--ink) 5%, #07101499 75%, transparent)
+ }
 
-  .hero-copy {
-    width: 100%;
-    padding: 170px 18px 25px
-  }
+ .hero-copy {
+  width: 100%;
+  padding: 170px 18px 25px
+ }
 
-  .hero-copy h2 {
-    font-size: 34px
-  }
+ .hero-copy h2 {
+  font-size: 34px
+ }
 
-  .rail {
-    grid-auto-columns: 270px
-  }
+ .rail {
+  grid-auto-columns: 270px
+ }
 
-  .poster-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 16px 11px
-  }
+ .poster-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 11px
+ }
 
-  .catalog-tools {
-    display: grid;
-    grid-template-columns: 1fr 1fr
-  }
+ .catalog-tools {
+  display: grid;
+  grid-template-columns: 1fr 1fr
+ }
 
-  .catalog-tools .search {
-    grid-column: 1/-1;
-    min-width: 0
-  }
+ .catalog-tools .search {
+  grid-column: 1/-1;
+  min-width: 0
+ }
 
-  .catalog-tools select {
-    width: 100%
-  }
+ .catalog-tools select {
+  width: 100%
+ }
 
-  .source-rows button {
-    grid-template-columns: 80px 1fr
-  }
+ .source-rows button {
+  grid-template-columns: 80px 1fr
+ }
 
-  .source-rows button span:last-child {
-    grid-column: 2
-  }
+ .source-rows button span:last-child {
+  grid-column: 2
+ }
 
-  .detail-hero {
-    height: 500px
-  }
+ .detail-hero {
+  height: 500px
+ }
 
-  .detail-hero>section {
-    left: 20px;
-    bottom: 25px;
-    width: calc(100% - 40px)
-  }
+ .detail-hero>section {
+  left: 20px;
+  bottom: 25px;
+  width: calc(100% - 40px)
+ }
 
-  .detail-hero h2 {
-    font-size: 34px
-  }
+ .detail-hero h2 {
+  font-size: 34px
+ }
 
-  .episode-list {
-    padding: 18px
-  }
+ .episode-list {
+  padding: 18px
+ }
 
-  .episode-list article {
-    grid-template-columns: 1fr
-  }
+ .episode-list article {
+  grid-template-columns: 1fr
+ }
 
-  .episode-art {
-    height: 160px
-  }
+ .episode-art {
+  height: 160px
+ }
 
-  .fields {
-    grid-template-columns: 1fr
-  }
+ .fields {
+  grid-template-columns: 1fr
+ }
 }
 
 @media(max-width:900px) {
-  .nav-group:nth-of-type(n+3) {
-    display: flex
-  }
+ .nav-group:nth-of-type(n+3) {
+  display: flex
+ }
 }
 
 .sidebar {
-  transition: background-color .2s ease, box-shadow .2s ease
+ transition: background-color .2s ease, box-shadow .2s ease
 }
 
 /* The desktop library rail is intentionally stable: no hover-driven layout. */
 @media(min-width:901px) {
-  .sidebar {
-    width: 270px;
-    overflow-y: auto;
-    background: #0a151bfa;
-    box-shadow: 22px 0 45px #0005;
-    transition: none
-  }
+ .sidebar {
+  width: 270px;
+  overflow-y: auto;
+  background: #0a151bfa;
+  box-shadow: 22px 0 45px #0005;
+  transition: none
+ }
 
-  .sidebar:hover,
-  .sidebar:focus-within {
-    width: 270px
-  }
+ .sidebar:hover,
+ .sidebar:focus-within {
+  width: 270px
+ }
 
-  .content {
-    margin-left: 270px
-  }
+ .content {
+  margin-left: 270px
+ }
 }
 
 .player-actions {
-  position: absolute;
-  right: 24px;
-  top: 24px;
-  display: flex;
-  gap: 10px
+ position: absolute;
+ right: 24px;
+ top: 24px;
+ display: flex;
+ gap: 10px
 }
 
 .subtitle-panel {
-  position: absolute;
-  right: 24px;
-  top: 82px;
-  width: min(460px, 90vw);
-  max-height: 70vh;
-  overflow: auto;
-  padding: 22px;
-  background: #071014f5;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  box-shadow: 0 22px 60px #000a
+ position: absolute;
+ right: 24px;
+ top: 82px;
+ width: min(460px, 90vw);
+ max-height: 70vh;
+ overflow: auto;
+ padding: 22px;
+ background: #071014f5;
+ border: 1px solid var(--line);
+ border-radius: 14px;
+ box-shadow: 0 22px 60px #000a
 }
 
 .subtitle-panel h2 {
-  margin-top: 0
+ margin-top: 0
 }
 
 .subtitle-panel button {
-  display: flex;
-  width: 100%;
-  flex-direction: column;
-  align-items: flex-start;
-  margin: 8px 0;
-  text-align: left
+ display: flex;
+ width: 100%;
+ flex-direction: column;
+ align-items: flex-start;
+ margin: 8px 0;
+ text-align: left
 }
 
 .subtitle-panel button span {
-  color: var(--muted)
+ color: var(--muted)
 }
 
 .subtitle-panel button.selected {
-  border-color: var(--teal);
-  background: var(--teal-soft)
+ border-color: var(--teal);
+ background: var(--teal-soft)
 }
 
 .subtitle-group-label {
-  margin: 14px 0 2px;
-  color: var(--muted);
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: .08em
+ margin: 14px 0 2px;
+ color: var(--muted);
+ font-size: 12px;
+ text-transform: uppercase;
+ letter-spacing: .08em
 }
 
 .help-button {
-  display: inline-grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  margin-left: 7px;
-  padding: 0;
-  border-radius: 50%;
-  color: var(--teal);
-  font-size: 13px
+ display: inline-grid;
+ place-items: center;
+ width: 24px;
+ height: 24px;
+ margin-left: 7px;
+ padding: 0;
+ border-radius: 50%;
+ color: var(--teal);
+ font-size: 13px
 }
 
 .help-modal {
-  position: relative;
-  width: min(620px, 92vw);
-  max-height: 82vh;
-  overflow: auto;
-  padding: 36px;
-  background: var(--panel);
-  border-radius: 16px;
-  box-shadow: 0 26px 80px #000a
+ position: relative;
+ width: min(620px, 92vw);
+ max-height: 82vh;
+ overflow: auto;
+ padding: 36px;
+ background: var(--panel);
+ border-radius: 16px;
+ box-shadow: 0 26px 80px #000a
 }
 
 .help-modal h2 {
-  margin-top: 0;
-  padding-right: 80px
+ margin-top: 0;
+ padding-right: 80px
 }
 
 .help-modal p {
-  max-width: 70ch;
-  color: #d2dde1;
-  white-space: pre-wrap
+ max-width: 70ch;
+ color: #d2dde1;
+ white-space: pre-wrap
 }
 
 .diagnostics {
-  margin: 24px 0;
-  padding: 22px;
-  background: var(--panel);
-  border-radius: 14px
+ margin: 24px 0;
+ padding: 22px;
+ background: var(--panel);
+ border-radius: 14px
 }
 
 .diagnostics h2 {
-  margin-top: 0
+ margin-top: 0
 }
 
 .diagnostics>div {
-  display: grid;
-  grid-template-columns: 180px 1fr;
-  align-items: center;
-  gap: 14px;
-  margin: 9px 0
+ display: grid;
+ grid-template-columns: 180px 1fr;
+ align-items: center;
+ gap: 14px;
+ margin: 9px 0
 }
 
 .diagnostics span {
-  color: var(--muted)
+ color: var(--muted)
 }
 
 .event-actions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px
+ display: grid;
+ grid-template-columns: repeat(2, minmax(0, 1fr));
+ gap: 14px
 }
 
 .event-actions article {
-  padding: 22px;
-  background: var(--panel);
-  border-radius: 14px
+ padding: 22px;
+ background: var(--panel);
+ border-radius: 14px
 }
 
 .event-actions h2 {
-  margin-top: 0
+ margin-top: 0
 }
 
 .event-actions p {
-  color: var(--muted)
+ color: var(--muted)
 }
 
 .success {
-  color: var(--teal)
+ color: var(--teal)
 }
 
 .job-actions {
-  display: flex;
-  gap: 8px;
-  margin-top: 12px
+ display: flex;
+ gap: 8px;
+ margin-top: 12px
 }
 
 .job-actions button:disabled {
-  opacity: .45;
-  cursor: not-allowed
+ opacity: .45;
+ cursor: not-allowed
 }
 
 .job-log pre {
-  white-space: pre-wrap;
-  color: var(--muted)
+ white-space: pre-wrap;
+ color: var(--muted)
 }
 
 .load-more {
-  height: 2px
+ height: 2px
 }
 
 .job-log-modal {
-  width: min(780px, 92vw);
-  max-height: 85vh
+ width: min(780px, 92vw);
+ max-height: 85vh
 }
 
 .job-log-tools {
-  display: flex;
-  gap: 10px;
-  position: sticky;
-  top: -36px;
-  z-index: 2;
-  background: var(--panel);
-  padding: 12px 0
+ display: flex;
+ gap: 10px;
+ position: sticky;
+ top: -36px;
+ z-index: 2;
+ background: var(--panel);
+ padding: 12px 0
 }
 
 .job-log {
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  margin-top: 10px
+ padding: 12px;
+ border: 1px solid var(--line);
+ border-radius: 10px;
+ margin-top: 10px
 }
 
 .job-log time,
 .job-log strong {
-  display: block
+ display: block
 }
 
 .job-log.warn {
-  border-color: #d7a84b88
+ border-color: #d7a84b88
 }
 
 .job-log.error {
-  border-color: #ff666688
+ border-color: #ff666688
 }
 
 .job-context {
-  font-size: .78rem
+ font-size: .78rem
 }
 
 @media(max-width:900px) {
-  .event-actions {
-    grid-template-columns: 1fr
-  }
+ .event-actions {
+  grid-template-columns: 1fr
+ }
 }
 
 .search-submit {
-  min-width: 96px
+ min-width: 96px
 }
 
 .search-scope {
-  flex-basis: 100%;
-  color: var(--muted);
-  font-size: 13px
+ flex-basis: 100%;
+ color: var(--muted);
+ font-size: 13px
 }
 
 .catalog-update {
-  display: block;
-  margin: -10px 0 22px;
-  border-color: var(--teal);
-  background: var(--teal-soft);
-  color: var(--teal)
+ display: block;
+ margin: -10px 0 22px;
+ border-color: var(--teal);
+ background: var(--teal-soft);
+ color: var(--teal)
 }
 
 .download-list article {
-  grid-template-columns: minmax(0, 1fr) auto
+ grid-template-columns: minmax(0, 1fr) auto
 }
 
 .download-tools {
-  margin-bottom: 18px
+ margin-bottom: 18px
 }
 
 .download-tools .search-scope {
-  order: 2
+ order: 2
 }
 
 .download-identity {
-  min-width: 0
+ min-width: 0
 }
 
 .release-name {
-  margin: 3px 0 14px;
-  color: var(--text) !important;
-  font-weight: 650;
-  overflow-wrap: anywhere
+ margin: 3px 0 14px;
+ color: var(--text) !important;
+ font-weight: 650;
+ overflow-wrap: anywhere
 }
 
 .download-identity dl,
 .removal-confirm dl {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px 24px;
-  margin: 13px 0
+ display: grid;
+ grid-template-columns: repeat(2, minmax(0, 1fr));
+ gap: 8px 24px;
+ margin: 13px 0
 }
 
 .download-identity dl div,
 .removal-confirm dl div {
-  min-width: 0
+ min-width: 0
 }
 
 .download-identity dt,
 .removal-confirm dt {
-  font-size: 12px;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: .06em
+ font-size: 12px;
+ color: var(--muted);
+ text-transform: uppercase;
+ letter-spacing: .06em
 }
 
 .download-identity dd,
 .removal-confirm dd {
-  margin: 2px 0 0;
-  overflow-wrap: anywhere
+ margin: 2px 0 0;
+ overflow-wrap: anywhere
 }
 
 .removal-confirm {
-  width: min(720px, 92vw);
-  padding: 28px;
-  border-radius: 16px;
-  background: var(--panel);
-  box-shadow: 0 26px 80px #000a
+ width: min(720px, 92vw);
+ padding: 28px;
+ border-radius: 16px;
+ background: var(--panel);
+ box-shadow: 0 26px 80px #000a
 }
 
 .removal-confirm h2 {
-  margin: 0 0 8px
+ margin: 0 0 8px
 }
 
 .confirm-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  margin-top: 24px
+ display: flex;
+ justify-content: flex-end;
+ gap: 10px;
+ margin-top: 24px
 }
 
 .confirm-actions button:disabled {
-  opacity: .55;
-  cursor: wait
+ opacity: .55;
+ cursor: wait
 }
 
 @media(max-width:900px) {
 
-  .download-identity dl,
-  .removal-confirm dl {
-    grid-template-columns: 1fr
-  }
+ .download-identity dl,
+ .removal-confirm dl {
+  grid-template-columns: 1fr
+ }
 }
 
 .stream-mode {
-  display: inline-flex;
-  padding: 4px 9px;
-  border-radius: 8px;
-  background: var(--teal-soft);
-  color: var(--teal);
-  font-size: 13px;
-  font-weight: 750
+ display: inline-flex;
+ padding: 4px 9px;
+ border-radius: 8px;
+ background: var(--teal-soft);
+ color: var(--teal);
+ font-size: 13px;
+ font-weight: 750
 }
 
 .stream-mode.local {
-  background: #1b3029;
-  color: #b7ead8
+ background: #1b3029;
+ color: #b7ead8
 }
 
 .rail.landscape {
-  grid-auto-columns: minmax(300px, 360px)
+ grid-auto-columns: minmax(300px, 360px)
 }
 
 .rail.landscape .media-card.wide {
-  min-width: 0
+ min-width: 0
 }
 
 .library-card-release {
-  margin-top: 3px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis
+ margin-top: 3px;
+ white-space: nowrap;
+ overflow: hidden;
+ text-overflow: ellipsis
 }
 
 .library-category-media {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
-  gap: 24px 18px
+ display: grid;
+ grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+ gap: 24px 18px
 }
 
 .library-category-media .media-card.wide {
-  min-width: 0
+ min-width: 0
 }
 
 @media(max-width:560px) {
-  .rail.landscape {
-    grid-auto-columns: 285px
-  }
+ .rail.landscape {
+  grid-auto-columns: 285px
+ }
 
-  .library-category-media {
-    grid-template-columns: 1fr
-  }
+ .library-category-media {
+  grid-template-columns: 1fr
+ }
 }
 
 /* Canonical library state: two quiet, readable signals rather than color-only decoration. */
 .media-badges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-  margin: 7px 0
+ display: flex;
+ flex-wrap: wrap;
+ gap: 6px;
+ align-items: center;
+ margin: 7px 0
 }
 
 .card-art>.media-badges {
-  position: absolute;
-  left: 9px;
-  top: 9px;
-  z-index: 2;
-  margin: 0;
-  max-width: calc(100% - 18px)
+ position: absolute;
+ left: 9px;
+ top: 9px;
+ z-index: 2;
+ margin: 0;
+ max-width: calc(100% - 18px)
 }
 
 .media-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  min-height: 25px;
-  padding: 3px 7px;
-  border-radius: 8px;
-  background: #071014e8;
-  color: var(--text);
-  font-size: 11px;
-  font-weight: 750;
-  line-height: 1;
-  box-shadow: 0 3px 10px #0007
+ display: inline-flex;
+ align-items: center;
+ gap: 5px;
+ min-height: 25px;
+ padding: 3px 7px;
+ border-radius: 8px;
+ background: #071014e8;
+ color: var(--text);
+ font-size: 11px;
+ font-weight: 750;
+ line-height: 1;
+ box-shadow: 0 3px 10px #0007
 }
 
 .media-badge svg {
-  width: 14px;
-  height: 14px
+ width: 14px;
+ height: 14px
 }
 
 .media-badge.download.downloaded {
-  color: var(--teal)
+ color: var(--teal)
 }
 
 .media-badge.download.partial,
 .media-badge.download.downloading,
 .media-badge.download.queued {
-  color: var(--amber)
+ color: var(--amber)
 }
 
 .media-badge.download.error {
-  color: var(--danger)
+ color: var(--danger)
 }
 
 .media-badge.watch {
-  color: #c9d8ff
+ color: #c9d8ff
 }
 
 .season-tabs button {
-  display: flex;
-  align-items: center;
-  gap: 8px
+ display: flex;
+ align-items: center;
+ gap: 8px
 }
 
 .season-tabs .media-badges {
-  margin: 0
+ margin: 0
 }
 
 .season-tabs .media-badge span {
-  display: none
+ display: none
 }
 
 .season-pack-actions {
-  padding: 22px 35px;
-  border-bottom: 1px solid var(--line)
+ padding: 22px 35px;
+ border-bottom: 1px solid var(--line)
 }
 
 .season-pack-actions h3 {
-  margin: 0
+ margin: 0
 }
 
 .season-pack-actions p {
-  color: var(--muted)
+ color: var(--muted)
 }
 
 .season-pack-actions>div {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap
+ display: flex;
+ gap: 10px;
+ flex-wrap: wrap
 }
 
 .season-pack-actions button {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  text-align: left
+ display: flex;
+ flex-direction: column;
+ align-items: flex-start;
+ text-align: left
 }
 
 .season-pack-actions button span {
-  color: var(--muted)
+ color: var(--muted)
 }
 
 .episode-list article {
-  display: block;
-  min-width: 0
+ display: block;
+ min-width: 0
 }
 
 .episode-select {
-  width: 100%;
-  display: grid;
-  grid-template-columns: 190px 1fr;
-  gap: 16px;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  text-align: left
+ width: 100%;
+ display: grid;
+ grid-template-columns: 190px 1fr;
+ gap: 16px;
+ padding: 0;
+ border: 0;
+ border-radius: 0;
+ background: transparent;
+ text-align: left
 }
 
 .episode-select .episode-art {
-  height: 145px
+ height: 145px
 }
 
 .episode-copy {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  justify-content: center;
-  align-items: flex-start;
-  padding: 12px 15px 12px 0
+ display: flex;
+ min-width: 0;
+ flex-direction: column;
+ justify-content: center;
+ align-items: flex-start;
+ padding: 12px 15px 12px 0
 }
 
 .episode-copy>strong {
-  font-size: 17px
+ font-size: 17px
 }
 
 .episode-copy>small {
-  color: var(--muted)
+ color: var(--muted)
 }
 
 .episode-copy>b {
-  color: var(--teal);
-  font-size: 13px
+ color: var(--teal);
+ font-size: 13px
 }
 
 .episode-copy .media-badges {
-  margin: 8px 0
+ margin: 8px 0
 }
 
 .source-rows.compact {
-  padding: 0 12px 14px
+ padding: 0 12px 14px
 }
 
 .source-rows.compact button {
-  grid-template-columns: 82px minmax(0, 1fr) auto;
-  padding: 13px
+ grid-template-columns: 82px minmax(0, 1fr) auto;
+ padding: 13px
 }
 
 .source-action {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end
+ display: flex;
+ flex-direction: column;
+ align-items: flex-end
 }
 
 .source-action>.media-badges {
-  justify-content: flex-end;
-  margin: 0 0 4px
+ justify-content: flex-end;
+ margin: 0 0 4px
 }
 
 .source-action>b {
-  color: var(--teal)
+ color: var(--teal)
 }
 
 .source-action>small {
-  color: var(--muted);
-  white-space: nowrap
+ color: var(--muted);
+ white-space: nowrap
 }
 
 /* Polling changes numbers, never geometry. This prevents cumulative layout shift. */
 .download-list {
-  overflow-anchor: none
+ overflow-anchor: none
 }
 
 .download-list article {
-  min-height: 390px;
-  contain: layout
+ min-height: 390px;
+ contain: layout
 }
 
 .download-identity {
-  display: flex;
-  min-height: 0;
-  flex-direction: column
+ display: flex;
+ min-height: 0;
+ flex-direction: column
 }
 
 .download-identity h2,
 .download-identity .release-name {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis
+ white-space: nowrap;
+ overflow: hidden;
+ text-overflow: ellipsis
 }
 
 .download-identity .release-name {
-  min-height: 24px;
-  margin-bottom: 10px
+ min-height: 24px;
+ margin-bottom: 10px
 }
 
 .download-identity dl {
-  height: auto;
-  margin: 14px 0;
-  overflow: visible
+ height: auto;
+ margin: 14px 0;
+ overflow: visible
 }
 
 .download-identity dd {
-  min-height: 20px;
-  white-space: normal;
-  overflow-wrap: anywhere
+ min-height: 20px;
+ white-space: normal;
+ overflow-wrap: anywhere
 }
 
 .download-telemetry {
-  height: 24px;
-  margin: 7px 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-variant-numeric: tabular-nums
+ height: 24px;
+ margin: 7px 0;
+ white-space: nowrap;
+ overflow: hidden;
+ text-overflow: ellipsis;
+ font-variant-numeric: tabular-nums
 }
 
 .download-error {
-  height: 24px;
-  margin: 7px 0 0;
-  overflow: hidden;
-  color: transparent;
-  white-space: nowrap;
-  text-overflow: ellipsis
+ height: 24px;
+ margin: 7px 0 0;
+ overflow: hidden;
+ color: transparent;
+ white-space: nowrap;
+ text-overflow: ellipsis
 }
 
 .download-error.visible {
-  color: var(--danger)
+ color: var(--danger)
 }
 
 .download-actions {
-  min-width: 210px;
-  justify-content: flex-end
+ min-width: 210px;
+ justify-content: flex-end
 }
 
 @media(max-width:900px) {
-  .download-list article {
-    min-height: 510px
-  }
+ .download-list article {
+  min-height: 510px
+ }
 
-  .download-actions {
-    min-width: 0;
-    justify-content: flex-start
-  }
+ .download-actions {
+  min-width: 0;
+  justify-content: flex-start
+ }
 
-  .episode-select {
-    grid-template-columns: 130px 1fr
-  }
+ .episode-select {
+  grid-template-columns: 130px 1fr
+ }
 
-  .episode-select .episode-art {
-    height: 125px
-  }
+ .episode-select .episode-art {
+  height: 125px
+ }
 }
 
 .season-pack-actions {
-  margin: 24px 35px 0;
-  padding: 20px 22px;
-  border: 1px solid #3b6259;
-  border-radius: var(--radius);
-  background: linear-gradient(120deg, #122823, #101c24)
+ margin: 24px 35px 0;
+ padding: 20px 22px;
+ border: 1px solid #3b6259;
+ border-radius: var(--radius);
+ background: linear-gradient(120deg, #122823, #101c24)
 }
 
 .season-pack-actions h3 {
-  margin: 0
+ margin: 0
 }
 
 .season-pack-actions>p,
 .episode-loading {
-  color: var(--muted)
+ color: var(--muted)
 }
 
 .season-pack-actions>div {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap
+ display: flex;
+ gap: 10px;
+ flex-wrap: wrap
 }
 
 .season-pack-actions button {
-  display: flex;
-  min-width: 210px;
-  flex-direction: column;
-  align-items: flex-start;
-  text-align: left
+ display: flex;
+ min-width: 210px;
+ flex-direction: column;
+ align-items: flex-start;
+ text-align: left
 }
 
 .season-pack-actions button span {
-  color: var(--muted)
+ color: var(--muted)
 }
 
 .episode-loading {
-  margin: 24px 35px 40px;
-  padding: 22px;
-  border: 1px dashed var(--line);
-  border-radius: var(--radius)
+ margin: 24px 35px 40px;
+ padding: 22px;
+ border: 1px dashed var(--line);
+ border-radius: var(--radius)
 }
 
 .resume-file {
-  display: block;
-  max-width: 100%;
-  margin-top: 9px;
-  color: var(--muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis
+ display: block;
+ max-width: 100%;
+ margin-top: 9px;
+ color: var(--muted);
+ white-space: nowrap;
+ overflow: hidden;
+ text-overflow: ellipsis
 }
 
 /* Version actions follow the filename, so long torrent paths never collide with controls. */
 .source-rows button,
 .source-rows.compact button {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 12px;
-  text-align: left
+ display: flex;
+ min-width: 0;
+ flex-direction: column;
+ align-items: stretch;
+ gap: 12px;
+ text-align: left
 }
 
 .source-copy {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 4px
+ display: flex;
+ min-width: 0;
+ flex-direction: column;
+ gap: 4px
 }
 
 .source-copy>strong {
-  font-size: 17px
+ font-size: 17px
 }
 
 .source-filename {
-  overflow-wrap: anywhere
+ overflow-wrap: anywhere
 }
 
 .source-copy>small {
-  color: var(--muted)
+ color: var(--muted)
 }
 
 .source-action {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 6px 12px;
-  padding-top: 10px;
-  border-top: 1px solid var(--line)
+ display: flex;
+ flex-wrap: wrap;
+ align-items: center;
+ justify-content: flex-start;
+ gap: 6px 12px;
+ padding-top: 10px;
+ border-top: 1px solid var(--line)
 }
 
 .source-action>.media-badges {
-  justify-content: flex-start;
-  margin: 0
+ justify-content: flex-start;
+ margin: 0
 }
 
 .source-action>small {
-  color: var(--muted);
-  white-space: nowrap
+ color: var(--muted);
+ white-space: nowrap
 }
 
 .season-pack-actions>div {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px
+ display: grid;
+ grid-template-columns: repeat(2, minmax(0, 1fr));
+ gap: 12px
 }
 
 .season-pack-actions .season-pack-source {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  min-width: 0;
-  align-items: stretch;
-  gap: 18px;
-  padding: 16px;
-  text-align: left
+ display: grid;
+ grid-template-columns: minmax(0, 1fr) auto;
+ min-width: 0;
+ align-items: stretch;
+ gap: 18px;
+ padding: 16px;
+ text-align: left
 }
 
 .season-pack-copy,
 .season-pack-state {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 5px
+ display: flex;
+ min-width: 0;
+ flex-direction: column;
+ align-items: flex-start;
+ gap: 5px
 }
 
 .season-pack-copy>span {
-  color: var(--text) !important;
-  overflow-wrap: anywhere
+ color: var(--text) !important;
+ overflow-wrap: anywhere
 }
 
 .season-pack-copy>small,
 .season-pack-state>small {
-  color: var(--muted) !important
+ color: var(--muted) !important
 }
 
 .season-pack-state {
-  justify-content: flex-end;
-  align-items: flex-end;
-  text-align: right
+ justify-content: flex-end;
+ align-items: flex-end;
+ text-align: right
 }
 
 .season-pack-state>.media-badges {
-  justify-content: flex-end;
-  margin: 0
+ justify-content: flex-end;
+ margin: 0
 }
 
 .season-pack-state>b {
-  color: var(--teal)
+ color: var(--teal)
 }
 
 .season-pack-source:disabled {
-  cursor: default;
-  opacity: 1;
-  border-color: #3b6259;
-  background: #10241f;
-  color: var(--text)
+ cursor: default;
+ opacity: 1;
+ border-color: #3b6259;
+ background: #10241f;
+ color: var(--text)
 }
 
 .season-pack-source:disabled .season-pack-state>b {
-  color: var(--teal)
+ color: var(--teal)
 }
 
 @media(max-width:760px) {
-  .season-pack-actions>div {
-    grid-template-columns: 1fr
-  }
+ .season-pack-actions>div {
+  grid-template-columns: 1fr
+ }
 
-  .season-pack-actions .season-pack-source {
-    grid-template-columns: 1fr
-  }
+ .season-pack-actions .season-pack-source {
+  grid-template-columns: 1fr
+ }
 
-  .season-pack-state {
-    align-items: flex-start;
-    text-align: left
-  }
+ .season-pack-state {
+  align-items: flex-start;
+  text-align: left
+ }
 
-  .season-pack-state>.media-badges {
-    justify-content: flex-start
-  }
+ .season-pack-state>.media-badges {
+  justify-content: flex-start
+ }
 }
 
 .category-heading {
-  gap: 12px;
-  margin: 24px 0 16px
+ gap: 12px;
+ margin: 24px 0 16px
 }
 
 .category-heading>span {
-  display: inline-flex;
-  align-items: center;
-  min-height: 28px;
-  padding: 3px 10px;
-  border-radius: 999px;
-  background: var(--teal-soft);
-  color: var(--teal);
-  font-size: 13px;
-  font-weight: 750
+ display: inline-flex;
+ align-items: center;
+ min-height: 28px;
+ padding: 3px 10px;
+ border-radius: 999px;
+ background: var(--teal-soft);
+ color: var(--teal);
+ font-size: 13px;
+ font-weight: 750
 }
 
 .video video {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  background: #000
+ display: block;
+ width: 100%;
+ height: 100%;
+ object-fit: contain;
+ background: #000
 }
 
 .player-chrome {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  padding: 110px 28px 28px;
-  background: linear-gradient(transparent, #020609 42%);
-  z-index: 3;
-  transition: opacity .2s, visibility .2s
+ position: absolute;
+ left: 0;
+ right: 0;
+ bottom: 0;
+ padding: 110px 28px 28px;
+ background: linear-gradient(transparent, #020609 42%);
+ z-index: 3;
+ transition: opacity .2s, visibility .2s
 }
 
 .video:not(.controls-visible) {
-  cursor: none
+ cursor: none
 }
 
 .video:not(.controls-visible) .player-chrome {
-  opacity: 0;
-  visibility: hidden;
-  pointer-events: none
+ opacity: 0;
+ visibility: hidden;
+ pointer-events: none
 }
 
 .player-heading {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 24px;
-  margin-bottom: 14px
+ display: flex;
+ align-items: baseline;
+ justify-content: space-between;
+ gap: 24px;
+ margin-bottom: 14px
 }
 
 .player-heading strong {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 20px
+ min-width: 0;
+ overflow: hidden;
+ text-overflow: ellipsis;
+ white-space: nowrap;
+ font-size: 20px
 }
 
 .player-heading span {
-  flex: none;
-  color: var(--muted);
-  font-size: 13px
+ flex: none;
+ color: var(--muted);
+ font-size: 13px
 }
 
 .player-scrubber>input {
-  width: 100%;
-  height: 22px;
-  margin: 0;
-  accent-color: var(--teal);
-  cursor: pointer
+ width: 100%;
+ height: 22px;
+ margin: 0;
+ accent-color: var(--teal);
+ cursor: pointer
 }
 
 .player-scrubber>input:disabled {
-  cursor: wait;
-  opacity: .55
+ cursor: wait;
+ opacity: .55
 }
 
 .player-scrubber>div {
-  display: flex;
-  justify-content: space-between;
-  margin: 2px 1px 13px;
-  color: #d8e3e9;
-  font-variant-numeric: tabular-nums
+ display: flex;
+ justify-content: space-between;
+ margin: 2px 1px 13px;
+ color: #d8e3e9;
+ font-variant-numeric: tabular-nums
 }
 
 .player-control-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  overflow-x: auto;
-  padding: 3px
+ display: flex;
+ align-items: center;
+ gap: 8px;
+ overflow-x: auto;
+ padding: 3px
 }
 
 .player-control-row button {
-  flex: none
+ flex: none
 }
 
 .player-control-row button:disabled {
-  opacity: .5;
-  cursor: wait
+ opacity: .5;
+ cursor: wait
 }
 
 .player-play {
-  min-width: 78px;
-  background: var(--teal);
-  border-color: var(--teal);
-  color: #06231b;
-  font-weight: 800
+ min-width: 78px;
+ background: var(--teal);
+ border-color: var(--teal);
+ color: #06231b;
+ font-weight: 800
 }
 
 .player-volume {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 5px;
-  color: var(--muted);
-  font-size: 13px
+ display: flex;
+ align-items: center;
+ gap: 8px;
+ padding: 0 5px;
+ color: var(--muted);
+ font-size: 13px
 }
 
 .player-volume input {
-  width: 105px;
-  accent-color: var(--teal)
+ width: 105px;
+ accent-color: var(--teal)
 }
 
 .video .subtitle-panel {
-  z-index: 6
+ z-index: 6
 }
 
 .video .player-status {
-  top: 24px;
-  bottom: auto;
-  max-width: min(760px, 80vw);
-  margin: 0;
-  text-align: center
+ top: 24px;
+ bottom: auto;
+ max-width: min(760px, 80vw);
+ margin: 0;
+ text-align: center
 }
 
 .video button:focus-visible,
 .video input:focus-visible {
-  outline: 3px solid var(--teal);
-  outline-offset: 3px
+ outline: 3px solid var(--teal);
+ outline-offset: 3px
 }
 
 @media(max-width:760px) {
-  .player-chrome {
-    padding: 90px 14px 14px
-  }
+ .player-chrome {
+  padding: 90px 14px 14px
+ }
 
-  .player-heading {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 3px
-  }
+ .player-heading {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 3px
+ }
 
-  .player-control-row {
-    padding-bottom: 8px
-  }
+ .player-control-row {
+  padding-bottom: 8px
+ }
 
-  .player-volume span {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden
-  }
+ .player-volume span {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden
+ }
 }
 
 /* Complete-season sources are disclosure controls: selecting a source never starts a transfer. */
 .season-pack-actions>div {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-items: start;
-  gap: 12px
+ display: grid;
+ grid-template-columns: repeat(2, minmax(0, 1fr));
+ align-items: start;
+ gap: 12px
 }
 
 .season-pack-source {
-  min-width: 0;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: #101a20;
-  overflow: hidden
+ min-width: 0;
+ border: 1px solid var(--line);
+ border-radius: var(--radius);
+ background: #101a20;
+ overflow: hidden
 }
 
 .season-pack-actions .season-pack-source {
-  display: block;
-  grid-template-columns: none;
-  padding: 0;
-  text-align: initial
+ display: block;
+ grid-template-columns: none;
+ padding: 0;
+ text-align: initial
 }
 
 .season-pack-source.expanded {
-  border-color: #4d7c71;
-  background: #10221e
+ border-color: #4d7c71;
+ background: #10221e
 }
 
 .season-pack-header {
-  display: grid;
-  width: 100%;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: stretch;
-  gap: 18px;
-  padding: 16px;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  text-align: left
+ display: grid;
+ width: 100%;
+ grid-template-columns: minmax(0, 1fr) auto;
+ align-items: stretch;
+ gap: 18px;
+ padding: 16px;
+ border: 0;
+ border-radius: 0;
+ background: transparent;
+ text-align: left
 }
 
 .season-pack-header:hover {
-  background: #17262b
+ background: #17262b
 }
 
 .season-pack-header:focus-visible {
-  outline: 3px solid var(--teal);
-  outline-offset: -3px
+ outline: 3px solid var(--teal);
+ outline-offset: -3px
 }
 
 .season-pack-controls {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-  padding: 14px 16px 16px;
-  border-top: 1px solid var(--line)
+ display: flex;
+ flex-wrap: wrap;
+ align-items: center;
+ gap: 10px;
+ padding: 14px 16px 16px;
+ border-top: 1px solid var(--line)
 }
 
 .season-pack-controls progress {
-  flex: 1 0 100%;
-  height: 8px
+ flex: 1 0 100%;
+ height: 8px
 }
 
 .season-pack-controls button {
-  min-width: 132px
+ min-width: 132px
 }
 
 .season-pack-controls .danger-button {
-  margin-left: auto
+ margin-left: auto
 }
 
 .settings input:disabled {
-  opacity: .72;
-  cursor: not-allowed;
-  background: #0c1216;
-  color: #b8c8cf
+ opacity: .72;
+ cursor: not-allowed;
+ background: #0c1216;
+ color: #b8c8cf
 }
 
 @media(max-width:760px) {
-  .season-pack-actions>div {
-    grid-template-columns: 1fr
-  }
+ .season-pack-actions>div {
+  grid-template-columns: 1fr
+ }
 
-  .season-pack-header {
-    grid-template-columns: 1fr
-  }
+ .season-pack-header {
+  grid-template-columns: 1fr
+ }
 
-  .season-pack-state {
-    align-items: flex-start;
-    text-align: left
-  }
+ .season-pack-state {
+  align-items: flex-start;
+  text-align: left
+ }
 
-  .season-pack-state>.media-badges {
-    justify-content: flex-start
-  }
+ .season-pack-state>.media-badges {
+  justify-content: flex-start
+ }
 
-  .season-pack-controls .danger-button {
-    margin-left: 0
-  }
+ .season-pack-controls .danger-button {
+  margin-left: 0
+ }
 }
 
 /* OSD: transient Player command feedback; one instance, auto-hidden by the component. */
 .osd {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 96px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  pointer-events: none;
-  z-index: 30;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text);
-  text-shadow: 0 1px 2px #071014b3
+ position: absolute;
+ left: 0;
+ right: 0;
+ top: 30%;
+ display: flex;
+ align-items: center;
+ justify-content: center;
+ gap: 10px;
+ pointer-events: none;
+ z-index: 30;
+ font-size: 15px;
+ font-weight: 600;
+ color: var(--text);
+ text-shadow: 0 1px 2px #071014b3
 }
 
 .osd-ghost {
-  position: absolute;
-  top: 50%;
-  width: 3px;
-  height: 18px;
-  margin-left: -1.5px;
-  border-radius: 2px;
-  background: var(--teal);
-  box-shadow: 0 0 4px #071014b3
+ position: absolute;
+ top: 50%;
+ width: 3px;
+ height: 18px;
+ margin-left: -1.5px;
+ border-radius: 2px;
+ background: var(--teal);
+ box-shadow: 0 0 4px #071014b3
 }
 
 .osd-hint-text,
 .osd-volume-label,
 .osd-mute-label {
-  padding: 8px 12px;
-  border-radius: 8px;
-  background: #071014e8
+ padding: 8px 12px;
+ border-radius: 8px;
+ background: #071014e8
 }
 
 .osd-volume-track {
-  width: 160px;
-  height: 6px;
-  border-radius: 3px;
-  background: #ffffff40;
-  overflow: hidden
+ width: 160px;
+ height: 6px;
+ border-radius: 3px;
+ background: #ffffff40;
+ overflow: hidden
 }
 
 .osd-volume-fill {
-  display: block;
-  height: 100%;
-  background: var(--teal)
+ display: block;
+ height: 100%;
+ background: var(--teal)
 }
 
 /* Slider flash: brief highlight on volume OSD feedback; the fill is remounted
    on each feedback identity so the animation restarts. Neutralized for
    prefers-reduced-motion by the global animation:none !important rule above. */
 .osd-volume-fill.osd-volume-flash {
-  animation: osd-volume-flash 450ms ease-out
+ animation: osd-volume-flash 450ms ease-out
 }
 
 @keyframes osd-volume-flash {
-  from {
-    box-shadow: 0 0 0 1px var(--teal);
-    filter: brightness(1.9)
-  }
+ from {
+  box-shadow: 0 0 0 1px var(--teal);
+  filter: brightness(1.9)
+ }
 
-  to {
-    box-shadow: 0 0 0 5px transparent;
-    filter: brightness(1)
-  }
+ to {
+  box-shadow: 0 0 0 5px transparent;
+  filter: brightness(1)
+ }
 }
 
 .osd-mute-label {
-  display: inline-flex;
-  align-items: center
+ display: inline-flex;
+ align-items: center
 }

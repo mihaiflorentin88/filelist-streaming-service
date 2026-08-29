@@ -14,3 +14,4 @@ A from-scratch Docker start must require zero qBittorrent knowledge — no port 
 ## Consequences
 
 - Anyone on the household LAN has full qBittorrent WebUI access; the stack must never be exposed beyond the LAN (existing rule, now load-bearing for qBittorrent too).
+- The sidecar also disables the WebUI host header validation. qBittorrent compares the Host header port against its in-container listening port, so a published host port different from the container port (e.g. `127.0.0.1:8081` -> `:8080`) is rejected with `401` before the auth bypass applies — in browsers and probes alike. On a credential-free WebUI there are no sessions or cookies for host header validation to protect, so the check only broke the published URL.

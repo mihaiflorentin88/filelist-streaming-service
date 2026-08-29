@@ -1,4 +1,4 @@
-.PHONY: check test build build-arm64 frontend tizen-wgt validate-tizen-wgt deploy-pi bootstrap-server-dry-run docker-configure docker-import-pi docker-prepare docker-up docker-down docker-logs docker-check docker-urls docker-smoke-stream
+.PHONY: check test build build-arm64 frontend tizen-wgt validate-tizen-wgt deploy-pi bootstrap-server-dry-run docker-configure docker-validate docker-import-pi docker-prepare docker-up docker-down docker-logs docker-check docker-urls docker-smoke-stream
 
 VERSION ?= $(shell tr -d '[:space:]' < VERSION)
 PI_HOST ?=
@@ -55,6 +55,9 @@ docker-configure:
 
 docker-import-pi:
 	sh deploy/docker/import-pi-config.sh "$(PI_HOST)"
+
+docker-validate:
+	python3 tools/docker_env_validate.py "$(DOCKER_ENV)"
 
 docker-prepare:
 	sh deploy/docker/prepare.sh "$(DOCKER_ENV)"

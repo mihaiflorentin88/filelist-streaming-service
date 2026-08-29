@@ -31,6 +31,10 @@ One movie/show identity that groups many Releases (IMDb ID preferred, title+year
 The append-only local mirror of tracker Releases; rows are never removed.
 _Avoid_: library
 
+**Catalog sync**:
+A pull of tracker Releases into the Catalog, in one of two modes: `latest` appends the newest tracker window; `rebuild` refreshes every enabled category's window and rebuilds local projections. Append-only either way; runs on a schedule (latest hourly, rebuild weekly) or by hand as Fetch latest / Rebuild catalog.
+_Avoid_: cache rebuild, refresh (unqualified)
+
 ### Playback
 
 **Managed download**:
