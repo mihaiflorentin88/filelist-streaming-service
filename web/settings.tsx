@@ -20,7 +20,18 @@ export function CacheCoverage() { const [status, setStatus] = useState<Record<st
 
 type SettingsRow = [string, string, string?, string?];
 
-const TESTABLE_CONNECTIONS = ['filelist', 'qbittorrent', 'storage', 'tmdb', 'subdl'];
+// Connection checks live beside the fields they validate and gather on the
+// Test tab. LED state is session-scoped: it starts untested and changes only
+// from tests actually run in this session.
+const CONNECTIONS = [
+  { name: 'filelist', label: 'FileList', tab: 'tracker' },
+  { name: 'tmdb', label: 'TMDB', tab: 'tracker' },
+  { name: 'qbittorrent', label: 'qBittorrent', tab: 'storage' },
+  { name: 'storage', label: 'Storage', tab: 'storage' },
+  { name: 'subdl', label: 'SubDL', tab: 'playback' },
+];
+
+const connectionsFor = (tab: string) => CONNECTIONS.filter(connection => connection.tab === tab);
 
 const TABS: Array<{ id: string; label: string; ops?: boolean }> = [
   { id: 'tracker', label: 'Tracker' },
@@ -61,9 +72,17 @@ export function Settings({ value, fields, onSaved, onError }: { value: Record<st
   const [message, setMessage] = useState('');
   const [help, setHelp] = useState<SettingsField | null>(null);
   const [tests, setTests] = useState<Record<string, string>>({});
+  const [connState, setConnState] = useState<Record<string, string>>({});
   const [tab, setTabState] = useState(tabFromHash);
   const setTab = (id: string) => { setTabState(id); history.replaceState(null, '', `#${id}`) };
   const tabEdits = (id: string) => tabFieldKeys(id).filter(key => current[key] !== value[key]);
+  const tabLed = (id: string) => {
+    const states = connectionsFor(id).map(connection => connState[connection.name]);
+    if (states.includes('fail')) return 'fail';
+    if (states.includes('testing')) return 'testing';
+    if (states.includes('pass')) return 'pass';
+    return '';
+  };
   useEffect(() => {
     const followHash = () => setTabState(tabFromHash());
     window.addEventListener('hashchange', followHash);
@@ -94,26 +113,32 @@ export function Settings({ value, fields, onSaved, onError }: { value: Record<st
     setMessage('');
   }
   async function test(name: string) {
-    setTests({ ...tests, [name]: 'Testing…' });
+    setTests(current => ({ ...current, [name]: 'Testing…' }));
+    setConnState(current => ({ ...current, [name]: 'testing' }));
     try {
       const result = await api.call<{ message: string }>(`/dependencies/${name}/test`, { method: 'POST' });
       setTests(current => ({ ...current, [name]: result.message }));
-    } catch (e) { setTests(current => ({ ...current, [name]: (e as Error).message })) }
+      setConnState(current => ({ ...current, [name]: 'pass' }));
+    } catch (e) {
+      setTests(current => ({ ...current, [name]: (e as Error).message }));
+      setConnState(current => ({ ...current, [name]: 'fail' }));
+    }
   }
   const renderField = ([label, key, type, step]: SettingsRow) => {
     const info = descriptor(key, label);
     return <label><span>{label}{info.restartRequired && <small> restart required</small>}{info.readOnly && <small> environment managed</small>}<button type="button" class="help-button" aria-label={`Help for ${label}`} title={info.help} onClick={() => setHelp(info)}>?</button></span>{type === 'checkbox' ? <input disabled={info.readOnly} type="checkbox" checked={Boolean(current[key])} onInput={e => setCurrent({ ...current, [key]: e.currentTarget.checked })} /> : <input disabled={info.readOnly} type={type || 'text'} step={type === 'number' ? (step || undefined) : undefined} value={Array.isArray(current[key]) ? (current[key] as string[]).join(', ') : String(current[key] ?? '')} placeholder={type === 'password' && value[`${key}Configured`] ? 'Configured — leave blank to keep' : key === 'evictionRules' ? 'oldest-completed' : ''} onInput={e => setCurrent({ ...current, [key]: type === 'number' ? Number(e.currentTarget.value) : e.currentTarget.value })} />}</label>;
   };
+  const diagnostics = (connections: typeof CONNECTIONS) => <section class="diagnostics"><h2>Connection checks</h2>{connections.map(connection => <div><button type="button" onClick={() => void test(connection.name)}>Test {connection.label}</button><span role="status">{tests[connection.name]}</span></div>)}</section>;
   const panelContent = () => {
     if (tab === 'maintenance') return <><CacheCoverage /><Events onError={onError} confirmRebuild /></>;
-    if (tab === 'test') return <section class="diagnostics"><h2>Connections</h2>{TESTABLE_CONNECTIONS.map(name => <div><button type="button" onClick={() => void test(name)}>Test {name}</button><span role="status">{tests[name]}</span></div>)}</section>;
-    return TAB_GROUPS[tab].map(group => <fieldset><legend>{group.title}</legend><div class="fields">{group.fields.map(renderField)}</div></fieldset>);
+    if (tab === 'test') return diagnostics(CONNECTIONS);
+    return <>{TAB_GROUPS[tab].map(group => <fieldset><legend>{group.title}</legend><div class="fields">{group.fields.map(renderField)}</div></fieldset>)}{connectionsFor(tab).length > 0 && diagnostics(connectionsFor(tab))}</>;
   };
   return <>
     <form class="settings" onSubmit={save}>
       <p class="supporting">Stored securely at {String(value.settingsPath || 'data/settings.json')}. Blank secrets keep their current value. Fields supplied by the process environment are shown read-only.</p>
       <div class="settings-tabs" role="tablist" aria-label="Settings sections">
-        {TABS.map(t => <button type="button" role="tab" class={[t.ops ? 'ops' : '', t.id === 'maintenance' ? 'ops-start' : '', tabEdits(t.id).length > 0 ? 'dirty' : ''].filter(Boolean).join(' ')} aria-selected={tab === t.id} onClick={() => setTab(t.id)}>{t.label}</button>)}
+        {TABS.map(t => <button type="button" role="tab" class={[t.ops ? 'ops' : '', t.id === 'maintenance' ? 'ops-start' : '', tabEdits(t.id).length > 0 ? 'dirty' : ''].filter(Boolean).join(' ')} aria-selected={tab === t.id} onClick={() => setTab(t.id)}>{connectionsFor(t.id).length > 0 && <span class={`led ${tabLed(t.id)}`} aria-hidden="true" />}{t.label}</button>)}
       </div>
       <div class="settings-panel" role="tabpanel">{panelContent()}</div>
       {isConfigTab(tab) && <div class="settings-actions"><span class="dirty-count" role="status">{tabEdits(tab).length > 0 ? `${tabEdits(tab).length} unsaved ${tabEdits(tab).length === 1 ? 'change' : 'changes'}` : ''}</span><button type="button" disabled={tabEdits(tab).length === 0} onClick={discard}>Discard changes</button><button class="primary" type="submit" disabled={tabEdits(tab).length === 0}>Save changes</button>{message && <span role="status">{message}</span>}</div>}

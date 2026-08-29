@@ -176,10 +176,47 @@ describe('settings tabs', () => {
   await act(async () => { settingsTabs().find(button => button.textContent === 'Test')!.click() });
   await settle();
   const buttons = Array.from(panel().querySelectorAll<HTMLButtonElement>('button')).filter(button => button.textContent?.startsWith('Test '));
-  expect(buttons.map(button => button.textContent)).toEqual(['Test filelist', 'Test qbittorrent', 'Test storage', 'Test tmdb', 'Test subdl']);
+  expect(buttons.map(button => button.textContent)).toEqual(['Test FileList', 'Test TMDB', 'Test qBittorrent', 'Test Storage', 'Test SubDL']);
   await act(async () => { buttons[4].click() });
   await settle();
   expect(panel().textContent).toContain('/dependencies/subdl/test ok');
+ });
+
+ it('places connection tests beside their fields and aggregates them on the Test tab', async () => {
+  await openSettings();
+  const checkLabels = () => Array.from(panel().querySelectorAll('.diagnostics button')).map(button => button.textContent);
+  expect(checkLabels()).toEqual(['Test FileList', 'Test TMDB']);
+  await act(async () => { settingsTabs()[1].click() });
+  await settle();
+  expect(checkLabels()).toEqual(['Test qBittorrent', 'Test Storage']);
+  await act(async () => { settingsTabs()[2].click() });
+  await settle();
+  expect(checkLabels()).toEqual(['Test SubDL']);
+  await act(async () => { settingsTabs()[5].click() });
+  await settle();
+  expect(checkLabels()).toEqual(['Test FileList', 'Test TMDB', 'Test qBittorrent', 'Test Storage', 'Test SubDL']);
+  await act(async () => { settingsTabs()[4].click() });
+  await settle();
+  expect(panel().querySelectorAll('.diagnostics button')).toHaveLength(0);
+ });
+
+ it('reflects session test results in the tab LED and inline text', async () => {
+  await openSettings();
+  const trackerTab = settingsTabs()[0];
+  const led = () => trackerTab.querySelector('.led')!;
+  expect(led().className).not.toContain('pass');
+  await act(async () => { Array.from(panel().querySelectorAll('.diagnostics button')).find(button => button.textContent === 'Test FileList')!.click() });
+  await settle();
+  expect(led().className).toContain('pass');
+  expect(panel().textContent).toContain('/dependencies/filelist/test ok');
+  vi.spyOn(API.prototype, 'call').mockImplementation(async (path: string, init?: RequestInit) => {
+   if (path === '/dependencies/tmdb/test') throw new Error('TMDB unreachable');
+   return fakeCall(path, init);
+  });
+  await act(async () => { Array.from(panel().querySelectorAll('.diagnostics button')).find(button => button.textContent === 'Test TMDB')!.click() });
+  await settle();
+  expect(led().className).toContain('fail');
+  expect(panel().textContent).toContain('TMDB unreachable');
  });
 
  it('edits subtitle settings in exactly one place', async () => {

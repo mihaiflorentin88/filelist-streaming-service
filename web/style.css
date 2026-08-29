@@ -877,6 +877,45 @@ progress {
  cursor: not-allowed
 }
 
+.settings-tabs .led {
+ display: inline-block;
+ width: 8px;
+ height: 8px;
+ border-radius: 50%;
+ margin-right: 7px;
+ vertical-align: 1px;
+ background: transparent;
+ border: 1.5px solid var(--line)
+}
+
+.settings-tabs .led.pass {
+ background: var(--teal);
+ border-color: var(--teal)
+}
+
+.settings-tabs .led.fail {
+ background: var(--danger);
+ border-color: var(--danger)
+}
+
+.settings-tabs .led.testing {
+ background: var(--amber);
+ border-color: var(--amber);
+ animation: led-pulse 1s ease-in-out infinite
+}
+
+@keyframes led-pulse {
+ 50% {
+  opacity: .35
+ }
+}
+
+@media (prefers-reduced-motion: reduce) {
+ .settings-tabs .led.testing {
+  animation: none
+ }
+}
+
 .video {
  position: fixed;
  inset: 0;
