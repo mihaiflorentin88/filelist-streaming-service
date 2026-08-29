@@ -36,6 +36,7 @@ func New(settings func() (string, string, string)) *Client {
 	jar, _ := cookiejar.New(nil)
 	return &Client{settings: settings, http: &http.Client{Timeout: 45 * time.Second, Jar: jar}}
 }
+
 func (c *Client) login(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -75,6 +76,7 @@ func (c *Client) login(ctx context.Context) error {
 	c.logged = true
 	return nil
 }
+
 func (c *Client) do(ctx context.Context, method, path string, body io.Reader, contentType string) (*http.Response, error) {
 	if err := c.login(ctx); err != nil {
 		return nil, err
@@ -118,6 +120,7 @@ func (c *Client) do(ctx context.Context, method, path string, body io.Reader, co
 	}
 	return outbound.Do(ctx, c.http, makeReq, outbound.Policy{Provider: "qBittorrent", Attempts: 3, MaxInlineDelay: 10 * time.Second})
 }
+
 func (c *Client) Test(ctx context.Context) (string, error) {
 	r, err := c.do(ctx, http.MethodGet, "api/v2/app/version", nil, "")
 	if err != nil {
@@ -130,6 +133,7 @@ func (c *Client) Test(ctx context.Context) (string, error) {
 	}
 	return strings.TrimSpace(string(b)), nil
 }
+
 func (c *Client) Add(ctx context.Context, reader io.Reader, savePath string) (string, error) {
 	data, err := io.ReadAll(io.LimitReader(reader, 16<<20))
 	if err != nil {
@@ -158,7 +162,15 @@ func (c *Client) Add(ctx context.Context, reader io.Reader, savePath string) (st
 	defer r.Body.Close()
 	result, _ := io.ReadAll(io.LimitReader(r.Body, 1024))
 	if !addAccepted(r.StatusCode, result) {
-		if r.StatusCode/100 == 2 && strings.Contains(strings.ToLower(string(result)), "fail") {
+		// Two rejection shapes mean "this torrent is already in the list":
+		// a 2xx body containing "Fails." (older qBittorrent) and HTTP 409
+		// Conflict (qBittorrent >= 4.4, including the 5.x nox image). The
+		// existing torrent is exactly the one wanted, so confirming it via
+		// Status turns a re-add into an idempotent success instead of a
+		// failed playback on every container restart.
+		duplicate := r.StatusCode == http.StatusConflict ||
+			(r.StatusCode/100 == 2 && strings.Contains(strings.ToLower(string(result)), "fail"))
+		if duplicate {
 			if _, statusErr := c.Status(ctx, hash); statusErr == nil {
 				return hash, nil
 			}
@@ -171,6 +183,7 @@ func (c *Client) Add(ctx context.Context, reader io.Reader, savePath string) (st
 func addAccepted(status int, body []byte) bool {
 	return status/100 == 2 && !strings.Contains(strings.ToLower(string(body)), "fail")
 }
+
 func (c *Client) Files(ctx context.Context, hash string) ([]domain.TorrentFile, error) {
 	var rows []map[string]any
 	if err := c.getJSON(ctx, "api/v2/torrents/files?hash="+url.QueryEscape(hash), &rows); err != nil {
@@ -190,6 +203,7 @@ func (c *Client) Files(ctx context.Context, hash string) ([]domain.TorrentFile, 
 	}
 	return out, nil
 }
+
 func (c *Client) Status(ctx context.Context, hash string) (domain.DownloadStatus, error) {
 	var rows []map[string]any
 	if err := c.getJSON(ctx, "api/v2/torrents/info?hashes="+url.QueryEscape(hash), &rows); err != nil {
@@ -233,6 +247,7 @@ func (c *Client) Status(ctx context.Context, hash string) (domain.DownloadStatus
 	}
 	return d, nil
 }
+
 func (c *Client) Pieces(ctx context.Context, hash string) (domain.PieceMap, error) {
 	var states []int
 	if err := c.getJSON(ctx, "api/v2/torrents/pieceStates?hash="+url.QueryEscape(hash), &states); err != nil {
@@ -250,6 +265,7 @@ func (c *Client) properties(ctx context.Context, hash string) (map[string]any, e
 	err := c.getJSON(ctx, "api/v2/torrents/properties?hash="+url.QueryEscape(hash), &result)
 	return result, err
 }
+
 func (c *Client) PrepareFile(ctx context.Context, hash string, index int, subtitleIndices []int) error {
 	return c.PrepareFiles(ctx, hash, []int{index}, subtitleIndices)
 }
@@ -351,15 +367,19 @@ func (c *Client) PrepareFiles(ctx context.Context, hash string, indices []int, s
 	c.ready.Store(hash, struct{}{})
 	return nil
 }
+
 func (c *Client) Pause(ctx context.Context, hash string) error {
 	return c.command(ctx, "pause", url.Values{"hashes": {hash}})
 }
+
 func (c *Client) Resume(ctx context.Context, hash string) error {
 	return c.command(ctx, "resume", url.Values{"hashes": {hash}})
 }
+
 func (c *Client) Remove(ctx context.Context, hash string, deleteFiles bool) error {
 	return c.command(ctx, "delete", url.Values{"hashes": {hash}, "deleteFiles": {strconv.FormatBool(deleteFiles)}})
 }
+
 func (c *Client) command(ctx context.Context, path string, v url.Values) error {
 	r, err := c.do(ctx, http.MethodPost, "api/v2/torrents/"+path, strings.NewReader(v.Encode()), "application/x-www-form-urlencoded")
 	if err != nil {
@@ -371,6 +391,7 @@ func (c *Client) command(ctx context.Context, path string, v url.Values) error {
 	}
 	return nil
 }
+
 func (c *Client) getJSON(ctx context.Context, path string, out any) error {
 	r, err := c.do(ctx, http.MethodGet, path, nil, "")
 	if err != nil {
@@ -382,6 +403,7 @@ func (c *Client) getJSON(ctx context.Context, path string, out any) error {
 	}
 	return json.NewDecoder(io.LimitReader(r.Body, 8<<20)).Decode(out)
 }
+
 func s(m map[string]any, k string) string {
 	if v, ok := m[k].(string); ok {
 		return v
@@ -411,6 +433,7 @@ func playable(p string) bool {
 	}
 	return false
 }
+
 func infoHash(b []byte) (string, error) {
 	start, end, err := findInfo(b)
 	if err != nil {
@@ -419,6 +442,7 @@ func infoHash(b []byte) (string, error) {
 	sum := sha1.Sum(b[start:end])
 	return hex.EncodeToString(sum[:]), nil
 }
+
 func findInfo(b []byte) (int, int, error) {
 	if len(b) == 0 || b[0] != 'd' {
 		return 0, 0, fmt.Errorf("invalid torrent metadata")
@@ -441,6 +465,7 @@ func findInfo(b []byte) (int, int, error) {
 	}
 	return 0, 0, fmt.Errorf("torrent info dictionary missing")
 }
+
 func scanString(b []byte, i int) (int, int, int, error) {
 	colon := bytes.IndexByte(b[i:], ':')
 	if colon < 0 {
@@ -453,6 +478,7 @@ func scanString(b []byte, i int) (int, int, int, error) {
 	}
 	return colon + 1, colon + 1 + n, colon + 1 + n, nil
 }
+
 func scanValue(b []byte, i int) (int, error) {
 	if i >= len(b) {
 		return 0, fmt.Errorf("unexpected bencode end")

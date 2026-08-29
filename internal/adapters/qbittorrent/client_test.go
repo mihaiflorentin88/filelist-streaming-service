@@ -278,3 +278,36 @@ func TestAddReusesExistingTorrentAfterDuplicateResponse(t *testing.T) {
 		t.Fatalf("unexpected hash %q", hash)
 	}
 }
+
+func TestAddReusesExistingTorrentAfter409Conflict(t *testing.T) {
+	// qBittorrent >= 4.4 answers a duplicate add with 409 Conflict instead of
+	// a 2xx "Fails." body; the Docker nox image (5.x) always takes this path.
+	torrent := []byte("d8:announce13:https://test/4:infod6:lengthi5e4:name9:video.mp412:piece lengthi4e6:pieces20:aaaaaaaaaaaaaaaaaaaaee")
+	client := New(func() (string, string, string) { return "http://qb.test", "user", "password" })
+	client.http.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		body := "{}"
+		status := http.StatusOK
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			body = "Ok."
+		case "/api/v2/torrents/add":
+			status = http.StatusConflict
+			body = "Torrent is already downloaded."
+		case "/api/v2/torrents/info":
+			body = `[{"hash":"52e0ec3afc6723a6be6a2dad955dc4027babc55c","state":"uploading","total_size":5,"amount_left":0,"save_path":"/srv/downloads"}]`
+		case "/api/v2/torrents/properties":
+			body = `{"piece_size":4}`
+		case "/api/v2/torrents/trackers":
+			body = `[]`
+		}
+		return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+	})
+
+	hash, err := client.Add(t.Context(), strings.NewReader(string(torrent)), "/srv/downloads")
+	if err != nil {
+		t.Fatalf("duplicate 409 add should reuse the existing torrent: %v", err)
+	}
+	if hash != "52e0ec3afc6723a6be6a2dad955dc4027babc55c" {
+		t.Fatalf("unexpected hash %q", hash)
+	}
+}
