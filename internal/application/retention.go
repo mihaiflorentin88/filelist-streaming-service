@@ -1,6 +1,7 @@
 package application
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"sort"
@@ -21,12 +22,18 @@ func gigabytesToBytes(gb float64) int64 {
 }
 
 // retentionRoute is one Engine route — a torrent — plus every Managed download
-// row pinned to it. Season-pack siblings share a route and die together.
+// row pinned to it. Season-pack siblings share a route and die together. The
+// household fields are resolved once per survey from the persisted favorites
+// and playback state, and feed the protection toggles and the recency and
+// watched ordering rules.
 type retentionRoute struct {
-	engineID string
-	hash     string
-	rows     []domain.Download
-	status   domain.DownloadStatus
+	engineID   string
+	hash       string
+	rows       []domain.Download
+	status     domain.DownloadStatus
+	favorite   bool
+	watched    bool
+	lastPlayed time.Time
 }
 
 // completedAt stands in for a completion timestamp: the oldest row timestamp
@@ -41,32 +48,112 @@ func (r retentionRoute) completedAt() time.Time {
 	return oldest
 }
 
-// retentionProtected is the eviction protection predicate (ADR-0004 defaults):
-// incomplete torrents and actively-streamed (leased) downloads are never
-// chosen. Ticket #49 turns these defaults into user toggles by extending this
-// predicate, never the engine loop.
-func retentionProtected(route retentionRoute) bool {
+// retentionProtected is the eviction protection predicate, driven by the user
+// toggles of the current run's settings snapshot (ADR-0004): incomplete and
+// actively-streamed (leased) downloads default to protected, favorites and
+// never-watched media are opt-in.
+func retentionProtected(route retentionRoute, settings config.Settings) bool {
+	if settings.ProtectIncomplete && routeIncomplete(route) {
+		return true
+	}
+	if settings.ProtectLeased && routeLeased(route) {
+		return true
+	}
+	if settings.ProtectFavorites && route.favorite {
+		return true
+	}
+	if settings.ProtectNeverWatched && !route.watched {
+		return true
+	}
+	return false
+}
+
+// routeIncomplete reports whether the torrent or any pinned row is still
+// downloading.
+func routeIncomplete(route retentionRoute) bool {
 	if route.status.Progress < 1 {
 		return true
 	}
 	for _, row := range route.rows {
-		if row.Leased || row.Progress < 1 {
+		if row.Progress < 1 {
 			return true
 		}
 	}
 	return false
 }
 
-// oldestCompletedFirst orders candidates for eviction, oldest completed first
-// (ADR-0004 default rule). Ticket #49 replaces this ordering with a
-// user-composed rule list; swap this function, not the engine loop.
-func oldestCompletedFirst(candidates []retentionRoute) {
+// routeLeased reports whether any pinned row is being actively streamed.
+func routeLeased(route retentionRoute) bool {
+	for _, row := range route.rows {
+		if row.Leased {
+			return true
+		}
+	}
+	return false
+}
+
+// applyEvictionRules orders candidates for eviction by walking the composed
+// rule list in order (ADR-0004): each rule compares the whole pair, and the
+// first distinguishing rule wins. Routes every rule ties on break to the
+// oldest completed download, then EngineID — the historical default.
+func applyEvictionRules(candidates []retentionRoute, rules []string) {
 	sort.Slice(candidates, func(i, j int) bool {
-		if !candidates[i].completedAt().Equal(candidates[j].completedAt()) {
-			return candidates[i].completedAt().Before(candidates[j].completedAt())
+		for _, rule := range rules {
+			if c := compareEvictionRule(rule, candidates[i], candidates[j]); c != 0 {
+				return c < 0
+			}
+		}
+		if c := candidates[i].completedAt().Compare(candidates[j].completedAt()); c != 0 {
+			return c < 0
 		}
 		return candidates[i].engineID < candidates[j].engineID
 	})
+}
+
+// compareEvictionRule ranks two routes under one rule atom; negative means a
+// is evicted first. Recency atoms use the household playback timestamp and
+// stand in the download's oldest row timestamp for never-played routes.
+func compareEvictionRule(rule string, a, b retentionRoute) int {
+	switch rule {
+	case "newest-completed":
+		return b.completedAt().Compare(a.completedAt())
+	case "least-recently-played":
+		return a.lastActivity().Compare(b.lastActivity())
+	case "most-recently-played":
+		return b.lastActivity().Compare(a.lastActivity())
+	case "watched-first":
+		return boolFirst(a.watched, b.watched)
+	case "never-watched-first":
+		return boolFirst(!a.watched, !b.watched)
+	case "largest":
+		return cmp.Compare(b.status.TotalBytes, a.status.TotalBytes)
+	case "smallest":
+		return cmp.Compare(a.status.TotalBytes, b.status.TotalBytes)
+	default: // oldest-completed, and anything unrecognized stays safe
+		return a.completedAt().Compare(b.completedAt())
+	}
+}
+
+// boolFirst orders true before false.
+func boolFirst(a, b bool) int {
+	switch {
+	case a == b:
+		return 0
+	case a:
+		return -1
+	default:
+		return 1
+	}
+}
+
+// lastActivity is the recency timestamp for the played-first rules: the
+// household playback time when the route was last played, otherwise the
+// download's oldest row timestamp so never-played media competes by its age.
+func (r retentionRoute) lastActivity() time.Time {
+	if !r.lastPlayed.IsZero() {
+		return r.lastPlayed
+	}
+	return r.completedAt()
 }
 
 // retentionPlan is one evaluation pass over live engine telemetry.
@@ -97,6 +184,10 @@ func (s *Service) retentionSurvey(ctx context.Context) (retentionPlan, error) {
 		}
 		byRoute[row.EngineID] = append(byRoute[row.EngineID], row)
 	}
+	household, err := s.retentionHousehold(ctx, managed)
+	if err != nil {
+		return retentionPlan{}, err
+	}
 	plan := retentionPlan{}
 	for _, engineID := range order {
 		hash, _ := engineHash(engineID)
@@ -104,11 +195,89 @@ func (s *Service) retentionSurvey(ctx context.Context) (retentionPlan, error) {
 		if statusErr != nil {
 			continue
 		}
-		plan.routes = append(plan.routes, retentionRoute{engineID: engineID, hash: hash, rows: byRoute[engineID], status: status})
+		favorite, watched, lastPlayed := household.routeFacts(byRoute[engineID])
+		plan.routes = append(plan.routes, retentionRoute{engineID: engineID, hash: hash, rows: byRoute[engineID], status: status, favorite: favorite, watched: watched, lastPlayed: lastPlayed})
 		plan.storedBytes += status.TotalBytes
 	}
 	plan.freeBytes, plan.freeErr = s.freeSpace(s.settings.Get().DownloadRoot)
 	return plan, nil
+}
+
+// retentionHousehold resolves the Household facts the eviction rules consume:
+// the favorite title set and the latest playback state per canonical title.
+// Matching is title-level — the same aggregation the household screens use —
+// so a re-downloaded title keeps its watched and favorite status.
+type retentionHousehold struct {
+	favoriteTitles map[string]bool
+	latestByTitle  map[string]domain.PlaybackState
+	titleByRelease map[string]string
+}
+
+func (s *Service) retentionHousehold(ctx context.Context, managed []domain.Download) (retentionHousehold, error) {
+	h := retentionHousehold{favoriteTitles: map[string]bool{}, latestByTitle: map[string]domain.PlaybackState{}, titleByRelease: map[string]string{}}
+	releaseIDs := make([]string, 0, len(managed))
+	seen := map[string]bool{}
+	for _, row := range managed {
+		if row.ReleaseID == "" || seen[row.ReleaseID] {
+			continue
+		}
+		seen[row.ReleaseID] = true
+		releaseIDs = append(releaseIDs, row.ReleaseID)
+	}
+	titles, err := s.repo.CatalogTitleIDsForReleases(ctx, releaseIDs)
+	if err != nil {
+		return h, err
+	}
+	h.titleByRelease = titles
+	favorites, err := s.repo.ListFavorites(ctx, householdProfile)
+	if err != nil {
+		return h, err
+	}
+	for _, favorite := range favorites {
+		h.favoriteTitles[favorite.TitleID] = true
+	}
+	playback, err := s.repo.ListPlayback(ctx, householdProfile)
+	if err != nil {
+		return h, err
+	}
+	for _, p := range playback {
+		titleID := h.titleByRelease[p.ReleaseID]
+		if titleID == "" {
+			continue
+		}
+		if latest, ok := h.latestByTitle[titleID]; !ok || p.UpdatedAt.After(latest.UpdatedAt) {
+			h.latestByTitle[titleID] = p
+		}
+	}
+	return h, nil
+}
+
+// routeFacts projects the household state onto one Engine route: the route is
+// favorited when any pinned row's canonical title is a household favorite,
+// watched when the title's latest playback is watched, and its lastPlayed is
+// the latest playback timestamp across the route's titles (zero when the
+// household never played them).
+func (h retentionHousehold) routeFacts(rows []domain.Download) (favorite, watched bool, lastPlayed time.Time) {
+	for _, row := range rows {
+		titleID := h.titleByRelease[row.ReleaseID]
+		if titleID == "" {
+			continue
+		}
+		if h.favoriteTitles[titleID] {
+			favorite = true
+		}
+		playback, ok := h.latestByTitle[titleID]
+		if !ok {
+			continue
+		}
+		if playback.Watched {
+			watched = true
+		}
+		if lastPlayed.IsZero() || playback.UpdatedAt.After(lastPlayed) {
+			lastPlayed = playback.UpdatedAt
+		}
+	}
+	return favorite, watched, lastPlayed
 }
 
 // retentionDeficit reports which check tripped and how many bytes must go.
@@ -128,23 +297,23 @@ func retentionDeficit(plan retentionPlan, settings config.Settings) (string, int
 	return "", 0, false
 }
 
-// evictOldest removes one unprotected torrent from the surveyed plan —
-// oldest completed first (ADR-0004) — through the same delete path as the
-// manual remove action, and announces it on the live feed. It reports false
-// when storage holds no evictable torrent. The retention job and the
-// download admission gate (starvation path) share this hook; the protection
-// predicate and ordering live only here.
-func (s *Service) evictOldest(ctx context.Context, plan retentionPlan, reason string) (retentionRoute, bool, error) {
+// evictOldest removes one unprotected torrent from the surveyed plan — the
+// first candidate under the run's configured rule list (ADR-0004) — through
+// the same delete path as the manual remove action, and announces it on the
+// live feed. It reports false when storage holds no evictable torrent. The
+// retention job and the download admission gate (starvation path) share this
+// hook; the protection predicate and ordering live only here.
+func (s *Service) evictOldest(ctx context.Context, plan retentionPlan, reason string, settings config.Settings, rules []string) (retentionRoute, bool, error) {
 	candidates := make([]retentionRoute, 0, len(plan.routes))
 	for _, route := range plan.routes {
-		if !retentionProtected(route) {
+		if !retentionProtected(route, settings) {
 			candidates = append(candidates, route)
 		}
 	}
 	if len(candidates) == 0 {
 		return retentionRoute{}, false, nil
 	}
-	oldestCompletedFirst(candidates)
+	applyEvictionRules(candidates, rules)
 	victim := candidates[0]
 	if err := s.removeTorrent(ctx, victim.engineID); err != nil {
 		return retentionRoute{}, false, err
@@ -180,6 +349,7 @@ func (s *Service) RunRetention() (domain.Job, error) {
 func (s *Service) runRetention(job domain.Job) {
 	ctx := context.Background()
 	settings := s.settings.Get()
+	rules := config.NormalizeEvictionRules(settings.EvictionRules)
 	job.State = "running"
 	job.Progress = .05
 	job.UpdatedAt = time.Now().UTC()
@@ -201,7 +371,7 @@ func (s *Service) runRetention(job domain.Job) {
 		if !tripped {
 			break
 		}
-		victim, removed, err := s.evictOldest(ctx, plan, reason)
+		victim, removed, err := s.evictOldest(ctx, plan, reason, settings, rules)
 		if err != nil {
 			s.failOrWait(&job, err, retentionKind)
 			break

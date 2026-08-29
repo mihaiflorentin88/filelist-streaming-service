@@ -149,3 +149,182 @@ func TestAllocationAndReserveRangeValidation(t *testing.T) {
 		}
 	}
 }
+
+func writeSettingsFile(t *testing.T, payload map[string]any) {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv(EnvironmentPrefix+"SETTINGS_PATH", filepath.Join(dir, "settings.json"))
+	t.Setenv(EnvironmentPrefix+"DATABASE_PATH", filepath.Join(dir, "eviction.db"))
+	b, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func fileWithoutEvictionKeys(t *testing.T) map[string]any {
+	t.Helper()
+	b, err := json.Marshal(Defaults())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(b, &payload); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"evictionRules", "protectIncomplete", "protectLeased", "protectFavorites", "protectNeverWatched"} {
+		delete(payload, key)
+	}
+	return payload
+}
+
+func TestEvictionDefaultsApplyWhenKeysAreAbsent(t *testing.T) {
+	writeSettingsFile(t, fileWithoutEvictionKeys(t))
+	store, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := store.Get()
+	if len(got.EvictionRules) != 1 || got.EvictionRules[0] != "oldest-completed" {
+		t.Fatalf("absent evictionRules did not default to oldest-completed: %v", got.EvictionRules)
+	}
+	if !got.ProtectIncomplete || !got.ProtectLeased || got.ProtectFavorites || got.ProtectNeverWatched {
+		t.Fatalf("absent protection toggles did not default to true/true/false/false: %#v", got)
+	}
+}
+
+func TestEvictionFileValuesAreHonored(t *testing.T) {
+	payload := fileWithoutEvictionKeys(t)
+	payload["evictionRules"] = []any{"Largest", "watched-first"}
+	payload["protectIncomplete"] = false
+	payload["protectFavorites"] = true
+	writeSettingsFile(t, payload)
+	store, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := store.Get()
+	if len(got.EvictionRules) != 2 || got.EvictionRules[0] != "Largest" || got.EvictionRules[1] != "watched-first" {
+		t.Fatalf("explicit evictionRules were lost: %v", got.EvictionRules)
+	}
+	if got.ProtectIncomplete {
+		t.Fatal("an explicitly false protectIncomplete was overridden by the default")
+	}
+	if !got.ProtectFavorites {
+		t.Fatal("an explicitly true protectFavorites was lost")
+	}
+}
+
+func TestEvictionRulesValidationRejectsUnknownAtoms(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(EnvironmentPrefix+"SETTINGS_PATH", filepath.Join(dir, "settings.json"))
+	t.Setenv(EnvironmentPrefix+"DATABASE_PATH", filepath.Join(dir, "eviction.db"))
+	store, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := store.Get()
+	next.EvictionRules = []string{"largest", "shiniest"}
+	if err := store.Save(next); err == nil {
+		t.Fatal("an unknown eviction atom was accepted")
+	} else if !strings.Contains(err.Error(), "evictionRules") || !strings.Contains(err.Error(), "shiniest") {
+		t.Fatalf("validation error did not name the field and atom: %v", err)
+	}
+	next.EvictionRules = []string{" Oldest-Completed ", "NEWEST-COMPLETED", "least-recently-played", "most-recently-played", "watched-first", "never-watched-first", "largest", "smallest"}
+	if err := store.Save(next); err != nil {
+		t.Fatalf("valid atoms were rejected: %v", err)
+	}
+	next.EvictionRules = nil
+	if err := store.Save(next); err != nil {
+		t.Fatalf("an empty rule list must stay saveable: %v", err)
+	}
+}
+
+func TestProtectionTogglesPersist(t *testing.T) {
+	dir := t.TempDir()
+	settingsPath := filepath.Join(dir, "settings.json")
+	t.Setenv(EnvironmentPrefix+"SETTINGS_PATH", settingsPath)
+	t.Setenv(EnvironmentPrefix+"DATABASE_PATH", filepath.Join(dir, "eviction.db"))
+	store, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := store.Get()
+	next.ProtectIncomplete = false
+	next.ProtectLeased = false
+	next.ProtectFavorites = true
+	next.ProtectNeverWatched = true
+	if err := store.Save(next); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := reloaded.Get(); got.ProtectIncomplete || got.ProtectLeased || !got.ProtectFavorites || !got.ProtectNeverWatched {
+		t.Fatalf("protection toggles did not persist: %#v", got)
+	}
+}
+
+func TestEvictionEnvironmentOverrides(t *testing.T) {
+	dir := t.TempDir()
+	settingsPath := filepath.Join(dir, "settings.json")
+	t.Setenv(EnvironmentPrefix+"SETTINGS_PATH", settingsPath)
+	t.Setenv(EnvironmentPrefix+"DATABASE_PATH", filepath.Join(dir, "eviction.db"))
+	if err := os.WriteFile(settingsPath, func() []byte { b, _ := json.Marshal(Defaults()); return b }(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(EnvironmentPrefix+"EVICTION_RULES", "newest-completed,largest")
+	t.Setenv(EnvironmentPrefix+"PROTECT_FAVORITES", "true")
+	store, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := store.Get()
+	if len(got.EvictionRules) != 2 || got.EvictionRules[0] != "newest-completed" || got.EvictionRules[1] != "largest" {
+		t.Fatalf("environment eviction rules were not applied: %v", got.EvictionRules)
+	}
+	if !got.ProtectFavorites {
+		t.Fatal("environment protectFavorites override was not applied")
+	}
+	if !store.EnvironmentManaged("evictionRules") || !store.EnvironmentManaged("protectFavorites") {
+		t.Fatal("eviction settings were not reported environment-managed")
+	}
+	next := store.Get()
+	next.ProtectFavorites = false
+	if err := store.Save(next); err != nil {
+		t.Fatal(err)
+	}
+	if store.Get().ProtectFavorites != true {
+		t.Fatal("an environment-managed protection toggle was overwritten")
+	}
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "newest-completed") {
+		t.Fatalf("environment eviction rules leaked into persisted settings: %s", data)
+	}
+}
+
+func TestNormalizeEvictionRulesFallsBackToOldestCompleted(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		input []string
+		want  []string
+	}{{"nil falls back", nil, []string{"oldest-completed"}}, {"empty falls back", []string{}, []string{"oldest-completed"}}, {"blank entries fall back", []string{"  ", ""}, []string{"oldest-completed"}}, {"trims and lowercases", []string{" Largest ", "SMALLEST"}, []string{"largest", "smallest"}}, {"keeps known atoms", []string{"watched-first", "never-watched-first"}, []string{"watched-first", "never-watched-first"}}, {"passes unknown through", []string{"shiniest"}, []string{"shiniest"}}, {"mixed blank and known", []string{"", "  ", "oldest-completed"}, []string{"oldest-completed"}}} {
+		got := NormalizeEvictionRules(tt.input)
+		if len(got) != len(tt.want) {
+			t.Errorf("%s: NormalizeEvictionRules = %v, want %v", tt.name, got, tt.want)
+			continue
+		}
+		for i := range tt.want {
+			if got[i] != tt.want[i] {
+				t.Errorf("%s: NormalizeEvictionRules = %v, want %v", tt.name, got, tt.want)
+				break
+			}
+		}
+	}
+}

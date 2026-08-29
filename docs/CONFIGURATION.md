@@ -26,8 +26,8 @@ The sanitized qBittorrent template enables its incomplete directory, disables pr
 | Initial buffer | 128 MiB |
 | Read-ahead | 256 MiB |
 | Piece wait timeout | 600 seconds |
-| Managed download allocation (GB; reserved; not yet enforced) | 15 |
-| Free-space reserve (GB; reserved; not yet enforced) | 8 |
+| Managed download allocation (GB) | 15 |
+| Free-space reserve (GB) | 8 |
 | Catalog maximum age | 24 hours |
 | Watched threshold | 90% |
 | Preferred audio language | `en` |
@@ -41,7 +41,7 @@ The sanitized qBittorrent template enables its incomplete directory, disables pr
 | FileList concurrent requests | 1 |
 | Title refresh active timeout | 30 minutes |
 
-Buffer values are limited to 2 GiB. Allocation and free-space reserve are configured in binary gigabytes (GiB) and accept fractional values; 0 disables each check. An hourly retention job enforces them: it evicts oldest-completed torrents first, one at a time through the manual-delete path (season-pack siblings included), never touches incomplete or actively-streamed downloads, and publishes a `downloads.evicted` event (reason `cap` or `reserve`) for each eviction.
+Buffer values are limited to 2 GiB. Allocation and free-space reserve are configured in binary gigabytes (GiB) and accept fractional values; 0 disables each check. An hourly retention job enforces them: it evicts one torrent at a time through the manual-delete path (season-pack siblings included) until the allocation holds and the reserve is met, then publishes a `downloads.evicted` event (reason `cap` or `reserve`) for each eviction. Eviction order follows the configured rule list (`evictionRules`; default `oldest-completed`; atoms: `oldest-completed`, `newest-completed`, `least-recently-played`, `most-recently-played`, `watched-first`, `never-watched-first`, `largest`, `smallest`). Protection toggles (`protectIncomplete`, `protectLeased`, `protectFavorites`, `protectNeverWatched`) default to on/on/off/off. Downloads that cannot fit after evicting everything unprotected are refused. Browser settings expose the rules and toggles; every key also works as an environment variable (`FILELIST_STREAMING_EVICTION_RULES`, `FILELIST_STREAMING_PROTECT_INCOMPLETE`, `FILELIST_STREAMING_PROTECT_LEASED`, `FILELIST_STREAMING_PROTECT_FAVORITES`, `FILELIST_STREAMING_PROTECT_NEVER_WATCHED`).
 
 The global job limit and title-refresh timeout are browser-configurable and require a service restart. Queue and rate-limit waiting do not consume the title-refresh execution timeout. FileList stays serialized even when metadata jobs use the other worker slots.
 

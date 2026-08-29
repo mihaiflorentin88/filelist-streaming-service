@@ -830,8 +830,9 @@ func (s *Service) ensureAllocationRoom(ctx context.Context, release domain.Torre
 	}
 	plan.storedBytes += incoming
 	reason, _, tripped := retentionDeficit(plan, settings)
+	rules := config.NormalizeEvictionRules(settings.EvictionRules)
 	for tripped && reason == "cap" {
-		_, evicted, evictErr := s.evictOldest(ctx, plan, reason)
+		_, evicted, evictErr := s.evictOldest(ctx, plan, reason, settings, rules)
 		if evictErr != nil {
 			return evictErr
 		}

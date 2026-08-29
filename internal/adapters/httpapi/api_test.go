@@ -329,3 +329,90 @@ func TestSettingsSchemaListsRetentionFields(t *testing.T) {
 		}
 	}
 }
+
+// — Ticket #49: eviction rules and protection toggles round-trip through the
+// settings API; unknown atoms fail validation; the schema describes the new
+// fields for the browser and keeps them off the TV.
+
+func TestSettingsRoundTripEvictionRulesAndProtections(t *testing.T) {
+	handler := newStubHandler(t, nil)
+	current := getSettingsBody(t, handler)
+	if saved, ok := current["protectIncomplete"].(bool); !ok || !saved {
+		t.Fatalf("protectIncomplete default = %v, want true", current["protectIncomplete"])
+	}
+	if rules, ok := current["evictionRules"].([]any); !ok || len(rules) != 1 || rules[0] != "oldest-completed" {
+		t.Fatalf("evictionRules default = %v, want [oldest-completed]", current["evictionRules"])
+	}
+
+	current = getSettingsBody(t, handler)
+	current["evictionRules"] = []any{"newest-completed", "largest"}
+	current["protectIncomplete"] = false
+	current["protectFavorites"] = true
+	if rec := putSettingsBody(t, handler, current); rec.Code != http.StatusOK {
+		t.Fatalf("PUT /api/v1/settings status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	saved := getSettingsBody(t, handler)
+	if rules, ok := saved["evictionRules"].([]any); !ok || len(rules) != 2 || rules[0] != "newest-completed" || rules[1] != "largest" {
+		t.Fatalf("GET lost the persisted eviction rules: %v", saved["evictionRules"])
+	}
+	if saved["protectIncomplete"] != false || saved["protectFavorites"] != true {
+		t.Fatalf("GET lost the persisted protection toggles: %v/%v", saved["protectIncomplete"], saved["protectFavorites"])
+	}
+
+	current = getSettingsBody(t, handler)
+	current["evictionRules"] = []any{"largest", "shiniest"}
+	rec := putSettingsBody(t, handler, current)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("unknown eviction atom status = %d, want 400", rec.Code)
+	}
+	var problemBody struct {
+		Detail string `json:"detail"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &problemBody); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(problemBody.Detail, "evictionRules") || !strings.Contains(problemBody.Detail, "shiniest") {
+		t.Fatalf("validation problem did not name the field and atom: %s", problemBody.Detail)
+	}
+}
+
+func TestSettingsSchemaDescribesEvictionFieldsForBrowserOnly(t *testing.T) {
+	handler := newStubHandler(t, nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/settings/schema", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/v1/settings/schema status = %d", rec.Code)
+	}
+	var page struct {
+		Items []struct {
+			Key       string `json:"key"`
+			Help      string `json:"help"`
+			TVVisible bool   `json:"tvVisible"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	help := map[string]string{}
+	tvVisible := map[string]bool{}
+	for _, item := range page.Items {
+		help[item.Key] = item.Help
+		tvVisible[item.Key] = item.TVVisible
+	}
+	for _, key := range []string{"evictionRules", "protectIncomplete", "protectLeased", "protectFavorites", "protectNeverWatched"} {
+		if _, ok := help[key]; !ok {
+			t.Fatalf("settings schema lost %s", key)
+		}
+		if tvVisible[key] {
+			t.Errorf("%s must stay off the TV settings screen", key)
+		}
+	}
+	for _, atom := range []string{"oldest-completed", "newest-completed", "least-recently-played", "most-recently-played", "watched-first", "never-watched-first", "largest", "smallest"} {
+		if !strings.Contains(help["evictionRules"], atom) {
+			t.Errorf("evictionRules help does not mention %q: %s", atom, help["evictionRules"])
+		}
+	}
+	if !strings.Contains(help["protectNeverWatched"], "never") {
+		t.Errorf("protectNeverWatched help is missing its meaning: %s", help["protectNeverWatched"])
+	}
+}

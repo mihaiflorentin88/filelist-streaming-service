@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -39,6 +40,11 @@ type Settings struct {
 	CatalogMaxAgeHours         int      `json:"catalogMaxAgeHours"`
 	AllocationGB               float64  `json:"allocationGb"`
 	ReserveGB                  float64  `json:"reserveGb"`
+	EvictionRules              []string `json:"evictionRules"`
+	ProtectIncomplete          bool     `json:"protectIncomplete"`
+	ProtectLeased              bool     `json:"protectLeased"`
+	ProtectFavorites           bool     `json:"protectFavorites"`
+	ProtectNeverWatched        bool     `json:"protectNeverWatched"`
 	PreferredSubtitleLanguage  string   `json:"preferredSubtitleLanguage"`
 	FallbackSubtitleLanguage   string   `json:"fallbackSubtitleLanguage"`
 	PreferredAudioLanguage     string   `json:"preferredAudioLanguage"`
@@ -64,7 +70,7 @@ func Defaults() Settings {
 		ListenAddress: ":8097", TrustedCIDRs: []string{"127.0.0.0/8", "::1/128", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"}, DatabasePath: "data/filelist.db",
 		DownloadRoot: "/srv/filelist-downloads", FileListURL: "https://filelist.io", QBittorrentURL: "http://127.0.0.1:8080",
 		InitialBufferBytes: 128 << 20, ReadAheadBytes: 256 << 20, PieceWaitTimeoutSeconds: 600, StreamStartBytes: 2 << 20, CatalogMaxAgeHours: 24,
-		AllocationGB: 15, ReserveGB: 8, PreferredSubtitleLanguage: "ro", FallbackSubtitleLanguage: "en", PreferredAudioLanguage: "en",
+		AllocationGB: 15, ReserveGB: 8, EvictionRules: []string{"oldest-completed"}, ProtectIncomplete: true, ProtectLeased: true, PreferredSubtitleLanguage: "ro", FallbackSubtitleLanguage: "en", PreferredAudioLanguage: "en",
 		MetadataLanguage: "ro-RO", MetadataFallbackLanguage: "en-US", ArtworkCachePath: "data/artwork", ArtworkCacheMaxBytes: 512 << 20,
 		SubDLURL: "https://api.subdl.com", MaxConcurrentJobs: 10, TitleRefreshTimeoutMinutes: 30,
 		SubtitleCachePath: "data/subtitles", SubtitleCacheMaxBytes: 256 << 20,
@@ -101,6 +107,21 @@ func Load() (*Store, error) {
 		}
 		if base.PreferredAudioLanguage == "" {
 			base.PreferredAudioLanguage = "en"
+		}
+		// Eviction keys postdate older settings files; seed their defaults only
+		// when a key is absent so an explicit false or empty list is honored.
+		var present map[string]json.RawMessage
+		if err := json.Unmarshal(b, &present); err != nil {
+			return nil, fmt.Errorf("decode settings: %w", err)
+		}
+		if _, ok := present["evictionRules"]; !ok {
+			base.EvictionRules = []string{"oldest-completed"}
+		}
+		if _, ok := present["protectIncomplete"]; !ok {
+			base.ProtectIncomplete = true
+		}
+		if _, ok := present["protectLeased"]; !ok {
+			base.ProtectLeased = true
 		}
 		if base.MetadataLanguage == "" {
 			base.MetadataLanguage = "ro-RO"
@@ -262,6 +283,11 @@ func (s *Store) validate(v Settings) error {
 			return fmt.Errorf("invalid trusted CIDR %q", raw)
 		}
 	}
+	for _, rule := range v.EvictionRules {
+		if !ValidEvictionRule(rule) {
+			return fmt.Errorf("evictionRules contains unknown rule %q; valid rules are %s", strings.TrimSpace(rule), strings.Join(EvictionRuleAtoms, ", "))
+		}
+	}
 	return nil
 }
 
@@ -270,6 +296,33 @@ func validateRetentionGB(key string, value float64) error {
 		return fmt.Errorf("%s must be 0 or between 0.1 and 100000 GB", key)
 	}
 	return nil
+}
+
+// EvictionRuleAtoms are the valid evictionRules atoms in canonical spelling.
+var EvictionRuleAtoms = []string{"oldest-completed", "newest-completed", "least-recently-played", "most-recently-played", "watched-first", "never-watched-first", "largest", "smallest"}
+
+// ValidEvictionRule reports whether the atom names an eviction ordering rule.
+// Matching ignores case and surrounding spaces so the comma-separated browser
+// field tolerates sloppy input.
+func ValidEvictionRule(rule string) bool {
+	return slices.Contains(EvictionRuleAtoms, strings.ToLower(strings.TrimSpace(rule)))
+}
+
+// NormalizeEvictionRules trims and lowercases the configured rule list and
+// drops blanks; an empty or blank list falls back to the oldest-completed
+// default (ADR-0004). Unknown atoms pass through: validation rejects them at
+// every boundary that can persist settings.
+func NormalizeEvictionRules(rules []string) []string {
+	out := make([]string, 0, len(rules))
+	for _, rule := range rules {
+		if atom := strings.ToLower(strings.TrimSpace(rule)); atom != "" {
+			out = append(out, atom)
+		}
+	}
+	if len(out) == 0 {
+		return []string{EvictionRuleAtoms[0]}
+	}
+	return out
 }
 
 func applyEnvironment(settings *Settings) (map[string]bool, error) {
@@ -297,6 +350,12 @@ func applyEnvironment(settings *Settings) (map[string]bool, error) {
 				return nil, fmt.Errorf("%s must be an integer: %w", environmentKey, err)
 			}
 			field.SetInt(parsed)
+		case reflect.Bool:
+			parsed, err := strconv.ParseBool(strings.TrimSpace(raw))
+			if err != nil {
+				return nil, fmt.Errorf("%s must be a boolean: %w", environmentKey, err)
+			}
+			field.SetBool(parsed)
 		case reflect.Float32, reflect.Float64:
 			parsed, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
 			if err != nil {
