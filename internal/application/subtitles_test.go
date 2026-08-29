@@ -183,6 +183,124 @@ func TestPrepareSubtitleEmbeddedAssetKeepsCandidateLanguage(t *testing.T) {
 	}
 }
 
+// subtitleDownloadStub serves fixed subtitle bytes from the provider path so
+// tests can prepare real conversions without a network provider.
+type subtitleDownloadStub struct {
+	subtitleProviderStub
+	download SubtitleDownload
+}
+
+func (p *subtitleDownloadStub) Download(context.Context, string) (SubtitleDownload, error) {
+	return p.download, nil
+}
+
+func TestPrepareSubtitleVTTPositionsEveryCueAboveTheControlBar(t *testing.T) {
+	probe := &subtitleProbeStub{
+		tracks:  []domain.MediaSubtitleTrack{{Index: 3, Language: "jpn", Codec: "subrip"}},
+		content: "WEBVTT\n\nintro\n00:00:01.000 --> 00:00:02.000\nHello\n\n00:00:03.500 --> 00:00:05.000 align:start line:10% position:10%\nRepositioned\n",
+	}
+	service := newSubtitleTestService(t, &subtitleEngineStub{}, probe)
+	asset, err := service.PrepareSubtitle(context.Background(), "source", "embedded", "3", "vtt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The subtitles route serves the converted cache file byte-for-byte, so
+	// what a browser <track> downloads is exactly the file at asset.Path.
+	body, err := os.ReadFile(asset.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const suffix = " align:center line:80% position:50%"
+	cues := 0
+	for _, block := range strings.Split(string(body), "\n\n") {
+		timing := ""
+		for _, line := range strings.Split(block, "\n") {
+			if strings.Contains(line, "-->") {
+				timing = line
+				break
+			}
+		}
+		if timing == "" {
+			continue
+		}
+		cues++
+		if !strings.HasSuffix(timing, suffix) {
+			t.Fatalf("cue timing %q, want it to end with %q", timing, suffix)
+		}
+		if remainder := strings.TrimSuffix(timing, suffix); strings.Contains(remainder, "align:") || strings.Contains(remainder, "line:") {
+			t.Fatalf("cue timing %q keeps settings beyond the single positioning suffix", timing)
+		}
+	}
+	if cues != 2 {
+		t.Fatalf("document produced %d cues, want both cues of the multi-cue source", cues)
+	}
+	if got := strings.Count(string(body), "align:"); got != cues {
+		t.Fatalf("document carries %d align settings for %d cues, want exactly one per cue (source settings replaced, not appended)", got, cues)
+	}
+	if !strings.Contains(string(body), "Hello") || !strings.Contains(string(body), "Repositioned") {
+		t.Fatalf("cue text lost while positioning cues: %q", body)
+	}
+}
+
+func TestPrepareSubtitleSRTConversionPositionsEveryCue(t *testing.T) {
+	provider := &subtitleDownloadStub{download: SubtitleDownload{
+		Data:     []byte("1\n00:00:01,000 --> 00:00:02,000\nSalut\n\n2\n00:00:03,000 --> 00:00:04,000\nPa\n"),
+		Format:   ".srt",
+		Name:     "Movie.ro.srt",
+		Language: "ron",
+	}}
+	service := newSubtitleTestService(t, &subtitleEngineStub{}, &subtitleProbeStub{}, provider)
+	asset, err := service.PrepareSubtitle(context.Background(), "source", "subdl", "p1", "vtt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(asset.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const suffix = " align:center line:80% position:50%"
+	cues := 0
+	for _, line := range strings.Split(string(body), "\n") {
+		if strings.Contains(line, "-->") {
+			cues++
+			if !strings.HasSuffix(line, suffix) {
+				t.Fatalf("converted cue timing %q, want it to end with %q", line, suffix)
+			}
+		}
+	}
+	if cues != 2 {
+		t.Fatalf("converted document produced %d cues, want 2", cues)
+	}
+	if !strings.HasPrefix(string(body), "WEBVTT\n\n") {
+		t.Fatalf("converted document lost the WebVTT header: %q", body)
+	}
+}
+
+func TestPrepareSubtitleSAMIStaysByteIdentical(t *testing.T) {
+	provider := &subtitleDownloadStub{download: SubtitleDownload{
+		Data:     []byte("1\n00:00:01,000 --> 00:00:02,000\nHello\n\n2\n00:00:03,000 --> 00:00:04,000\nBye\n"),
+		Format:   ".srt",
+		Name:     "Movie.ro.srt",
+		Language: "ron",
+	}}
+	service := newSubtitleTestService(t, &subtitleEngineStub{}, &subtitleProbeStub{}, provider)
+	asset, err := service.PrepareSubtitle(context.Background(), "source", "subdl", "p1", "sami")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(asset.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "<SAMI><HEAD><STYLE><!-- P { font-family: sans-serif; color: white; text-align: center; } --></STYLE></HEAD><BODY>\n" +
+		"<SYNC Start=1000><P Class=SUBTTL>Hello</P>\n<SYNC Start=2000><P Class=SUBTTL>&nbsp;</P>\n" +
+		"<SYNC Start=3000><P Class=SUBTTL>Bye</P>\n<SYNC Start=4000><P Class=SUBTTL>&nbsp;</P>\n" +
+		"</BODY></SAMI>\n"
+	if string(body) != want {
+		t.Fatalf("sami output drifted from the pre-positioning bytes:\n got %q\nwant %q", body, want)
+	}
+}
+
 func TestSearchSubtitlesMarksPreparedProviderCandidatesCached(t *testing.T) {
 	service, repo := newSubtitleTestServiceWithRepo(
 		t,
@@ -234,17 +352,17 @@ func TestSubtitleAssetIDIsScopedToTheSource(t *testing.T) {
 func prepareAssetForTest(t *testing.T, repo *sqlite.Repository, sourceID string, now time.Time) domain.SubtitleAsset {
 	t.Helper()
 	asset := domain.SubtitleAsset{
-		ID:        subtitleAssetIDForTest(sourceID, "subtitle content"),
-		SourceID:  sourceID,
-		Provider:  "subdl",
+		ID:          subtitleAssetIDForTest(sourceID, "subtitle content"),
+		SourceID:    sourceID,
+		Provider:    "subdl",
 		CandidateID: "p1",
-		Name:      "Movie.ro.srt",
-		Language:  "ro",
-		Format:    "vtt",
-		MimeType:  "text/vtt",
-		Path:      "/tmp/asset-" + sourceID + ".vtt",
-		CreatedAt: now,
-		LastUsedAt: now,
+		Name:        "Movie.ro.srt",
+		Language:    "ro",
+		Format:      "vtt",
+		MimeType:    "text/vtt",
+		Path:        "/tmp/asset-" + sourceID + ".vtt",
+		CreatedAt:   now,
+		LastUsedAt:  now,
 	}
 	if err := repo.SaveSubtitleAsset(context.Background(), asset); err != nil {
 		t.Fatalf("SaveSubtitleAsset(%s): %v", sourceID, err)
