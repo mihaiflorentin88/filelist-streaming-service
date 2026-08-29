@@ -158,7 +158,12 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
         setPosition(initial);
         const chosen = track;
         const useBrowser = !!chosen && (audioPlaybackRoute(chosen.codec) === 'decode' || (info.audioTracks.length > 1 && !chosen.default));
-        offsetRef.current = useBrowser ? initial : 0;
+        offsetRef.current = 0;
+        if (useBrowser && initial > 0) {
+          // The route snaps seeks onto a video keyframe; clock and subtitle
+          // offsets must use that effective start, not the requested one.
+          try { offsetRef.current = (await api.snapStreamStart(active.download.id, initial)).startMs } catch { offsetRef.current = initial }
+        }
         setStreamOffset(offsetRef.current);
         setSelectedAudio(track?.streamIndex ?? -1);
         setMessage('Opening stream…');
@@ -273,22 +278,30 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
       }
     }, 2000)
   }
-  function restartAt(value: number) {
+  async function restartAt(value: number) {
     if (!mediaInfo || !video.current) return;
     const target = Math.min(Math.max(0, value), Math.max(0, mediaInfo.durationMs - 1000));
     if (!browserMode) { video.current.currentTime = target / 1000; setPosition(target); return }
     reloading.current = true;
-    offsetRef.current = target;
-    syncSubtitleOffset(target);
-    setPosition(target);
-    setStreamOffset(target);
+    let start = target;
+    try { start = (await api.snapStreamStart(active.download.id, target)).startMs } catch { }
+    offsetRef.current = start;
+    syncSubtitleOffset(start);
+    setPosition(start);
+    setStreamOffset(start);
   }
   async function chooseAudio(track: MediaAudioTrack) {
     if (!mediaInfo) return;
     const nextBrowser = audioPlaybackRoute(track.codec) === 'decode' || (mediaInfo.audioTracks.length > 1 && !track.default);
     if (nextBrowser || browserMode) {
       const target = logicalPlaybackPosition(offsetRef.current, video.current?.currentTime || 0, durationRef.current);
-      offsetRef.current = nextBrowser ? target : 0;
+      if (nextBrowser) {
+        let start = target;
+        try { start = (await api.snapStreamStart(active.download.id, target)).startMs } catch { }
+        offsetRef.current = start;
+      } else {
+        offsetRef.current = 0;
+      }
       pendingSeekRef.current = nextBrowser ? -1 : target;
       setStreamOffset(offsetRef.current);
     }

@@ -79,6 +79,7 @@ export class API {
   syncCatalog(mode: 'latest' | 'rebuild') { return this.call<Job>('/catalog/sync', { method: 'POST', body: JSON.stringify({ mode }) }) }
   ensureMetadata(titleIds: string[]) { return this.call<{ queued: number }>('/metadata/ensure', { method: 'POST', body: JSON.stringify({ titleIds }) }) }
   diagnostic(level: string, message: string, context: Record<string, unknown> = {}) { return this.call<void>('/diagnostics/client', { method: 'POST', body: JSON.stringify({ level, message, context }) }) }
+  snapStreamStart(sourceId: string, startMs: number) { return this.call<{ requested: number; startMs: number }>(`/streams/${encodeURIComponent(sourceId)}/snap?startMs=${Math.round(startMs)}`) }
   subtitles(downloadId: string, language = '', scope: 'local' | 'remote' | 'all' = 'all') { return this.call<SubtitlePage>(`/downloads/${encodeURIComponent(downloadId)}/subtitles?language=${encodeURIComponent(language)}&scope=${scope}`) }
   prepareSubtitle(downloadId: string, provider: string, id: string, format: 'sami' | 'vtt' = 'sami') { return this.call<SubtitleAsset>(`/downloads/${encodeURIComponent(downloadId)}/subtitles/prepare`, { method: 'POST', body: JSON.stringify({ provider, id, format }) }) }
   state() { return this.call<HouseholdState>('/state') }

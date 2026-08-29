@@ -88,6 +88,7 @@ func New(service *application.Service, settings *config.Store, log *slog.Logger,
 	mux.HandleFunc("GET /api/v1/streams/{id}", a.stream)
 	mux.HandleFunc("HEAD /api/v1/streams/{id}", a.stream)
 	mux.HandleFunc("GET /api/v1/streams/{id}/browser", a.browserStream)
+	mux.HandleFunc("GET /api/v1/streams/{id}/snap", a.streamSnap)
 	sub, _ := fs.Sub(static, "static")
 	mux.Handle("/", http.FileServer(http.FS(sub)))
 	return recoverer(log, access(log, trusted(settings, mux)))
@@ -1078,6 +1079,23 @@ func copyRange(ctx context.Context, w io.Writer, path string, offset, count int6
 		}
 	}
 	return nil
+}
+
+// streamSnap reports the effective compatibility-stream start for a seek
+// target: the video keyframe the route will actually start on. Clients use it
+// to keep their clock and subtitle offsets aligned with the real content
+// start instead of the requested position.
+func (a *API) streamSnap(w http.ResponseWriter, r *http.Request) {
+	settings := a.settings.Get()
+	_, port, err := net.SplitHostPort(settings.ListenAddress)
+	if err != nil || port == "" {
+		problem(w, http.StatusInternalServerError, fmt.Errorf("invalid listen address for browser audio compatibility"))
+		return
+	}
+	requested := parseStartQuery(r.URL.Query().Get("startMs"), 0)
+	input := "http://127.0.0.1:" + port + "/api/v1/streams/" + r.PathValue("id")
+	snapped := snapStartToVideoKeyframe(r.Context(), settings.FFprobePath, input, requested, a.log)
+	write(w, 200, map[string]any{"requested": requested, "startMs": snapped})
 }
 
 // browserStream preserves the original video while converting browser-hostile
