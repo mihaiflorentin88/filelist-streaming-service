@@ -5,6 +5,7 @@
 !.env.docker.example
 deploy/.deploy.local.conf
 data/
+docker-runtime/
 *.db
 *.db-shm
 *.db-wal
