@@ -47,9 +47,14 @@ diagnosed per-case if it reappears.
    client-side decode, no WebAudio scheduling, no anchor planner in the
    player. Seeking a compatibility stream re-issues the request at the new
    position (`startMs`); subtitle cues are shifted client-side to match.
-3. The Pi safety invariant stands, narrowed: **video is always copied; only
+3. Seeks snap back to the last video keyframe (ffprobe packet scan, 3s
+   budget, raw-target fallback). Stream-copied video can only start on a
+   keyframe while the re-encoded audio starts exactly at the target, so an
+   unsnapped seek leaves audio leading picture by up to one GOP — measured
+   0.2-1.7s at representative positions in this library before the snap.
+4. The Pi safety invariant stands, narrowed: **video is always copied; only
    the selected audio stream is transcoded** (`-c:v copy -c:a aac -ac 2`).
-4. Tizen is unaffected: AVPlay direct-plays original bytes.
+5. Tizen is unaffected: AVPlay direct-plays original bytes.
 
 ## Consequences
 

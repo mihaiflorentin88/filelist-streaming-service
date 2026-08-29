@@ -1102,7 +1102,12 @@ func (a *API) browserStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	input := "http://127.0.0.1:" + port + "/api/v1/streams/" + r.PathValue("id")
-	args, _, err := browserStreamArgs(input, info, r.URL.Query().Get("audioTrack"), r.URL.Query().Get("startMs"))
+	// Stream-copied video resumes on the previous keyframe while re-encoded
+	// audio resumes exactly at the target, so a raw seek leaves the audio
+	// leading the picture by up to one GOP. Snap the target onto the
+	// keyframe: both streams then start at the same content point.
+	snapped := snapStartToVideoKeyframe(r.Context(), settings.FFprobePath, input, parseStartQuery(r.URL.Query().Get("startMs"), info.DurationMS), a.log)
+	args, _, err := browserStreamArgs(input, info, r.URL.Query().Get("audioTrack"), strconv.FormatInt(snapped, 10))
 	if err != nil {
 		problem(w, http.StatusBadRequest, err)
 		return
