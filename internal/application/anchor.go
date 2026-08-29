@@ -64,10 +64,11 @@ func (s *Service) AudioSpan(ctx context.Context, sourceID string, startByte, len
 	if !completedLocalFile(download) {
 		return domain.AudioSpan{}, true, fmt.Errorf("audio span is not readable yet: source is still downloading")
 	}
-	if _, err := s.Acquire(ctx, sourceID); err != nil {
-		return domain.AudioSpan{}, false, err
-	}
-	defer s.Release(download.ID)
+	// The probe is read-only and only ever reaches here for completed
+	// sources, so it takes no lease: leasing turned every probe into two
+	// database writes plus a qBittorrent round-trip, and under concurrent
+	// playback those writes contended with lease/reconcile traffic until
+	// probes failed with database-is-locked.
 	if err := s.ValidateSourcePath(download); err != nil {
 		return domain.AudioSpan{}, false, err
 	}
