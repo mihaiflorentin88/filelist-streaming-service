@@ -85,8 +85,8 @@ function restoreDownloadAnchor(anchor: ViewportAnchor | null) { if (!anchor) ret
 
 function Rail({ title, children, empty, landscape = false }: { title: string; children: any; empty?: string; landscape?: boolean }) { const list = Array.isArray(children) ? children.filter(Boolean) : children; return <section class="rail-section"><div class="section-heading"><h2>{title}</h2></div>{(!list || list.length === 0) ? <p class="empty">{empty || 'Nothing here yet.'}</p> : <div class={`rail ${landscape ? 'landscape' : ''}`}>{list}</div>}</section> }
 
-function useModalFocus(root: { current: HTMLElement | null }, onClose: () => void) { useEffect(() => { const previous = document.activeElement as HTMLElement | null; const background = Array.from(document.querySelectorAll<HTMLElement>('.sidebar,.content')); background.forEach(element => element.setAttribute('inert', '')); const focusable = () => Array.from(root.current?.querySelectorAll<HTMLElement>('button:not([disabled]),input:not([disabled]),select:not([disabled]),video[controls],[tabindex]:not([tabindex="-1"])') || []); const timer = window.setTimeout(() => focusable()[0]?.focus(), 0); const key = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); onClose(); return } if (event.key !== 'Tab') return; const items = focusable(); if (items.length === 0) return; const index = items.indexOf(document.activeElement as HTMLElement); event.preventDefault(); items[(index + (event.shiftKey ? -1 : 1) + items.length) % items.length].focus() }; document.addEventListener('keydown', key); return () => { window.clearTimeout(timer); document.removeEventListener('keydown', key); background.forEach(element => element.removeAttribute('inert')); previous?.focus() }; }, []) }
-function useOverlayFocus(active: boolean, onClose: () => void) { useEffect(() => { if (!active) return; const root = { get current() { const overlays = document.querySelectorAll<HTMLElement>('.overlay'); return overlays[overlays.length - 1] || null } }; const previous = document.activeElement as HTMLElement | null; const overlay = root.current; const background = Array.from(document.querySelectorAll<HTMLElement>('.sidebar,.content')).filter(element => !overlay || !element.contains(overlay)); background.forEach(element => element.setAttribute('inert', '')); const focusable = () => Array.from(root.current?.querySelectorAll<HTMLElement>('button:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])') || []); const timer = window.setTimeout(() => focusable()[0]?.focus(), 0); const key = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); onClose(); return } if (event.key !== 'Tab') return; const items = focusable(); if (!items.length) return; const index = items.indexOf(document.activeElement as HTMLElement); event.preventDefault(); items[(index + (event.shiftKey ? -1 : 1) + items.length) % items.length].focus() }; document.addEventListener('keydown', key); return () => { window.clearTimeout(timer); document.removeEventListener('keydown', key); background.forEach(element => element.removeAttribute('inert')); previous?.focus() }; }, [active]) }
+function useModalFocus(root: { current: HTMLElement | null }, onClose: () => void) { useEffect(() => { const previous = document.activeElement as HTMLElement | null; const background = Array.from(document.querySelectorAll<HTMLElement>('.sidebar,.content')); background.forEach(element => element.setAttribute('inert', '')); const focusable = () => Array.from(root.current?.querySelectorAll<HTMLElement>('button:not([disabled]),input:not([disabled]),select:not([disabled]),video[controls],[tabindex]:not([tabindex="-1"])') || []); const timer = window.setTimeout(() => focusable()[0]?.focus(), 0); const key = (event: KeyboardEvent) => { if (event.key !== 'Tab') return; const items = focusable(); if (items.length === 0) return; const index = items.indexOf(document.activeElement as HTMLElement); event.preventDefault(); items[(index + (event.shiftKey ? -1 : 1) + items.length) % items.length].focus() }; document.addEventListener('keydown', key); return () => { window.clearTimeout(timer); document.removeEventListener('keydown', key); background.forEach(element => element.removeAttribute('inert')); previous?.focus() }; }, []) }
+function useOverlayFocus(active: boolean, onClose: () => void) { useEffect(() => { if (!active) return; const root = { get current() { const overlays = document.querySelectorAll<HTMLElement>('.overlay'); return overlays[overlays.length - 1] || null } }; const previous = document.activeElement as HTMLElement | null; const overlay = root.current; const background = Array.from(document.querySelectorAll<HTMLElement>('.sidebar,.content')).filter(element => !overlay || !element.contains(overlay)); background.forEach(element => element.setAttribute('inert', '')); const focusable = () => Array.from(root.current?.querySelectorAll<HTMLElement>('button:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])') || []); const timer = window.setTimeout(() => focusable()[0]?.focus(), 0); const key = (event: KeyboardEvent) => { if (event.key !== 'Tab') return; const items = focusable(); if (!items.length) return; const index = items.indexOf(document.activeElement as HTMLElement); event.preventDefault(); items[(index + (event.shiftKey ? -1 : 1) + items.length) % items.length].focus() }; document.addEventListener('keydown', key); return () => { window.clearTimeout(timer); document.removeEventListener('keydown', key); background.forEach(element => element.removeAttribute('inert')); previous?.focus() }; }, [active]) }
 
 export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { active: ActivePlayer; onClose: () => void; onStateChanged: () => void; onAdvance: (preferences: PlaybackPreferences) => Promise<void> }) {
   const defaults: PlaybackPreferences = { audioLanguage: 'en', audioTrackIndex: -1, subtitleLanguage: 'ro', subtitleMode: 'auto' };
@@ -261,8 +261,11 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
     const element = root.current;
     if (!element) return;
     element.addEventListener('mousemove', revealControls);
-    element.addEventListener('keydown', onKey);
-    return () => { element.removeEventListener('mousemove', revealControls); element.removeEventListener('keydown', onKey) };
+    // Shortcuts dispatch at document level: the player is a modal surface
+    // (background inert) and focus may legitimately rest on body — e.g. right
+    // after clicking the video — where a root-level listener never fires.
+    document.addEventListener('keydown', onKey);
+    return () => { element.removeEventListener('mousemove', revealControls); document.removeEventListener('keydown', onKey) };
   }, [onKey]);
   // Fullscreen truth: the browser can exit fullscreen without delivering the
   // key to the page, so the Escape chain follows the fullscreenchange event.
@@ -283,12 +286,12 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
       video.current?.querySelectorAll('track[data-filelist]').forEach(track => track.remove()); video.current?.appendChild(element);
       element.addEventListener('load', () => { if (element.track) { syncSubtitleOffset(offsetRef.current); element.track.mode = 'showing' } setSelectedSubtitle(`${candidate.provider}:${candidate.id}`); setMessage('') }, { once: true });
       element.addEventListener('error', () => setMessage('The subtitle is cached, but this browser could not load it.'), { once: true });
-      setSubtitleOpen(false);
+      setSubtitleOpen(false); root.current?.focus();
       if (persist) await savePreferences({ ...preferenceRef.current, subtitleLanguage: candidate.language || 'en', subtitleProvider: candidate.provider, subtitleCandidateId: candidate.id, subtitleMode: 'selected' });
       return true;
     } catch (error) { if (!automatic) setMessage(`Subtitle failed: ${(error as Error).message}`); return false }
   }
-  function disableSubtitles(persist = true) { if (video.current) Array.from(video.current.textTracks).forEach(track => track.mode = 'disabled'); setSelectedSubtitle('off'); setSubtitleOpen(false); if (persist) void savePreferences({ ...preferenceRef.current, subtitleMode: 'off', subtitleProvider: '', subtitleCandidateId: '' }) }
+  function disableSubtitles(persist = true) { if (video.current) Array.from(video.current.textTracks).forEach(track => track.mode = 'disabled'); setSelectedSubtitle('off'); setSubtitleOpen(false); root.current?.focus(); if (persist) void savePreferences({ ...preferenceRef.current, subtitleMode: 'off', subtitleProvider: '', subtitleCandidateId: '' }) }
   // Playback recovery retries are bounded: after MAX_RECOVER_ATTEMPTS consecutive
   // failures the loop stops and the viewer sees a terminal message instead of the
   // player reloading the stream every two seconds forever.
@@ -316,7 +319,7 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
   }
   async function restartAt(value: number) {
     if (!mediaInfo || !video.current) return;
-    const target = Math.min(Math.max(0, value), Math.max(0, mediaInfo.durationMs - 1000));
+    const target = seekTarget(value, mediaInfo.durationMs, 0);
     if (!browserMode) { video.current.currentTime = target / 1000; setPosition(target); return }
     reloading.current = true;
     let start = target;
@@ -360,25 +363,29 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
   const clickTimer = useRef(0);
   function onVideoClick() {
     if (clickTimer.current) { window.clearTimeout(clickTimer.current); clickTimer.current = 0; return }
-    clickTimer.current = window.setTimeout(() => { clickTimer.current = 0; runCommand({ kind: 'toggle-playback' }, false) }, 250);
+    clickTimer.current = window.setTimeout(() => { clickTimer.current = 0; runCommand({ kind: 'toggle-playback' }) }, 250);
   }
   function onVideoDoubleClick() {
     if (clickTimer.current) { window.clearTimeout(clickTimer.current); clickTimer.current = 0 }
-    void runCommand({ kind: 'toggle-fullscreen' }, false);
+    void runCommand({ kind: 'toggle-fullscreen' });
   }
   // Player shortcut dispatch: resolve the keydown at the command layer and
   // execute. Bound keys are consumed (preventDefault so a focused chrome
   // button cannot double-fire; stopPropagation so the modal Escape hook never
   // races the shortcut chain); unbound keys keep today's reveal behavior.
   function onKey(event: KeyboardEvent) {
+    // Native slider/stepper keys win while a form control is focused (ARIA
+    // contract); the shortcut layer stays out of the way.
+    const target = event.target as HTMLElement | null;
+    if (target && (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA')) { revealControls(); return }
     if (event.metaKey || event.ctrlKey || event.altKey) { revealControls(); return }
     const resolved = resolveShortcut(event.key, event.repeat, subtitleOpen || audioOpen);
     if (!resolved) { revealControls(); return }
     event.preventDefault();
     event.stopPropagation();
-    runCommand(resolved.command, resolved.repeatable);
+    runCommand(resolved.command);
   }
-  function runCommand(command: PlayerCommand, repeatable: boolean) {
+  function runCommand(command: PlayerCommand) {
     if (command.kind === 'toggle-playback') { togglePlayback(); return }
     if (command.kind === 'toggle-mute') { toggleMuted(); setOsd({ kind: 'mute', muted: !muted }); return }
     if (command.kind === 'play') { shouldPlay.current = true; void video.current?.play().catch(() => { }); return }
@@ -393,18 +400,18 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
     if (command.kind === 'volume') {
       // Loudness truth lives in persisted state; ↑/↓ while muted unmutes and
       // then applies the step (sliding to zero mutes), matching the slider.
-      const stepped = applyVolumeStep(volume, muted, command.delta);
+      const stepped = applyVolumeStep(volume, command.delta);
       setVolume(stepped.volume);
       setMuted(stepped.muted);
       savePlayerSettings(persistedStore(), stepped);
-      setOsd({ kind: 'volume', percent: Math.round(stepped.volume * 100) });
+      setOsd({ kind: 'volume', percent: Math.round(stepped.volume * 100) }); return;
     }
     if (command.kind === 'toggle-fullscreen') { void toggleFullscreen(); return }
     if (command.kind === 'escape') {
       // Graceful exit: peel one layer per press instead of closing outright.
       const step = resolveEscape({ fullscreen, panelOpen: subtitleOpen || audioOpen, controlsVisible });
       if (step === 'exit-fullscreen') { if (document.fullscreenElement) void document.exitFullscreen().catch(() => { }); return }
-      if (step === 'close-panel') { setSubtitleOpen(false); setAudioOpen(false); return }
+      if (step === 'close-panel') { setSubtitleOpen(false); setAudioOpen(false); root.current?.focus(); return }
       if (step === 'hide-chrome') { hideControls(); return }
       onClose();
       return;
@@ -413,7 +420,6 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
       const base = scrub.current?.target ?? position;
       const target = seekTarget(base, mediaInfo?.durationMs ?? 0, command.deltaMs);
       const hint = `${command.deltaMs > 0 ? '+' : '−'}${Math.abs(command.deltaMs) / 1000}s`;
-      if (!repeatable) { restartAt(target); setOsd(seekOsd(target, hint)); return }
       if (!scrub.current) scrub.current = new ScrubCoalescer(targetMs => restartAtRef.current(targetMs));
       scrub.current.nudge(target);
       setPosition(target);
@@ -429,7 +435,7 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
   function seekOsd(targetMs: number, hint: string): OsdFeedback {
     return { kind: 'seek', fraction: durationRef.current > 0 ? targetMs / durationRef.current : 0, hint };
   }
-  return <div ref={root} class={`video ${controlsVisible ? 'controls-visible' : ''}`} role="dialog" aria-modal="true" aria-label={`Playing ${active.download.displayTitle || active.download.filePath}`}>
+  return <div ref={root} tabindex={-1} class={`video ${controlsVisible ? 'controls-visible' : ''}`} role="dialog" aria-modal="true" aria-label={`Playing ${active.download.displayTitle || active.download.filePath}`}>
     <video ref={video} src={playbackURL ? api.streamURL(playbackURL) : undefined} autoplay playsInline onLoadedMetadata={event => { reloading.current = false; const pending = pendingSeekRef.current >= 0 ? pendingSeekRef.current : (!browserMode && active.resumeMs > 0 ? active.resumeMs : -1); pendingSeekRef.current = -1; if (pending > 0) event.currentTarget.currentTime = pending / 1000; if (shouldPlay.current) void event.currentTarget.play().catch(() => setMessage('Press Play to start playback.')) }} onWaiting={() => { if (!reloading.current) setMessage(active.download.playbackMode === 'progressive' ? 'Buffering the next downloaded segment…' : 'Buffering…') }} onCanPlay={() => { recovering.current = false; recoverAttempts.current = 0; if (!reloading.current) setMessage('') }} onPlaying={() => { recovering.current = false; recoverAttempts.current = 0; setPlaying(true); if (!reloading.current) setMessage('') }} onTimeUpdate={event => { if (scrub.current?.target != null) return; const next = logicalPlaybackPosition(offsetRef.current, event.currentTarget.currentTime, durationRef.current); const now = Date.now(); if (now - lastRendered.current >= 250) { lastRendered.current = now; setPosition(next) } if (now - lastSaved.current > 10000) { lastSaved.current = now; void save() } }} onPause={() => { setPlaying(false); void save() }} onEnded={() => void save().then(() => onAdvance(preferenceRef.current))} onError={() => void recover()} onClick={onVideoClick} onDblClick={onVideoDoubleClick} />
     <div class="player-chrome">
       <div class="player-heading"><strong>{active.download.displayTitle || active.download.filePath}</strong><span>{active.download.playbackMode === 'progressive' ? 'Streaming while downloading' : 'Downloaded file'}</span></div>

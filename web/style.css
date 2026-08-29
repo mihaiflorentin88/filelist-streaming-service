@@ -2179,3 +2179,8 @@ progress {
   height: 100%;
   background: var(--teal)
 }
+
+.osd-mute-label {
+  display: inline-flex;
+  align-items: center
+}

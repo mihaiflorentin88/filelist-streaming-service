@@ -129,22 +129,22 @@ describe('fractionTarget', () => {
 
 describe('applyVolumeStep', () => {
   it('steps up and leaves muted false', () => {
-    expect(applyVolumeStep(0.5, false, 0.02)).toEqual({ volume: 0.52, muted: false });
+    expect(applyVolumeStep(0.5, 0.02)).toEqual({ volume: 0.52, muted: false });
   });
   it('steps down and leaves muted false', () => {
-    expect(applyVolumeStep(0.52, false, -0.02)).toEqual({ volume: 0.5, muted: false });
+    expect(applyVolumeStep(0.52, -0.02)).toEqual({ volume: 0.5, muted: false });
   });
   it('clamps at 1', () => {
-    expect(applyVolumeStep(0.99, false, 0.02)).toEqual({ volume: 1, muted: false });
+    expect(applyVolumeStep(0.99, 0.02)).toEqual({ volume: 1, muted: false });
   });
   it('clamps at 0 and mutes when sliding to zero', () => {
-    expect(applyVolumeStep(0.01, false, -0.02)).toEqual({ volume: 0, muted: true });
+    expect(applyVolumeStep(0.01, -0.02)).toEqual({ volume: 0, muted: true });
   });
-  it('unmutes and applies when stepping away from zero while muted', () => {
-    expect(applyVolumeStep(0.3, true, 0.02)).toEqual({ volume: 0.32, muted: false });
+  it('steps away from zero unmute', () => {
+    expect(applyVolumeStep(0.3, 0.02)).toEqual({ volume: 0.32, muted: false });
   });
   it('stays muted when a downward step keeps the volume at zero', () => {
-    expect(applyVolumeStep(0, true, -0.02)).toEqual({ volume: 0, muted: true });
+    expect(applyVolumeStep(0, -0.02)).toEqual({ volume: 0, muted: true });
   });
 });
 

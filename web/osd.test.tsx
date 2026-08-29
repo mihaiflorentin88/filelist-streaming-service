@@ -43,11 +43,12 @@ describe('OsdLayer rendering', () => {
     expect(root.querySelector('.osd-volume-label')!.textContent).toBe('42%');
   });
 
-  it('renders mute feedback for muted and unmuted', () => {
+  it('renders mute feedback icon with accessible label', () => {
     const muted = mount({ kind: 'mute', muted: true });
-    expect(muted.querySelector('.osd-mute-label')!.textContent).toBe('Muted');
+    expect(muted.querySelector('.osd-mute-label svg')).not.toBeNull();
+    expect(muted.querySelector('.osd-mute-label')!.getAttribute('aria-label')).toBe('Muted');
     const unmuted = mount({ kind: 'mute', muted: false });
-    expect(unmuted.querySelector('.osd-mute-label')!.textContent).toBe('Sound on');
+    expect(unmuted.querySelector('.osd-mute-label')!.getAttribute('aria-label')).toBe('Sound on');
   });
 
   it('renders plain hint feedback', () => {

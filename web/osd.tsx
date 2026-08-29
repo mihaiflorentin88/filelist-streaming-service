@@ -30,7 +30,16 @@ function body(feedback: OsdFeedback): preact.JSX.Element {
     case 'volume':
       return <><span class="osd-volume-track"><span class="osd-volume-fill" style={`width:${feedback.percent}%`} /></span><span class="osd-volume-label">{feedback.percent}%</span></>;
     case 'mute':
-      return <span class="osd-mute-label">{feedback.muted ? 'Muted' : 'Sound on'}</span>;
+      return (
+        <span class="osd-mute-label" role="img" aria-label={feedback.muted ? 'Muted' : 'Sound on'}>
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+            <path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor" />
+            {feedback.muted
+              ? <path d="M16 9l5 5m0-5l-5 5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" />
+              : <path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" />}
+          </svg>
+        </span>
+      );
     case 'hint':
       return <span class="osd-hint-text">{feedback.text}</span>;
   }

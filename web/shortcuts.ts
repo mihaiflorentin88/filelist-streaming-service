@@ -65,7 +65,7 @@ export function resolveEscape(ctx: { fullscreen: boolean; panelOpen: boolean; co
   return 'leave';
 }
 
-// Same clamp semantics as the player's clampSeek: pin to [0, durationMs - 1000]
+// Pins to [0, durationMs - 1000]
 // so a seek never lands on the very end; durationMs <= 0 means "no duration".
 function clampTarget(target: number, durationMs: number): number {
   if (!Number.isFinite(durationMs) || durationMs <= 0) return 0;
@@ -82,14 +82,14 @@ export function fractionTarget(fraction: number, durationMs: number): number {
 
 // Sliding to zero mutes; any step away from zero unmutes, so ↑/↓ while muted
 // unmutes first and then applies the delta to the stored volume.
-export function applyVolumeStep(current: number, muted: boolean, delta: number): { volume: number; muted: boolean } {
+export function applyVolumeStep(current: number, delta: number): { volume: number; muted: boolean } {
   const volume = Math.min(1, Math.max(0, current + delta));
   return { volume, muted: volume === 0 };
 }
 
-// Coalesces scrub nudges (timeupdate-driven seek-bar drags) into one seek
+// Coalesces held-key scrub nudges into one seek
 // commit after the last nudge settles, so the player isn't hammered with
-// seeks during a drag. Same numeric-timer convention as ControlsVisibility.
+// seeks during a hold. Same numeric-timer convention as ControlsVisibility.
 export class ScrubCoalescer {
   #commit: (targetMs: number) => void;
   #delayMs: number;

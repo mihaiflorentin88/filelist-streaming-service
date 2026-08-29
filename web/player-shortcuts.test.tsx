@@ -5,7 +5,7 @@ import { API, type Download, type MediaInfo, type PlaybackPreferences } from '@f
 import { BrowserPlayer } from './src';
 
 // Component-seam tests for Player shortcuts: real BrowserPlayer in happy-dom,
-// real keydown events on the player root, observable video/chrome state only.
+// real keydown events at the player surface, observable video/chrome state only.
 
 const download: Download = {
   id: 'dl-1', releaseId: 'r', engineId: 'qb:x', fileIndex: 0, filePath: 'a.mkv',
@@ -37,6 +37,8 @@ const memoryStorage = (() => {
 })();
 Object.defineProperty(globalThis, 'localStorage', { value: memoryStorage, configurable: true });
 
+const mountedHosts: HTMLElement[] = [];
+
 beforeEach(() => {
   localStorage.clear();
   vi.useFakeTimers();
@@ -62,6 +64,9 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   vi.useRealTimers();
+  // Unmount for real: document-level listeners must run their cleanup, which
+  // innerHTML wiping would skip.
+  while (mountedHosts.length) render(null, mountedHosts.pop()!);
   document.body.innerHTML = '';
 });
 
@@ -70,6 +75,7 @@ type Mounted = { host: HTMLElement; onClose: Mock; video: HTMLVideoElement; root
 async function mountPlayer(resumeMs = 0): Promise<Mounted> {
   const host = document.createElement('div');
   document.body.appendChild(host);
+  mountedHosts.push(host);
   const onClose = vi.fn();
   await act(async () => {
     render(
@@ -81,9 +87,9 @@ async function mountPlayer(resumeMs = 0): Promise<Mounted> {
   return { host, onClose, video: host.querySelector('video')!, root: host.querySelector('.video')! };
 }
 
-function pressKey(root: HTMLElement, key: string, init: KeyboardEventInit = {}) {
+function pressKey(target: HTMLElement, key: string, init: KeyboardEventInit = {}) {
   act(() => {
-    root.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init }));
+    target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init }));
   });
 }
 
@@ -151,8 +157,23 @@ describe('transport shortcuts', () => {
     expect(() => pressKey(mounted.root, 'x')).not.toThrow();
     expect(playSpy).not.toHaveBeenCalled();
   });
-});
 
+  it('shortcuts fire with focus on body, as after clicking the video', async () => {
+    const mounted = await mountPlayer();
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    pressKey(document.body, 'ArrowRight');
+    await act(async () => { vi.advanceTimersByTime(250) });
+    expect(mounted.video.currentTime).toBe(5);
+  });
+
+  it('Escape with body focus follows the chain instead of closing', async () => {
+    const mounted = await mountPlayer();
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    pressKey(document.body, 'Escape');
+    expect(mounted.onClose).not.toHaveBeenCalled(); // chrome visible → hidden, not closed
+    expect(mounted.root.classList.contains('controls-visible')).toBe(false);
+  });
+});
 
 describe('volume and mute shortcuts', () => {
   const volumeSlider = (mounted: Mounted) => mounted.host.querySelector<HTMLInputElement>('.player-volume input')!;
@@ -204,6 +225,15 @@ describe('volume and mute shortcuts', () => {
     pressKey(mounted.root, 'ArrowDown');
     expect(localStorage.getItem('filelist.player.muted')).toBe('true');
     expect(volumeSlider(mounted).value).toBe('0');
+  });
+
+  it('arrow keys stay native while a slider is focused', async () => {
+    localStorage.setItem('filelist.player.volume', '0.5');
+    const mounted = await mountPlayer();
+    volumeSlider(mounted).focus();
+    pressKey(volumeSlider(mounted), 'ArrowUp');
+    // The shortcut layer skipped the event: no persisted 2% step happened.
+    expect(localStorage.getItem('filelist.player.volume')).toBe('0.5');
   });
 });
 
@@ -278,9 +308,6 @@ describe('fullscreen key and Escape chain', () => {
 });
 
 describe('subtitle shortcut and media keys', () => {
-  const subtitlesButton = (mounted: Mounted) =>
-    Array.from(mounted.host.querySelectorAll<HTMLButtonElement>('button')).find(button => button.textContent?.startsWith('Subtitles'))!;
-
   it('S opens the subtitle panel like the Subtitles button', async () => {
     const mounted = await mountPlayer();
     pressKey(mounted.root, 's');
@@ -348,7 +375,7 @@ describe('digit percent jumps', () => {
   });
 
   it('digits before the duration is known do nothing harmful', async () => {
-    vi.spyOn(API.prototype, 'mediaInfo').mockReturnValue(new Promise(() => { }));
+    vi.spyOn(API.prototype, 'mediaInfo').mockImplementation(() => Promise.withResolvers<MediaInfo>().promise);
     const mounted = await mountPlayer();
     expect(() => pressKey(mounted.root, '5')).not.toThrow();
     expect(mounted.video.currentTime).toBe(0);
@@ -407,10 +434,11 @@ describe('OSD feedback', () => {
     expect(mounted.host.querySelector('.osd')!.textContent).toBe('52%');
   });
 
-  it('mute shows the mute label', async () => {
+  it('mute shows the mute icon', async () => {
     const mounted = await mountPlayer();
     pressKey(mounted.root, 'm');
-    expect(mounted.host.querySelector('.osd')!.textContent).toBe('Muted');
+    expect(mounted.host.querySelector('.osd-mute-label svg')).not.toBeNull();
+    expect(mounted.host.querySelector('.osd-mute-label')!.getAttribute('aria-label')).toBe('Muted');
   });
 
   it('digits before the duration is known show a hint', async () => {
