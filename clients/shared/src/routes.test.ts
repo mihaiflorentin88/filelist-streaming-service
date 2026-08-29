@@ -54,8 +54,46 @@ describe('Client routes', () => {
     expect(parsePath('/settings', '?q=x')).toEqual({ view: 'settings', query: '' });
   });
 
+  it('round-trips a title deep link for a Canonical title', () => {
+    expect(buildPath({ view: 'title', id: 'tt15398776' })).toBe('/title/tt15398776');
+    expect(parsePath('/title/tt15398776', '')).toEqual({ view: 'title', id: 'tt15398776', query: '' });
+    expect(buildPath({ view: 'title', id: 'tt 123' })).toBe('/title/tt%20123');
+    expect(parsePath('/title/tt%20123', '')).toEqual({ view: 'title', id: 'tt 123', query: '' });
+    expect(parsePath('/title/tt15398776/', '')).toEqual({ view: 'title', id: 'tt15398776', query: '' });
+  });
+
+  it('round-trips a watch deep link with source and resume position', () => {
+    const url = buildPath({ view: 'watch', id: 'dl-42', source: 2, t: 61_500 });
+    expect(url).toBe('/watch/dl-42?source=2&t=61500');
+    expect(parsePath('/watch/dl-42', '?source=2&t=61500')).toEqual({ view: 'watch', id: 'dl-42', query: '', source: 2, t: 61_500 });
+    const [pathname, search] = url.split('?');
+    expect(parsePath(pathname, search || '')).toEqual({ view: 'watch', id: 'dl-42', query: '', source: 2, t: 61_500 });
+  });
+
+  it('keeps an explicit t=0 (skip Household resume) and drops absent watch params', () => {
+    expect(parsePath('/watch/dl-42', '?t=0')).toEqual({ view: 'watch', id: 'dl-42', query: '', t: 0 });
+    expect(parsePath('/watch/dl-42', '?source=0')).toEqual({ view: 'watch', id: 'dl-42', query: '', source: 0 });
+    expect(parsePath('/watch/dl-42', '')).toEqual({ view: 'watch', id: 'dl-42', query: '' });
+    expect(parsePath('/watch/dl-42', '?source=-1&t=bogus')).toEqual({ view: 'watch', id: 'dl-42', query: '' });
+    expect(buildPath({ view: 'watch', id: 'dl-42', source: -1 })).toBe('/watch/dl-42');
+  });
+
+  it('round-trips a job deep link to the Jobs detail pane', () => {
+    expect(buildPath({ view: 'jobs', id: 'job-9' })).toBe('/jobs/job-9');
+    expect(parsePath('/jobs/job-9', '')).toEqual({ view: 'jobs', id: 'job-9', query: '' });
+    expect(parsePath('/jobs/job-9/', '')).toEqual({ view: 'jobs', id: 'job-9', query: '' });
+  });
+
+  it('parses deep links with empty, nested, or malformed ids to home', () => {
+    for (const path of ['/title', '/watch', '/title/', '/watch/', '/title/%zz', '/title/x/y', '/watch/x/y', '/jobsx']) {
+      expect(parsePath(path, '')).toEqual({ view: 'home', query: '' });
+    }
+    expect(buildPath({ view: 'title' })).toBe('/');
+    expect(buildPath({ view: 'watch', id: '' })).toBe('/');
+  });
+
   it('falls back to home for unknown paths (the app decides)', () => {
-    for (const path of ['/unknown', '/library/unknown', '/jobs/extra', '/library/dashboard/nested/path', '/LIBRARY/DOWNLOADS']) {
+    for (const path of ['/unknown', '/library/unknown', '/library/dashboard/nested/path', '/LIBRARY/DOWNLOADS', '/jobsx']) {
       expect(parsePath(path, '')).toEqual({ view: 'home', query: '' });
     }
     expect(buildPath({ view: 'gibberish' as View })).toBe('/');
