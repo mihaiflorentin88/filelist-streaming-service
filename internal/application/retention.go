@@ -329,7 +329,10 @@ func (s *Service) evictNext(ctx context.Context, plan retentionPlan, reason stri
 // Job pattern, and is scheduled hourly next to the catalog sync.
 func (s *Service) RunRetention() (domain.Job, error) {
 	job := domain.Job{ID: retentionKind, Kind: retentionKind, State: "queued", Label: "Enforce storage allocation and reserve", DedupeKey: retentionKind, Attempt: 1, UpdatedAt: time.Now().UTC()}
-	jobs, _ := s.repo.ListJobs(context.Background(), 200)
+	jobs, listErr := s.repo.ListJobs(context.Background(), 200)
+	if listErr != nil {
+		return domain.Job{}, listErr
+	}
 	for _, existing := range jobs {
 		if existing.DedupeKey == job.DedupeKey && (existing.State == "queued" || existing.State == "running") {
 			return existing, nil
