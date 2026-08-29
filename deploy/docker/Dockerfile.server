@@ -18,7 +18,10 @@ COPY --from=frontend /src/internal/adapters/httpapi/static ./internal/adapters/h
 ARG VERSION=dev
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X github.com/mihaiflorentin88/filelist-streaming-service/internal/composition.Version=${VERSION}" -o /out/filelist-streaming ./cmd/server
 
-FROM debian:bookworm-slim
+# FFmpeg >= 6.1 is required for -copypriorss, which keeps copied video from
+# starting a GOP before the seek point (audio would lead the picture); trixie
+# ships FFmpeg 7.x while bookworm's 5.1 lacks the option.
+FROM debian:trixie-slim
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl ffmpeg python3 \
     && rm -rf /var/lib/apt/lists/* \

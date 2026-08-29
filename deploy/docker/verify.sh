@@ -6,6 +6,7 @@ compose="docker compose --env-file $env_file"
 
 $compose exec -T qbittorrent /usr/local/bin/filelist-qbittorrent-healthcheck
 $compose exec -T server curl -fsS http://127.0.0.1:8097/api/v1/system/info >/dev/null
+$compose exec -T server sh -c 'ffmpeg -hide_banner -h full 2>/dev/null | grep -q copypriorss' || { echo "container FFmpeg lacks -copypriorss (needs >= 6.1): browser compat streams will desync"; exit 1; }
 $compose exec -T server curl -fsS -X POST http://127.0.0.1:8097/api/v1/dependencies/qbittorrent/test >/dev/null
 $compose exec -T server test -r /downloads
 $compose exec -T qbittorrent python3 -c '
