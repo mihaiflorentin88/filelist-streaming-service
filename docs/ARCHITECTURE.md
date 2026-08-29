@@ -81,6 +81,10 @@ SQLite owns durable catalog, title-expansion, tracker-search, and metadata job s
 
 Each job attempt appends structured phase logs to `job_logs`; the newest 500 entries per job and 30 days globally are retained. Details and paginated older logs are available in both clients without exposing credentials. State transitions and metadata/catalog/search completion are appended to `event_journal` and broadcast live. Cold SSE connections do not replay history; reconnect clients may request at most 200 missed events with `Last-Event-ID` or `after=`. Cancellation and general crash-safe leases remain future hardening.
 
+## Retention and eviction
+
+Retention enforces the user-configured Managed download allocation and the free-space reserve (binary GiB; zero disables each check). An hourly persisted `retention` job — also run at boot and by manual retry — surveys distinct engine routes once per pass, counting each season-pack torrent once, and evicts one torrent at a time through the same engine remove path as a manual delete until the deficit clears or only protected downloads remain. Order follows the configured rule list (default oldest-completed); protections are user toggles defaulting to incomplete and actively-streamed (leased) downloads. Every eviction publishes `downloads.evicted` with its reason (`cap` or `reserve`). Catalog rows and Household state survive eviction, and prepare refuses a download the allocation cannot hold even after evicting everything unprotected (ADR-0004).
+
 ## Logging and resource envelope
 
 The server writes structured JSON to both stdout/journald and `data/logs/server.log`. The Pi deployment installs a daily/10 MiB logrotate rule retaining 14 compressed rotations. Trusted TV clients may report bounded warning/error diagnostics through the HTTP API. The systemd unit uses a 1.5 GiB soft memory watermark and a 2 GiB hard ceiling; these are guardrails, not an application heap target.

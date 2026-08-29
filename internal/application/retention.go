@@ -280,30 +280,30 @@ func (h retentionHousehold) routeFacts(rows []domain.Download) (favorite, watche
 	return favorite, watched, lastPlayed
 }
 
-// retentionDeficit reports which check tripped and how many bytes must go.
-// The Allocation cap is evaluated first; the Reserve only triggers eviction
-// while the cap is satisfied. A zero-valued setting disables its check.
-func retentionDeficit(plan retentionPlan, settings config.Settings) (string, int64, bool) {
+// retentionDeficit reports which check tripped. The Allocation cap is
+// evaluated first; the Reserve only triggers eviction while the cap is
+// satisfied. A zero-valued setting disables its check.
+func retentionDeficit(plan retentionPlan, settings config.Settings) (string, bool) {
 	if settings.AllocationGB > 0 {
 		if excess := plan.storedBytes - gigabytesToBytes(settings.AllocationGB); excess > 0 {
-			return "cap", excess, true
+			return "cap", true
 		}
 	}
 	if settings.ReserveGB > 0 && plan.freeErr == nil {
-		if deficit := gigabytesToBytes(settings.ReserveGB) - plan.freeBytes; deficit > 0 {
-			return "reserve", deficit, true
+		if gigabytesToBytes(settings.ReserveGB) > plan.freeBytes {
+			return "reserve", true
 		}
 	}
-	return "", 0, false
+	return "", false
 }
 
-// evictOldest removes one unprotected torrent from the surveyed plan — the
+// evictNext removes one unprotected torrent from the surveyed plan — the
 // first candidate under the run's configured rule list (ADR-0004) — through
 // the same delete path as the manual remove action, and announces it on the
 // live feed. It reports false when storage holds no evictable torrent. The
 // retention job and the download admission gate (starvation path) share this
 // hook; the protection predicate and ordering live only here.
-func (s *Service) evictOldest(ctx context.Context, plan retentionPlan, reason string, settings config.Settings, rules []string) (retentionRoute, bool, error) {
+func (s *Service) evictNext(ctx context.Context, plan retentionPlan, reason string, settings config.Settings, rules []string) (retentionRoute, bool, error) {
 	candidates := make([]retentionRoute, 0, len(plan.routes))
 	for _, route := range plan.routes {
 		if !retentionProtected(route, settings) {
@@ -367,11 +367,11 @@ func (s *Service) runRetention(job domain.Job) {
 	}
 	evicted, freedBytes := 0, int64(0)
 	for {
-		reason, _, tripped := retentionDeficit(plan, settings)
+		reason, tripped := retentionDeficit(plan, settings)
 		if !tripped {
 			break
 		}
-		victim, removed, err := s.evictOldest(ctx, plan, reason, settings, rules)
+		victim, removed, err := s.evictNext(ctx, plan, reason, settings, rules)
 		if err != nil {
 			s.failOrWait(&job, err, retentionKind)
 			break
