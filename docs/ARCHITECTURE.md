@@ -50,7 +50,7 @@ Playback selects one of two server-side strategies and does not wait for torrent
 8. Before committing HTTP headers, verify the configured daemon account can open the growing file and read the final byte in the requested startup range. This turns mount/path/permission failures into a visible 503 diagnostic rather than a broken 206 response.
 9. Re-resolve the path between read-ahead chunks so qBittorrent can move completed content from temporary to final storage without breaking playback, then return HTTP 206 with correct Range headers and media type.
 
-The server waits for a maximum 128 MiB startup window or the smaller client-requested range, then uses bounded 256 MiB read-ahead windows. Multiple ranges return 416 in release 1. Disconnect cancellation is normal and releases the persisted stream lease.
+For an in-progress download the stream commits headers as soon as the leading `streamStartBytes` (default 2 MiB) of the requested range are readable, then serves adaptively growing chunks capped at 256 MiB read-ahead windows, so playback starts inside a player's request patience on slow swarms. Media-info probing still waits for the larger `initialBufferBytes` head window because demuxers need deep container indexes. Multiple ranges return 416 in release 1. Disconnect cancellation is normal and releases the persisted stream lease.
 
 The qB endpoints and field semantics follow the official [qBittorrent WebUI API](https://github.com/qbittorrent/qBittorrent/wiki/WebUI-API-%28qBittorrent-4.1%29): torrent contents/file priorities, piece states, sequential download, and first/last-piece priority.
 

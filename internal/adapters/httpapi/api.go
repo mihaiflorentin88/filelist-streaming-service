@@ -190,7 +190,8 @@ func (a *API) settingsSchema(w http.ResponseWriter, r *http.Request) {
 		{Key: "preferredSubtitleLanguage", Label: "Preferred subtitle language", Help: "ISO language code selected first for automatic subtitles, for example ro.", TVVisible: true},
 		{Key: "fallbackSubtitleLanguage", Label: "Fallback subtitle language", Help: "Language used when no suitable preferred-language subtitle exists.", TVVisible: true},
 		{Key: "preferredAudioLanguage", Label: "Preferred audio language", Help: "ISO language code selected first when a media file contains multiple audio tracks, for example en.", TVVisible: true},
-		{Key: "initialBufferBytes", Label: "Initial buffer bytes", Help: "Amount that must be readable before playback begins. Larger values improve reliability but delay startup.", TVVisible: true},
+		{Key: "initialBufferBytes", Label: "Initial buffer bytes", Help: "Amount probed for media details before an in-progress download answers the info request. Larger values improve reliability but delay startup.", TVVisible: true},
+		{Key: "streamStartBytes", Label: "Stream start bytes", Help: "Leading slice that must be readable before a stream responds while a download is in progress. Small values start playback sooner on slow swarms.", TVVisible: true},
 		{Key: "readAheadBytes", Label: "Read-ahead bytes", Help: "Range prioritized ahead of the current playback position.", TVVisible: true},
 		{Key: "pieceWaitTimeoutSeconds", Label: "Piece timeout seconds", Help: "Maximum wait for qBittorrent pieces before a stream request fails.", TVVisible: true},
 		{Key: "watchedThresholdPercent", Label: "Watched threshold percent", Help: "Playback percentage at which an item moves to Watched.", TVVisible: true},
@@ -972,7 +973,13 @@ func (a *API) stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	settings := a.settings.Get()
-	firstChunk := settings.InitialBufferBytes
+	// Gate the response on a small leading slice, not the whole startup
+	// buffer: a player's request patience (~10s) is far shorter than the
+	// time a slow swarm needs to fetch 128 MiB, so waiting for the full
+	// window made play-while-downloading impossible. Later chunks grow
+	// adaptively so fast swarms keep large reads without extra qBittorrent
+	// round-trips.
+	firstChunk := settings.StreamStartBytes
 	if remaining := end - start + 1; firstChunk > remaining {
 		firstChunk = remaining
 	}
@@ -1006,16 +1013,16 @@ func (a *API) stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	position := start
-	first := true
+	chunkSize := firstChunk
 	for position <= end {
-		chunk := settings.ReadAheadBytes
-		if first {
-			chunk = firstChunk
+		chunk := chunkSize
+		if chunk > settings.ReadAheadBytes {
+			chunk = settings.ReadAheadBytes
 		}
 		if remaining := end - position + 1; chunk > remaining {
 			chunk = remaining
 		}
-		if !first {
+		if position != start {
 			currentPath, err = a.service.ReadableRangePath(r.Context(), d, position, chunk)
 			if err != nil {
 				a.log.Warn("stream range wait stopped", "sourceId", d.ID, "rangeStart", position, "rangeBytes", chunk, "error", err)
@@ -1029,7 +1036,7 @@ func (a *API) stream(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		position += chunk
-		first = false
+		chunkSize = chunk * 2
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
 		}
