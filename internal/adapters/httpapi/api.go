@@ -30,6 +30,19 @@ import (
 //go:embed static/*
 var static embed.FS
 
+// webFS is the embedded web build behind the app shell. A variable so tests
+// can mount a fake build: a fresh checkout embeds only the placeholder until
+// `make frontend` fills static/.
+var webFS fs.FS = embeddedWebFS()
+
+func embeddedWebFS() fs.FS {
+	sub, err := fs.Sub(static, "static")
+	if err != nil {
+		panic(err)
+	}
+	return sub
+}
+
 type API struct {
 	service  *application.Service
 	settings *config.Store
@@ -89,9 +102,30 @@ func New(service *application.Service, settings *config.Store, log *slog.Logger,
 	mux.HandleFunc("HEAD /api/v1/streams/{id}", a.stream)
 	mux.HandleFunc("GET /api/v1/streams/{id}/browser", a.browserStream)
 	mux.HandleFunc("GET /api/v1/streams/{id}/snap", a.streamSnap)
-	sub, _ := fs.Sub(static, "static")
-	mux.Handle("/", http.FileServer(http.FS(sub)))
+	mux.Handle("/", appShell(webFS))
 	return recoverer(log, access(log, trusted(settings, mux)))
+}
+
+// appShell serves the embedded web build. A GET outside /api/ that matches no
+// asset gets index.html, so client-side routes (/library/downloads, /search?q=)
+// survive refreshes and shared links; the app parses the path it was served
+// under. The shell must revalidate: it references asset hashes that change
+// with every frontend build.
+func appShell(web fs.FS) http.Handler {
+	files := http.FileServer(http.FS(web))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && !strings.HasPrefix(r.URL.Path, "/api/") {
+			if _, err := fs.Stat(web, strings.TrimPrefix(r.URL.Path, "/")); err != nil {
+				if index, indexErr := fs.ReadFile(web, "index.html"); indexErr == nil {
+					w.Header().Set("Cache-Control", "no-cache")
+					w.Header().Set("Content-Type", "text/html; charset=utf-8")
+					w.Write(index)
+					return
+				}
+			}
+		}
+		files.ServeHTTP(w, r)
+	})
 }
 
 func (a *API) info(w http.ResponseWriter, r *http.Request) {
