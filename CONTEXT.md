@@ -57,6 +57,28 @@ Serving original bytes so the client device decodes everything; on both screens 
 The server-built playback route for browser-hostile audio in a Source: video bytes copied untouched, audio transcoded to AAC. Introduced by ADR-0003, superseding the removed client-side decode.
 _Avoid_: browser stream (code name), client decode
 
+### Player controls
+
+**Browser player**:
+The player surface that renders video with an HTML5 video element in a browser.
+_Avoid_: web client, web player
+
+**Player command**:
+A logical playback action — play/pause, seek, volume step, mute, fullscreen, subtitle menu, fraction jump — triggered by keys or buttons.
+_Avoid_: player action
+
+**Player shortcut**:
+A keyboard binding on the Browser player that fires a Player command while the player view is active and no menu or dialog has focus.
+_Avoid_: hotkey, keybinding
+
+**Player panel**:
+An in-player chooser — audio tracks or subtitles — that takes keys away from Player shortcuts while it is open.
+_Avoid_: dialog, popup
+
+**OSD**:
+The transient on-screen feedback a Player command triggers; it auto-hides.
+_Avoid_: toast, notification
+
 ### Subtitles
 
 **Subtitle candidate**:

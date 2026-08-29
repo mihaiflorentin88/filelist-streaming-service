@@ -1,6 +1,8 @@
 import { render } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { API, audioPlaybackRoute, buildPath, canonicalHouseholdItems, CatalogDetail, CatalogSource, CatalogTitle, clampVolume, ControlsVisibility, Download, DownloadSort, downloadTransferActions, DownloadTransferAction, formatBytes, HouseholdItem, HouseholdState, Job, JobLog, languageDisplayName, LibraryCategory, loadPlayerSettings, logicalPlaybackPosition, MediaAudioTrack, MediaInfo, MediaState, canonicalLanguage, subtitleRank, orderDownloadIDs, parsePath, PlaybackPreferences, PlayerSettingsStorage, preferredAudioTrack, reconcileDownloads, Route, resumeActionLabel, resumeForTitle, resumeSummary, savePlayerSettings, seasonPackActionLabel, SettingsField, SubtitleCandidate, subtitleItemLabel, subtitleMenuGroups, SubtitleWarning, View } from '@filelist/shared';
+import { applyVolumeStep, fractionTarget, resolveEscape, resolveShortcut, ScrubCoalescer, seekTarget, type PlayerCommand } from './shortcuts';
+import { OsdLayer, type OsdFeedback } from './osd';
 import './style.css';
 
 const api = new API(location.origin);
@@ -101,6 +103,7 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
   const preferenceRef = useRef<PlaybackPreferences>(active.preferences || defaults);
   const durationRef = useRef(0);
   const [message, setMessage] = useState('Reading media details…');
+  const [osd, setOsd] = useState<OsdFeedback | null>(null);
   const [mediaInfo, setMediaInfo] = useState<MediaInfo | null>(null);
   const [selectedAudio, setSelectedAudio] = useState(-1);
   const [position, setPosition] = useState(0);
@@ -129,6 +132,12 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
   // Pending element seek applied on the next loadedmetadata (track switches
   // that move between native and compatibility routes).
   const pendingSeekRef = useRef(-1);
+  // Shortcut transport: the pending scrub commit target (non-null while a
+  // coalesced seek is in flight) and the latest restartAt for the coalescer's
+  // stable commit callback.
+  const scrub = useRef<ScrubCoalescer | null>(null);
+  const restartAtRef = useRef<(targetMs: number) => void>(() => { });
+  restartAtRef.current = restartAt;
   const [selectedSubtitle, setSelectedSubtitle] = useState('off');
   const [controlsVisible, setControlsVisible] = useState(true);
   const controls = useMemo(() => new ControlsVisibility({ policy: { armWhilePaused: true, statusHolds: true, manualHideSuppressionMs: 500 }, onChange: setControlsVisible }), []);
@@ -195,7 +204,7 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
     return () => { cancelled = true; window.clearTimeout(mediaRetryTimer.current) };
   }, [active.download.id]);
 
-  useEffect(() => () => { window.clearTimeout(retryTimer.current); void save() }, [active.download.id]);
+  useEffect(() => () => { window.clearTimeout(retryTimer.current); if (clickTimer.current) window.clearTimeout(clickTimer.current); scrub.current?.cancel(); void save() }, [active.download.id]);
   // Subtitle cues carry content-time timestamps; the compatibility stream's
   // element clock starts at the requested offset, so shift cues to match.
   function syncSubtitleOffset(offset: number) {
@@ -252,8 +261,17 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
     const element = root.current;
     if (!element) return;
     element.addEventListener('mousemove', revealControls);
-    element.addEventListener('keydown', revealControls);
-    return () => { element.removeEventListener('mousemove', revealControls); element.removeEventListener('keydown', revealControls) };
+    element.addEventListener('keydown', onKey);
+    return () => { element.removeEventListener('mousemove', revealControls); element.removeEventListener('keydown', onKey) };
+  }, [onKey]);
+  // Fullscreen truth: the browser can exit fullscreen without delivering the
+  // key to the page, so the Escape chain follows the fullscreenchange event.
+  const [fullscreen, setFullscreen] = useState(false);
+  useEffect(() => {
+    const sync = () => setFullscreen(Boolean(document.fullscreenElement));
+    sync();
+    document.addEventListener('fullscreenchange', sync);
+    return () => document.removeEventListener('fullscreenchange', sync);
   }, []);
 
   async function chooseSubtitle(candidate: SubtitleCandidate, automatic = false, persist = true) {
@@ -335,14 +353,84 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
   function togglePlayback() { const element = video.current; if (!element) return; if (element.paused) { shouldPlay.current = true; void element.play().catch(error => setMessage(`Playback could not start: ${error.message}`)) } else { shouldPlay.current = false; element.pause() } }
   function revealControls() { controls.reveal() }
   function hideControls() { controls.hide() }
+  // Mouse conventions on the video surface: single click toggles playback,
+  // double click toggles fullscreen; the deferral window tells them apart.
+  // Clicks on the chrome or panels never reach these handlers — they are not
+  // descendants of the video element.
+  const clickTimer = useRef(0);
+  function onVideoClick() {
+    if (clickTimer.current) { window.clearTimeout(clickTimer.current); clickTimer.current = 0; return }
+    clickTimer.current = window.setTimeout(() => { clickTimer.current = 0; runCommand({ kind: 'toggle-playback' }, false) }, 250);
+  }
+  function onVideoDoubleClick() {
+    if (clickTimer.current) { window.clearTimeout(clickTimer.current); clickTimer.current = 0 }
+    void runCommand({ kind: 'toggle-fullscreen' }, false);
+  }
+  // Player shortcut dispatch: resolve the keydown at the command layer and
+  // execute. Bound keys are consumed (preventDefault so a focused chrome
+  // button cannot double-fire; stopPropagation so the modal Escape hook never
+  // races the shortcut chain); unbound keys keep today's reveal behavior.
+  function onKey(event: KeyboardEvent) {
+    if (event.metaKey || event.ctrlKey || event.altKey) { revealControls(); return }
+    const resolved = resolveShortcut(event.key, event.repeat, subtitleOpen || audioOpen);
+    if (!resolved) { revealControls(); return }
+    event.preventDefault();
+    event.stopPropagation();
+    runCommand(resolved.command, resolved.repeatable);
+  }
+  function runCommand(command: PlayerCommand, repeatable: boolean) {
+    if (command.kind === 'toggle-playback') { togglePlayback(); return }
+    if (command.kind === 'toggle-mute') { toggleMuted(); setOsd({ kind: 'mute', muted: !muted }); return }
+    if (command.kind === 'play') { shouldPlay.current = true; void video.current?.play().catch(() => { }); return }
+    if (command.kind === 'pause' || command.kind === 'stop') { shouldPlay.current = false; if (video.current && !video.current.paused) video.current.pause(); return }
+    if (command.kind === 'open-subtitles') { setSubtitleOpen(true); revealControls(); return }
+    if (command.kind === 'seek-fraction') {
+      if (!mediaInfo) { setOsd({ kind: 'hint', text: 'Seek unavailable — still reading the media.' }); return }
+      restartAt(fractionTarget(command.fraction, mediaInfo.durationMs));
+      setOsd({ kind: 'seek', fraction: command.fraction, hint: `${Math.round(command.fraction * 100)}%` });
+      return;
+    }
+    if (command.kind === 'volume') {
+      // Loudness truth lives in persisted state; ↑/↓ while muted unmutes and
+      // then applies the step (sliding to zero mutes), matching the slider.
+      const stepped = applyVolumeStep(volume, muted, command.delta);
+      setVolume(stepped.volume);
+      setMuted(stepped.muted);
+      savePlayerSettings(persistedStore(), stepped);
+      setOsd({ kind: 'volume', percent: Math.round(stepped.volume * 100) });
+    }
+    if (command.kind === 'toggle-fullscreen') { void toggleFullscreen(); return }
+    if (command.kind === 'escape') {
+      // Graceful exit: peel one layer per press instead of closing outright.
+      const step = resolveEscape({ fullscreen, panelOpen: subtitleOpen || audioOpen, controlsVisible });
+      if (step === 'exit-fullscreen') { if (document.fullscreenElement) void document.exitFullscreen().catch(() => { }); return }
+      if (step === 'close-panel') { setSubtitleOpen(false); setAudioOpen(false); return }
+      if (step === 'hide-chrome') { hideControls(); return }
+      onClose();
+      return;
+    }
+    if (command.kind === 'seek') {
+      const base = scrub.current?.target ?? position;
+      const target = seekTarget(base, mediaInfo?.durationMs ?? 0, command.deltaMs);
+      const hint = `${command.deltaMs > 0 ? '+' : '−'}${Math.abs(command.deltaMs) / 1000}s`;
+      if (!repeatable) { restartAt(target); setOsd(seekOsd(target, hint)); return }
+      if (!scrub.current) scrub.current = new ScrubCoalescer(targetMs => restartAtRef.current(targetMs));
+      scrub.current.nudge(target);
+      setPosition(target);
+      setOsd(seekOsd(target, hint));
+    }
+  }
   // Loudness changes update persisted React state; the sync effect pushes them
   // to the decoder or the element, and the browser store keeps them for the
   // next mount. Sliding to zero mutes, sliding up from zero unmutes.
   function setPlayerVolume(value: number) { const next = clampVolume(value); setVolume(next); setMuted(next === 0); savePlayerSettings(persistedStore(), { volume: next, muted: next === 0 }) }
   function toggleMuted() { setMuted(!muted); savePlayerSettings(persistedStore(), { volume, muted: !muted }) }
   async function toggleFullscreen() { try { if (document.fullscreenElement) await document.exitFullscreen(); else await root.current?.requestFullscreen() } catch (error) { setMessage(`Fullscreen unavailable: ${(error as Error).message}`) } }
+  function seekOsd(targetMs: number, hint: string): OsdFeedback {
+    return { kind: 'seek', fraction: durationRef.current > 0 ? targetMs / durationRef.current : 0, hint };
+  }
   return <div ref={root} class={`video ${controlsVisible ? 'controls-visible' : ''}`} role="dialog" aria-modal="true" aria-label={`Playing ${active.download.displayTitle || active.download.filePath}`}>
-    <video ref={video} src={playbackURL ? api.streamURL(playbackURL) : undefined} autoplay playsInline onLoadedMetadata={event => { reloading.current = false; const pending = pendingSeekRef.current >= 0 ? pendingSeekRef.current : (!browserMode && active.resumeMs > 0 ? active.resumeMs : -1); pendingSeekRef.current = -1; if (pending > 0) event.currentTarget.currentTime = pending / 1000; if (shouldPlay.current) void event.currentTarget.play().catch(() => setMessage('Press Play to start playback.')) }} onWaiting={() => { if (!reloading.current) setMessage(active.download.playbackMode === 'progressive' ? 'Buffering the next downloaded segment…' : 'Buffering…') }} onCanPlay={() => { recovering.current = false; recoverAttempts.current = 0; if (!reloading.current) setMessage('') }} onPlaying={() => { recovering.current = false; recoverAttempts.current = 0; setPlaying(true); if (!reloading.current) setMessage('') }} onTimeUpdate={event => { const next = logicalPlaybackPosition(offsetRef.current, event.currentTarget.currentTime, durationRef.current); const now = Date.now(); if (now - lastRendered.current >= 250) { lastRendered.current = now; setPosition(next) } if (now - lastSaved.current > 10000) { lastSaved.current = now; void save() } }} onPause={() => { setPlaying(false); void save() }} onEnded={() => void save().then(() => onAdvance(preferenceRef.current))} onError={() => void recover()} />
+    <video ref={video} src={playbackURL ? api.streamURL(playbackURL) : undefined} autoplay playsInline onLoadedMetadata={event => { reloading.current = false; const pending = pendingSeekRef.current >= 0 ? pendingSeekRef.current : (!browserMode && active.resumeMs > 0 ? active.resumeMs : -1); pendingSeekRef.current = -1; if (pending > 0) event.currentTarget.currentTime = pending / 1000; if (shouldPlay.current) void event.currentTarget.play().catch(() => setMessage('Press Play to start playback.')) }} onWaiting={() => { if (!reloading.current) setMessage(active.download.playbackMode === 'progressive' ? 'Buffering the next downloaded segment…' : 'Buffering…') }} onCanPlay={() => { recovering.current = false; recoverAttempts.current = 0; if (!reloading.current) setMessage('') }} onPlaying={() => { recovering.current = false; recoverAttempts.current = 0; setPlaying(true); if (!reloading.current) setMessage('') }} onTimeUpdate={event => { if (scrub.current?.target != null) return; const next = logicalPlaybackPosition(offsetRef.current, event.currentTarget.currentTime, durationRef.current); const now = Date.now(); if (now - lastRendered.current >= 250) { lastRendered.current = now; setPosition(next) } if (now - lastSaved.current > 10000) { lastSaved.current = now; void save() } }} onPause={() => { setPlaying(false); void save() }} onEnded={() => void save().then(() => onAdvance(preferenceRef.current))} onError={() => void recover()} onClick={onVideoClick} onDblClick={onVideoDoubleClick} />
     <div class="player-chrome">
       <div class="player-heading"><strong>{active.download.displayTitle || active.download.filePath}</strong><span>{active.download.playbackMode === 'progressive' ? 'Streaming while downloading' : 'Downloaded file'}</span></div>
       <div class="player-scrubber"><input aria-label="Playback position" type="range" min="0" max={mediaInfo?.durationMs || 1} step="1000" value={Math.min(position, mediaInfo?.durationMs || 1)} disabled={!mediaInfo} onInput={event => setPosition(Number(event.currentTarget.value))} onChange={event => restartAt(Number(event.currentTarget.value))} /><div><time>{formatPlaybackTime(position)}</time><time>{mediaInfo ? formatPlaybackTime(mediaInfo.durationMs) : 'Preparing…'}</time></div></div>
@@ -351,6 +439,7 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
     {audioOpen && <section class="subtitle-panel audio-panel"><h2>Audio track</h2>{mediaInfo?.audioTracks.map(track => <button class={track.streamIndex === selectedAudio ? 'selected' : ''} onClick={() => void chooseAudio(track)}><strong>{audioTrackLabel(track)}</strong>{track.default && <span>Default track</span>}</button>)}</section>}
     {subtitleOpen && <section class="subtitle-panel"><h2>Subtitles</h2><button class={selectedSubtitle === 'off' ? 'selected' : ''} onClick={() => disableSubtitles()}>Off</button>{subtitleGroups.map(group => <div class="subtitle-group" key={group.key}><p class="subtitle-group-label">{group.label}</p>{group.items.map(candidate => { const position = subtitlePositions.get(candidate) ?? 0; return <button key={`${candidate.provider}:${candidate.id}`} class={selectedSubtitle === `${candidate.provider}:${candidate.id}` ? 'selected' : ''} onClick={() => void chooseSubtitle(candidate)}><strong>{subtitleItemLabel(candidate, position)}</strong><span>{[languageDisplayName(candidate.language), candidate.format || '', candidate.hearingImpaired ? 'hearing impaired' : ''].filter(Boolean).join(' · ')}</span>{candidate.releaseName && <small>{candidate.releaseName}</small>}</button> })}</div>)}{candidates.length === 0 && <p>No matching downloadable subtitles were found.</p>}{warnings.map(w => <p class="danger"><strong>{w.provider}</strong>: {w.message}</p>)}</section>}
     {message && <p class="player-status" role="status">{message}</p>}
+    <OsdLayer feedback={osd} onHidden={() => setOsd(null)} />
   </div>;
 }
 

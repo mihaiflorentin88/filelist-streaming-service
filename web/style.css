@@ -2128,3 +2128,54 @@ progress {
     margin-left: 0
   }
 }
+
+/* OSD: transient Player command feedback; one instance, auto-hidden by the component. */
+.osd {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 96px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  pointer-events: none;
+  z-index: 30;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  text-shadow: 0 1px 2px #071014b3
+}
+
+.osd-ghost {
+  position: absolute;
+  top: 50%;
+  width: 3px;
+  height: 18px;
+  margin-left: -1.5px;
+  border-radius: 2px;
+  background: var(--teal);
+  box-shadow: 0 0 4px #071014b3
+}
+
+.osd-hint-text,
+.osd-volume-label,
+.osd-mute-label {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #071014e8
+}
+
+.osd-volume-track {
+  width: 160px;
+  height: 6px;
+  border-radius: 3px;
+  background: #ffffff40;
+  overflow: hidden
+}
+
+.osd-volume-fill {
+  display: block;
+  height: 100%;
+  background: var(--teal)
+}
