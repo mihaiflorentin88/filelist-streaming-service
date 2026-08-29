@@ -114,8 +114,6 @@ class SyncVerdictTest(unittest.TestCase):
         self.assertTrue(ok)
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class CheckSyncTest(unittest.TestCase):

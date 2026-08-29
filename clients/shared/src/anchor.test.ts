@@ -58,8 +58,8 @@ describe("planSessionStart", () => {
 
   it("walks backwards when the window content sits after the target", async () => {
     // Estimate lands at 200 s of content but the target is 60 s.
-    const { windowBytes, fetchSpan } = tableFile();
-    const anchor = await planSessionStart(60_000, 100 << 20, 300 << 20, fetchSpan, windowBytes);
+    const { fetchSpan } = tableFile();
+    const anchor = await planSessionStart(60_000, 100 << 20, 300 << 20, fetchSpan);
     // The window's first content PTS sits at or before the target (a valid
     // anchor trims forward) and within one window of it.
     expect(anchor.windowFirstPtsMs).toBeLessThanOrEqual(60_000);
@@ -67,7 +67,6 @@ describe("planSessionStart", () => {
     expect(anchor.trimMs).toBe(60_000 - anchor.windowFirstPtsMs);
     expect(anchor.startByte).toBeLessThan(100 << 20);
     expect(anchor.probes).toBeLessThanOrEqual(MAX_ANCHOR_PROBES);
-    void windowBytes;
   });
 
   it("normalizes estimates inside the container head to a zero window", async () => {
@@ -84,9 +83,33 @@ describe("planSessionStart", () => {
     expect(anchor.trimMs).toBe(10_000);
   });
 
+  it("never plans a later request at an earlier window than an earlier request", async () => {
+    const { windowBytes, fetchSpan } = denseThenSparseFile();
+    const early = await planSessionStart(100_000, 100 << 20, 270 << 20, fetchSpan, windowBytes);
+    const late = await planSessionStart(200_000, 100 << 20, 270 << 20, fetchSpan, windowBytes);
+    expect(late.startByte).toBeGreaterThanOrEqual(early.startByte);
+    expect(late.windowFirstPtsMs).toBeGreaterThan(early.windowFirstPtsMs);
+  });
+
+  it("accepts a discontinuous window on trim alone", async () => {
+    // Packet-order measurement can legitimately report lastPtsMs below
+    // firstPtsMs; the window then has no PTS-derivable length and is
+    // accepted whenever the target trims forward from its first PTS.
+    const fetchSpan = async (start: number): Promise<AudioSpan> => ({
+      streamIndex: 1,
+      startByte: start,
+      lengthBytes: 16 << 20,
+      firstPtsMs: Math.round(start / 500),
+      lastPtsMs: Math.round(start / 500) - 40_000,
+    });
+    const anchor = await planSessionStart(60_000, 30_000_000, 300 << 20, fetchSpan);
+    expect(anchor.windowFirstPtsMs).toBe(60_000);
+    expect(anchor.trimMs).toBe(0);
+    expect(anchor.windowLengthMs).toBe(Number.POSITIVE_INFINITY);
+  });
+
   it("gives up after the probe budget when the target is beyond the file", async () => {
-    const { windowBytes, fetchSpan } = tableFile();
-    await expect(planSessionStart(10_000_000, 200 << 20, 300 << 20, fetchSpan, windowBytes)).rejects.toThrow(/did not converge/);
-    void windowBytes;
+    const { fetchSpan } = tableFile();
+    await expect(planSessionStart(10_000_000, 200 << 20, 300 << 20, fetchSpan)).rejects.toThrow(/did not converge/);
   });
 });

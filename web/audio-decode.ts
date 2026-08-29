@@ -31,12 +31,16 @@ export const DECODE_SAMPLE_RATE = 48000;
 export const DECODE_CHANNELS = 2;
 const SCHEDULE_AHEAD_SECONDS = 0.5;
 const DRIFT_LIMIT_SECONDS = 0.25;
-const ANCHOR_LEAD_SECONDS = 0.08;
+const SUSPENDED_GRACE_SECONDS = 5;
+// A span of a still-downloading source answers 503 + Retry-After: 2; keep the
+// session parked on it for a few rounds before declaring failure.
+const ANCHOR_RETRY_ATTEMPTS = 3;
+const ANCHOR_RETRY_DELAY_MS = 2000;
 const PENDING_PAUSE_SECONDS = 120;
 const PENDING_RESUME_SECONDS = 45;
 // How long playback may run with a context that never reaches 'running' before
 // the silence is declared a failure instead of a transient suspension.
-const SUSPENDED_GRACE_SECONDS = 5;
+const ANCHOR_LEAD_SECONDS = 0.08;
 
 export type DecodeStatus = { status: 'ready' | 'stalling' | 'error'; message: string };
 export type DecodeOptions = { video: HTMLVideoElement; url: string; startSec: number; totalBytes: number; durationSec: number; audioOrdinal: number; spanFetch: SpanFetcher; onStatus: (status: DecodeStatus) => void; createContext?: () => AudioContext; createWorker?: () => Worker };
@@ -163,18 +167,35 @@ export class AudioDecodeController {
     this.throttle(false);
     const hint = byteOffsetForTime(seconds, this.bytesPerSecond, this.totalBytes);
     let startByte = hint;
-    try {
-      // The hint only picks where probing starts (ADR-0002); the measured
-      // span decides which bytes the session actually decodes.
-      const plan = await planSessionStart(seconds * 1000, hint, this.totalBytes, this.spanFetch, windowByteBudget(this.bytesPerSecond));
-      if (this.destroyed || session !== this.session) return;
-      startByte = plan.startByte;
-      this.windowFirstPtsMs = plan.windowFirstPtsMs;
-      this.windowLengthMs = plan.windowLengthMs;
-      console.debug(`[audio-decode] session ${session} anchored: window content starts at ${plan.windowFirstPtsMs} ms and runs ${plan.windowLengthMs} ms (${plan.probes} probe(s))`);
-    } catch (error) {
-      if (session === this.session) this.fail(`Audio decode failed: ${(error as Error).message}`);
-      return;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        // The hint only picks where probing starts (ADR-0002); the measured
+        // span decides which bytes the session actually decodes.
+        const plan = await planSessionStart(seconds * 1000, hint, this.totalBytes, this.spanFetch, windowByteBudget(this.bytesPerSecond));
+        if (this.destroyed || session !== this.session) return;
+        startByte = plan.startByte;
+        this.windowFirstPtsMs = plan.windowFirstPtsMs;
+        this.windowLengthMs = plan.windowLengthMs;
+        console.debug(`[audio-decode] session ${session} anchored: window content starts at ${plan.windowFirstPtsMs} ms and runs ${plan.windowLengthMs} ms (${plan.probes} probe(s))`);
+        break;
+      } catch (error) {
+        if (this.destroyed || session !== this.session) return;
+        // The server marks spans of still-downloading sources retryable
+        // (503 + Retry-After); keep the session alive and re-probe after the
+        // announced delay instead of failing playback for a window that has
+        // not arrived yet.
+        if ((error as { status?: number }).status === 503 && attempt < ANCHOR_RETRY_ATTEMPTS) {
+          if (!this.stalledNote) {
+            this.stalledNote = true;
+            this.onStatus({ status: 'stalling', message: 'Waiting for the requested audio to finish downloading…' });
+          }
+          await new Promise(resolve => setTimeout(resolve, ANCHOR_RETRY_DELAY_MS));
+          if (this.destroyed || session !== this.session) return;
+          continue;
+        }
+        this.fail(`Audio decode failed: ${(error as Error).message}`);
+        return;
+      }
     }
     this.worker.postMessage({ type: 'start', session, url: this.url, startByte, totalBytes: this.totalBytes, bytesPerSecond: this.bytesPerSecond, audioOrdinal: this.audioOrdinal } satisfies WorkerInMessage);
   }

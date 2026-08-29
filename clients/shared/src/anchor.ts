@@ -78,17 +78,22 @@ export async function planSessionStart(
   const span = await fetchSpan(hint, requestLength);
   assertSpan(span);
   const trimMs = requestedMs - span.firstPtsMs;
-  if (trimMs >= 0 && trimMs <= span.lastPtsMs - span.firstPtsMs) {
+  // A discontinuous window (lastPtsMs < firstPtsMs, valid per packet-order
+  // measurement) has no PTS-derivable length: accept it on trim >= 0 and
+  // report an unbounded length so the controller's replan guard never
+  // triggers on it.
+  const discontinuous = span.lastPtsMs < span.firstPtsMs;
+  const windowMs = span.lastPtsMs - span.firstPtsMs;
+  if (trimMs >= 0 && (discontinuous || trimMs <= windowMs)) {
    return {
     startByte: span.startByte,
     lengthBytes: span.lengthBytes,
     trimMs,
     windowFirstPtsMs: span.firstPtsMs,
-    windowLengthMs: span.lastPtsMs - span.firstPtsMs,
+    windowLengthMs: discontinuous ? Number.POSITIVE_INFINITY : windowMs,
     probes: probe,
    };
   }
-  const windowMs = span.lastPtsMs - span.firstPtsMs;
   const density = windowMs > 0 ? span.lengthBytes / windowMs : 0;
   if (span.firstPtsMs > requestedMs) {
    // Window content sits after the target: walk toward the file head by

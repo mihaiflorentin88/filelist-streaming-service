@@ -5,7 +5,7 @@
 // the video advanced while spans were measured.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AudioDecodeController, DECODE_CHANNELS, DECODE_SAMPLE_RATE, type DecodeOptions, type DecodeStatus } from './audio-decode';
-import { FakeAudioContext, FakeWorker } from './test-fakes';
+import { FakeAudioContext, FakeWorker, fakeSpanFetcher } from './test-fakes';
 import type { AudioSpan } from '@filelist/shared';
 
 let nextFrame: (() => void) | null = null;
@@ -15,6 +15,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.useRealTimers();
   nextFrame = null;
   FakeWorker.created.length = 0;
 });
@@ -24,12 +25,6 @@ function tickFrame() { nextFrame?.() }
 // content PTS at byte b is round(b / 500) — independent of the controller's
 // average-bitrate estimate, which the tests skew via durationSec.
 const TOTAL_BYTES = 100 << 20;
-function uniformSpanFetcher(calls: { startByte: number; lengthBytes: number }[] = []) {
-  return async (startByte: number, lengthBytes: number): Promise<AudioSpan> => {
-    calls.push({ startByte, lengthBytes });
-    return { streamIndex: 1, startByte, lengthBytes, firstPtsMs: Math.round(startByte / 500), lastPtsMs: Math.round((startByte + lengthBytes) / 500), windowLengthMs: Math.round(lengthBytes / 500) };
-  };
-}
 
 class RecordingAudioContext extends FakeAudioContext {
   readonly buffers: { duration: number; data: Float32Array }[] = [];
@@ -58,7 +53,7 @@ async function startHarness(options: { startSec: number; durationSec: number; fe
   const decodeOptions: DecodeOptions = {
     video, url: 'stream://title/file.mkv', startSec: options.startSec, totalBytes: TOTAL_BYTES, durationSec: options.durationSec, audioOrdinal: 0,
     onStatus: status => statuses.push(status),
-    spanFetch: options.fetchSpan ?? uniformSpanFetcher(spanCalls),
+    spanFetch: options.fetchSpan ?? fakeSpanFetcher(spanCalls),
     createContext: () => ctx as unknown as AudioContext,
     createWorker: () => worker as unknown as Worker,
   };
@@ -128,5 +123,34 @@ describe('measured session anchoring', () => {
     const starts = worker.sent.filter(message => message.type === 'start');
     expect(starts[1]).toMatchObject({ startByte: hintAt100 });
     expect(spanCalls.at(-1)?.startByte).toBe(hintAt100);
+  });
+
+  it('retries a retryable span probe instead of failing the session', async () => {
+    vi.useFakeTimers();
+    let probeCount = 0;
+    const fetchSpan = async (startByte: number, lengthBytes: number): Promise<AudioSpan> => {
+      probeCount++;
+      if (probeCount <= 2) throw Object.assign(new Error('audio span is not readable yet: source is still downloading'), { status: 503 });
+      return fakeSpanFetcher()(startByte, lengthBytes);
+    };
+    const pending = startHarness({ startSec: 60, durationSec: 250, fetchSpan });
+    await vi.advanceTimersByTimeAsync(2 * 2000);
+    const { video, worker, statuses } = await pending;
+    expect(statuses.some(status => status.status === 'stalling' && status.message.includes('Waiting for the requested audio'))).toBe(true);
+    expect(statuses.at(-1)).not.toMatchObject({ status: 'error' });
+    expect(worker.sent.some(message => message.type === 'start')).toBe(true);
+    expect(video.muted).toBe(true);
+  });
+
+  it('fails after exhausting retryable span probes', async () => {
+    vi.useFakeTimers();
+    const fetchSpan = async (): Promise<AudioSpan> => {
+      throw Object.assign(new Error('audio span is not readable yet: source is still downloading'), { status: 503 });
+    };
+    const pending = startHarness({ startSec: 60, durationSec: 250, fetchSpan });
+    await vi.advanceTimersByTimeAsync(3 * 2000);
+    const { video, statuses } = await pending;
+    expect(statuses.at(-1)).toMatchObject({ status: 'error', message: expect.stringContaining('Audio decode failed') });
+    expect(video.muted).toBe(false);
   });
 });

@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/mihaiflorentin88/filelist-streaming-service/internal/domain"
 	"github.com/mihaiflorentin88/filelist-streaming-service/internal/platform/config"
 )
 
@@ -102,5 +101,4 @@ func TestAudioSpanMeasuresArtifactOnGeneratedFixture(t *testing.T) {
 	if span.FirstPTSMS != first || span.LastPTSMS != last {
 		t.Fatalf("measured span = [%d, %d], want the independently measured [%d, %d]", span.FirstPTSMS, span.LastPTSMS, first, last)
 	}
-	_ = domain.AudioSpan{}
 }

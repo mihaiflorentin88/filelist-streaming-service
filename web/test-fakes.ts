@@ -12,7 +12,7 @@ import type { AudioSpan, SpanFetcher } from '@filelist/shared';
 export function fakeSpanFetcher(calls: { startByte: number; lengthBytes: number }[] = []): SpanFetcher {
   return async (startByte: number, lengthBytes: number): Promise<AudioSpan> => {
     calls.push({ startByte, lengthBytes });
-    return { streamIndex: 1, startByte, lengthBytes, firstPtsMs: Math.round(startByte / 500), lastPtsMs: Math.round((startByte + lengthBytes) / 500), windowLengthMs: Math.round(lengthBytes / 500) };
+    return { streamIndex: 1, startByte, lengthBytes, firstPtsMs: Math.round(startByte / 500), lastPtsMs: Math.round((startByte + lengthBytes) / 500) };
   };
 }
 

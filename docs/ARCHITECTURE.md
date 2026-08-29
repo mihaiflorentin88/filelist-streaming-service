@@ -56,6 +56,11 @@ The qB endpoints and field semantics follow the official [qBittorrent WebUI API]
 
 qBittorrent 4.3.x add responses are accepted on any 2xx status unless the response explicitly contains `Fails.`; some builds return an empty success body rather than `Ok.`. A `Fails.` response is treated as a duplicate only when a follow-up lookup confirms the exact calculated info hash already exists; that torrent is then reused and recorded as managed.
 
+
+### Measured audio anchoring
+
+For codecs the browser cannot decode, the client fetches and decodes byte windows itself. Which window plays at a given time is decided only by measured timestamps (ADR-0002): `GET /downloads/{id}/audio-anchor` ffprobes the exact concatenated artifact (2 MiB container head plus the fetch window) the decoder consumes and reports the window's first and last audio PTS in packet order. The client planner probes at most five windows — moving by each window's own measured byte density — and trims the decoded front so the first sample lands on the video clock; average-bitrate arithmetic only ever chooses where probing starts. Windows whose bytes have not arrived answer 503 with `Retry-After`, and the controller re-probes instead of failing playback.
+
 ## Household state
 
 Release 1 uses one server-side `household` profile while retaining `profile_id` for later profiles. Favorites use canonical title IDs so every release version of a movie or show stays grouped; startup migration maps older release-keyed favorites to their canonical title. Playback records retain release/file identity, exact millisecond position, duration, watched state, and update time. They intentionally outlive download rows so removing a torrent does not erase viewing history. Household dashboard sections collapse those file-level records to their newest representative per canonical title before applying limits, so a series never fills a rail with episode cards; Downloads intentionally keeps every managed file. Browser video and Tizen AVPlay update the same records approximately every ten seconds and on lifecycle boundaries; the server, not the client, applies the configured watched threshold.

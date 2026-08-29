@@ -184,7 +184,7 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
       instance = value;
       decoderRef.current = value;
       setDecoder(value);
-    }).catch(error => { if (!cancelled) setMessage(`Audio decode unavailable: ${(error as Error).message}`) });
+    }).catch(error => { decodeOwned.current = false; setDecoder(null); if (!cancelled) setMessage(`Audio decode unavailable: ${(error as Error).message}`) });
     return () => { cancelled = true; decodeOwned.current = false; decoderRef.current = null; setDecoder(null); instance?.destroy() };
   }, [mediaInfo, selectedAudio, playbackURL]);
   // Loudness truth lives in persisted React state; this effect pushes it to
