@@ -14,9 +14,9 @@
   },
   "include": [
     "src.tsx",
+    "settings.tsx",
     "shortcuts.ts",
     "*.test.ts",
-    "*.test.tsx",
     "osd.tsx",
     "assets.d.ts",
     "../clients/shared/src"
