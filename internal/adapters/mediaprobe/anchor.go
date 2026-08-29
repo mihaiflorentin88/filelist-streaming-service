@@ -1,6 +1,7 @@
 package mediaprobe
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -125,37 +126,37 @@ func (a *Adapter) AudioSpan(ctx context.Context, path string, startByte, lengthB
 		boundary = startByte
 	}
 
-	artifact, err := os.CreateTemp("", "audio-span-*.mkv")
-	if err != nil {
-		return domain.AudioSpan{}, fmt.Errorf("create audio span artifact: %w", err)
-	}
-	defer os.Remove(artifact.Name())
+	// The artifact is fed to ffprobe through stdin, never via a temp file:
+	// the web decoder consumes the same bytes through a pipe (ffmpeg -i
+	// pipe:0), and the two demuxer paths disagree at partial-cluster seams —
+	// the file path reported packets the decoder skips (a measured 736 ms
+	// placement error on real titles). Measuring over stdin keeps the scan
+	// on the decoder's side of that boundary.
+	var artifact bytes.Buffer
 	if headLength > 0 {
 		if _, err := file.Seek(0, io.SeekStart); err != nil {
 			return domain.AudioSpan{}, fmt.Errorf("read container head: %w", err)
 		}
-		if _, err := io.CopyN(artifact, file, headLength); err != nil {
+		if _, err := io.CopyN(&artifact, file, headLength); err != nil {
 			return domain.AudioSpan{}, fmt.Errorf("read container head: %w", err)
 		}
 	}
 	if _, err := file.Seek(startByte, io.SeekStart); err != nil {
 		return domain.AudioSpan{}, fmt.Errorf("read audio window: %w", err)
 	}
-	if _, err := io.CopyN(artifact, file, windowEnd-startByte); err != nil {
+	if _, err := io.CopyN(&artifact, file, windowEnd-startByte); err != nil {
 		return domain.AudioSpan{}, fmt.Errorf("read audio window: %w", err)
-	}
-	if err := artifact.Close(); err != nil {
-		return domain.AudioSpan{}, fmt.Errorf("write audio span artifact: %w", err)
 	}
 
 	probeCtx, cancelProbe := context.WithTimeout(ctx, 20*time.Second)
 	defer cancelProbe()
-	out, err := exec.CommandContext(
+	cmd := exec.CommandContext(
 		probeCtx, a.settings.Get().FFprobePath,
-		"-v", "error", "-select_streams", "a",
 		"-show_entries", "packet=stream_index,pts_time,pos",
-		"-of", "json", artifact.Name(),
-	).Output()
+		"-of", "json", "pipe:0",
+	)
+	cmd.Stdin = &artifact
+	out, err := cmd.Output()
 	if err != nil {
 		return domain.AudioSpan{}, fmt.Errorf("ffprobe audio span: %w", err)
 	}
