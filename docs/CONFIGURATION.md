@@ -41,7 +41,7 @@ The sanitized qBittorrent template enables its incomplete directory, disables pr
 | FileList concurrent requests | 1 |
 | Title refresh active timeout | 30 minutes |
 
-Buffer values are limited to 2 GiB. Allocation and free-space reserve are configured in gigabytes and accept fractional values; 0 disables each check. Retention and free-space enforcement are not implemented yet; enforcement arrives with the eviction phase.
+Buffer values are limited to 2 GiB. Allocation and free-space reserve are configured in binary gigabytes (GiB) and accept fractional values; 0 disables each check. An hourly retention job enforces them: it evicts oldest-completed torrents first, one at a time through the manual-delete path (season-pack siblings included), never touches incomplete or actively-streamed downloads, and publishes a `downloads.evicted` event (reason `cap` or `reserve`) for each eviction.
 
 The global job limit and title-refresh timeout are browser-configurable and require a service restart. Queue and rate-limit waiting do not consume the title-refresh execution timeout. FileList stays serialized even when metadata jobs use the other worker slots.
 

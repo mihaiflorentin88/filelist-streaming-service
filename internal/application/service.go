@@ -30,6 +30,7 @@ type Service struct {
 	locks            sync.Map
 	metadata         MetadataProvider
 	mediaProbe       MediaProbe
+	freeSpace        func(string) (int64, error)
 	metaQueue        chan metadataRequest
 	eventMu          sync.Mutex
 	eventSubscribers map[chan domain.Event]struct{}
@@ -65,7 +66,7 @@ func NewService(c TrackerCatalog, e TorrentEngine, r Repository, s *config.Store
 	if limit < 1 {
 		limit = 10
 	}
-	service := &Service{catalog: c, engine: e, repo: r, settings: s, subtitles: subtitles, eventSubscribers: map[chan domain.Event]struct{}{}, refreshQueue: make(chan titleRefreshRequest, 256), searchQueue: make(chan trackerSearchRequest, 256), jobSlots: make(chan struct{}, limit), trackerSlots: make(chan struct{}, 1), pendingMetadata: map[string]bool{}, mediaInfoCache: map[string]cachedMediaInfo{}}
+	service := &Service{catalog: c, engine: e, repo: r, settings: s, subtitles: subtitles, eventSubscribers: map[chan domain.Event]struct{}{}, refreshQueue: make(chan titleRefreshRequest, 256), searchQueue: make(chan trackerSearchRequest, 256), jobSlots: make(chan struct{}, limit), trackerSlots: make(chan struct{}, 1), pendingMetadata: map[string]bool{}, mediaInfoCache: map[string]cachedMediaInfo{}, freeSpace: freeDiskBytes}
 	go service.titleRefreshWorker()
 	go service.trackerSearchWorker()
 	return service
@@ -390,6 +391,8 @@ func (s *Service) RetryJob(ctx context.Context, id string) (domain.Job, error) {
 	case "tracker-search":
 		query := strings.TrimPrefix(job.Label, "Search FileList for ")
 		return s.QueueTrackerSearch(ctx, query, true)
+	case retentionKind:
+		return s.RunRetention()
 	}
 	return domain.Job{}, fmt.Errorf("job kind is not retryable")
 }
@@ -435,6 +438,7 @@ func (s *Service) StartScheduler() {
 		s.retryDueJobs(false)
 		_ = s.repo.PruneJobLogs(context.Background(), time.Now().Add(-30*24*time.Hour), 500)
 		_, _ = s.SyncCatalog("latest")
+		_, _ = s.RunRetention()
 		latest := time.NewTicker(time.Hour)
 		rebuild := time.NewTicker(7 * 24 * time.Hour)
 		due := time.NewTicker(time.Minute)
@@ -446,6 +450,7 @@ func (s *Service) StartScheduler() {
 			case <-latest.C:
 				s.retryDueJobs(false)
 				_, _ = s.SyncCatalog("latest")
+				_, _ = s.RunRetention()
 			case <-rebuild.C:
 				_ = s.repo.PruneJobLogs(context.Background(), time.Now().Add(-30*24*time.Hour), 500)
 				_, _ = s.SyncCatalog("rebuild")
@@ -1376,17 +1381,7 @@ func (s *Service) Manage(ctx context.Context, id, action string, _ bool) error {
 				return fmt.Errorf("cannot remove an actively streamed download")
 			}
 		}
-		err = s.engine.Remove(ctx, hash, true)
-		if err == nil || errors.Is(err, domain.ErrTorrentNotFound) {
-			for _, item := range managed {
-				if item.EngineID == d.EngineID {
-					if deleteErr := s.repo.DeleteDownload(ctx, item.ID); deleteErr != nil {
-						return deleteErr
-					}
-				}
-			}
-			return nil
-		}
+		return s.removeTorrent(ctx, d.EngineID)
 	default:
 		return fmt.Errorf("unknown download action")
 	}
@@ -1407,6 +1402,20 @@ func (s *Service) Manage(ctx context.Context, id, action string, _ bool) error {
 		}
 	}
 	return err
+}
+
+// removeTorrent deletes the torrent behind an Engine route — files included —
+// and forgets every Managed download row pinned to that route. The manual
+// remove action and retention eviction share this exact path (ADR-0004).
+func (s *Service) removeTorrent(ctx context.Context, engineID string) error {
+	hash, ok := engineHash(engineID)
+	if !ok {
+		return fmt.Errorf("unsupported engine route")
+	}
+	if err := s.engine.Remove(ctx, hash, true); err != nil && !errors.Is(err, domain.ErrTorrentNotFound) {
+		return err
+	}
+	return s.forgetEngineRows(ctx, engineID)
 }
 
 func (s *Service) forgetEngineRows(ctx context.Context, engineID string) error {
