@@ -1209,6 +1209,11 @@ func browserStreamArgs(input string, info domain.MediaInfo, requestedTrack, requ
 		// Raspberry Pi safety invariant: video is always copied. Only the selected
 		// audio stream is transcoded for browser compatibility.
 		"-c:v", "copy", "-c:a", "aac", "-ac", "2", "-b:a", "192k",
+		// Without this, copied video keeps the GOP before the seek point while
+		// the re-encoded audio starts exactly there: the picture led the sound
+		// by up to one GOP. Discard prior frames so both streams start at the
+		// seek point. Requires FFmpeg >= 6.1.
+		"-copypriorss", "0",
 		"-map_metadata", "-1", "-avoid_negative_ts", "make_zero",
 		"-movflags", "frag_keyframe+empty_moov+default_base_moof",
 		"-f", "mp4", "pipe:1",

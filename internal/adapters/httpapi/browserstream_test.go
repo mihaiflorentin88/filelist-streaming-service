@@ -23,7 +23,7 @@ func TestBrowserStreamArgsTranscodesSelectedAudioOnly(t *testing.T) {
 		t.Fatalf("browserStreamArgs returned error: %v", err)
 	}
 	joined := strings.Join(args, " ")
-	for _, want := range []string{"-c:v copy", "-c:a aac", "-map 0:v:0", "-map 0:2", "-movflags frag_keyframe+empty_moov+default_base_moof", "-f mp4 pipe:1"} {
+	for _, want := range []string{"-c:v copy", "-c:a aac", "-map 0:v:0", "-map 0:2", "-copypriorss 0", "-movflags frag_keyframe+empty_moov+default_base_moof", "-f mp4 pipe:1"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("args missing %q: %s", want, joined)
 		}
