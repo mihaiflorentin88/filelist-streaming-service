@@ -13,6 +13,14 @@ MANAGED = {
     "Downloads\\UseIncompleteExtension": "false",
 }
 
+# Docker sidecar posture (ADR-0005): the WebUI answers without credentials
+# from the household LAN. The Pi/external merge path never sets these keys.
+NOAUTH_WEBUI = {
+    "WebUI\\AuthSubnetWhitelistEnabled": "true",
+    "WebUI\\AuthSubnetWhitelist": "0.0.0.0/0",
+    "WebUI\\Username": "admin",
+}
+
 
 def managed_values(template: bytes | None = None) -> dict[str, str]:
     if template is None:
@@ -32,13 +40,15 @@ def managed_values(template: bytes | None = None) -> dict[str, str]:
     return values
 
 
-def merge_config(original: bytes, temp_path: str, template: bytes | None = None) -> bytes:
+def merge_config(original: bytes, temp_path: str, template: bytes | None = None, noauth_webui: bool = False) -> bytes:
     try:
         text = original.decode("utf-8")
     except UnicodeDecodeError as error:
         raise ValueError("qBittorrent config must be UTF-8") from error
     values = managed_values(template)
     values["Downloads\\TempPath"] = temp_path.rstrip("/") + "/"
+    if noauth_webui:
+        values.update(NOAUTH_WEBUI)
     lines = text.splitlines(keepends=True)
     newline = "\r\n" if any(line.endswith("\r\n") for line in lines) else "\n"
     output: list[str] = []
@@ -87,9 +97,10 @@ def main() -> None:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--temp-path", required=True)
     parser.add_argument("--template", type=Path)
+    parser.add_argument("--noauth-webui", action="store_true", help="also enforce the sidecar's no-auth LAN WebUI posture")
     args = parser.parse_args()
     template = args.template.read_bytes() if args.template else None
-    args.output.write_bytes(merge_config(args.input.read_bytes(), args.temp_path, template))
+    args.output.write_bytes(merge_config(args.input.read_bytes(), args.temp_path, template, args.noauth_webui))
 
 
 if __name__ == "__main__":

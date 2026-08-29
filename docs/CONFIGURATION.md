@@ -7,7 +7,7 @@ Every JSON setting can also be supplied as an uppercase `FILELIST_STREAMING_...`
 ## Required dependencies
 
 - FileList URL, username, and passkey. Never enter the account password.
-- qBittorrent Web UI URL, username, password, and the server-visible download root.
+- qBittorrent Web UI URL and the server-visible download root. The bundled Docker sidecar is credential-free: it publishes its Web UI to the household LAN behind a trusted-network (`0.0.0.0/0`) authentication bypass (ADR-0005), so its username and password stay empty. An external qBittorrent that keeps authentication enabled takes its username and password in the same Settings fields.
 
 Each dependency has a separate diagnostic API route. Browser Settings exposes FileList, qBittorrent, storage, TMDB, and SubDL tests. SubDL uses `https://api.subdl.com`; the public website address is rejected with a corrective error. Every provider field has a hover help icon; selecting it opens copyable credential guidance. Save credentials before testing them. The TV exposes safe playback/subtitle and background-worker settings plus server connection management, while secrets and storage configuration remain browser-only.
 

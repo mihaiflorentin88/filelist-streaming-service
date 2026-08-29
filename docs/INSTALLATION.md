@@ -36,7 +36,7 @@ Only FileList and qBittorrent are required for catalog downloads. TMDB and SubDL
 | --- | --- | --- |
 | `FILELIST_USERNAME` | Sign in at [FileList](https://filelist.io), then open your profile/account page. | The username displayed on your profile. |
 | `FILELIST_PASSKEY` | On the same FileList profile/account page, locate your personal passkey. | Copy the passkey, **not** your account password. It authorizes tracker searches and `.torrent` retrieval, so treat it like a password. |
-| `QBITTORRENT_USERNAME` / `QBITTORRENT_PASSWORD` | For an existing qBittorrent instance, open **Tools → Options → Web UI → Authentication**. For a new Docker instance, choose these values yourself in `.env.docker`; the first start initializes them. | The Web UI username and password. This application currently uses qBittorrent's session login, not its newer API-key field. See the [official WebUI authentication documentation](https://github.com/qbittorrent/qBittorrent/wiki/WebUI-API-%28qBittorrent-4.1%29#authentication). |
+| qBittorrent Web UI credentials (external engines only) | For an existing external qBittorrent instance, open **Tools → Options → Web UI → Authentication**. | The bundled Docker sidecar needs none: it publishes its Web UI to the household LAN without credentials (ADR-0005). For an external engine, enter the username and password in browser Settings; the application uses qBittorrent's session login, not its newer API-key field. See the [official WebUI authentication documentation](https://github.com/qbittorrent/qBittorrent/wiki/WebUI-API-%28qBittorrent-4.1%29#authentication). |
 | `TMDB_API_KEY` | Create a free [TMDB account](https://www.themoviedb.org/signup), then open [Account Settings → API](https://www.themoviedb.org/settings/api), request API access, and accept TMDB's terms. | Either the v3 API key or the v4 API Read Access Token; the server detects the token form automatically. TMDB documents the process in [Getting Started](https://developer.themoviedb.org/v4/docs/getting-started). |
 | `SUBDL_API_KEY` | Create or sign in to a [SubDL account](https://subdl.com), then open the [SubDL API panel](https://subdl.com/panel/api). | Generate or copy the key shown under **Your API keys and usage**. Keep `SUBDL_URL=https://api.subdl.com`. |
 
@@ -61,7 +61,7 @@ cp .env.docker.example .env.docker
 chmod 0600 .env.docker
 ```
 
-At minimum, replace `APP_DATA_DIR`, `QBITTORRENT_CONFIG_DIR`, `DOWNLOADS_DIR`, and the qBittorrent credentials. All three paths must be absolute. `DOWNLOADS_DIR` must point to the large disk; incomplete pieces are stored at its `.incomplete` child. The example documents every supported port, bind address, identity, credential, provider, cache, language, buffer, quota, and worker setting.
+At minimum, replace `APP_DATA_DIR`, `QBITTORRENT_CONFIG_DIR`, and `DOWNLOADS_DIR`. All three paths must be absolute. `DOWNLOADS_DIR` must point to the large disk; incomplete pieces are stored at its `.incomplete` child. The example documents every supported port, bind address, identity, provider, cache, language, buffer, quota, and worker setting.
 
 Start and verify everything with one command:
 
@@ -69,7 +69,7 @@ Start and verify everything with one command:
 make docker-up
 ```
 
-`make docker-up` validates the private env file, creates the host directories, compiles the web client and server from source, builds the qBittorrent wrapper, waits for healthy containers, verifies authentication, verifies shared storage, checks the four credential-free streaming storage settings, and prints the localhost and detected LAN URLs for the web app. Useful follow-up commands are:
+`make docker-up` validates the private env file, creates the host directories, compiles the web client and server from source, builds the qBittorrent wrapper, waits for healthy containers, verifies credential-free qBittorrent WebUI access, verifies shared storage, checks the streaming storage settings, and prints the localhost and detected LAN URLs for the web app. Useful follow-up commands are:
 
 ```bash
 make docker-check
@@ -78,15 +78,15 @@ make docker-logs
 make docker-down
 ```
 
-The server is published on `SERVER_BIND_IP:SERVER_HOST_PORT`. qBittorrent's Web UI defaults to localhost only; torrent TCP/UDP defaults to all interfaces. Do not expose either Web UI to the public internet.
+The server is published on `SERVER_BIND_IP:SERVER_HOST_PORT`. The qBittorrent sidecar's Web UI is published to the LAN by default (`QBITTORRENT_WEBUI_BIND_IP`, default `0.0.0.0`) and answers without credentials from any household address; torrent TCP/UDP defaults to all interfaces. Everything here assumes a trusted private LAN: never port-forward the server or the Web UIs to the public internet, and set `QBITTORRENT_WEBUI_BIND_IP=127.0.0.1` if the qBittorrent Web UI should stay local.
 
-### Docker qBittorrent credential and backup policy
+### Docker qBittorrent sidecar policy (no-auth LAN posture)
 
-On every container start, the wrapper creates a new mode-`0600` timestamped copy of the existing config in `QBITTORRENT_CONFIG_DIR/filelist-backups/` before merging storage policy. The merge changes only temporary-path enablement/path, preallocation, and incomplete-extension behavior. It never sets a global, alternative, or persistent per-torrent speed limit.
+On every container start, the wrapper creates a new mode-`0600` timestamped copy of the existing config in `QBITTORRENT_CONFIG_DIR/filelist-backups/` before merging policy. The merge changes only temporary-path enablement/path, preallocation, incomplete-extension behavior, and the WebUI authentication posture. It never sets a global, alternative, or persistent per-torrent speed limit.
 
-- On a fresh config, `QBITTORRENT_USERNAME` and `QBITTORRENT_PASSWORD` are initialized through a temporary local bootstrap window that is disabled immediately afterward.
-- On an existing config, its credentials and tokens are preserved. The env credentials must match. Authentication is verified from the separate server container, so `make docker-up` fails with a corrective diagnostic if they do not.
-- To intentionally rotate an existing password, set `QBITTORRENT_FORCE_CREDENTIAL_ROTATION=true` for one start, confirm the stack is healthy, then immediately return it to `false`.
+- The sidecar runs without Web UI credentials. Every start enforces a trusted-network authentication bypass (`0.0.0.0/0`) plus a benign `admin` username — merged into the config file before boot and re-asserted through the Web API after it — so no password is ever generated, stored, or rotated. Even an older config seeded by a previous release becomes credential-free on the next start.
+- Because the bypass is unconditional, the Web UI is reachable from the household LAN only. Keep it off the public internet; `make docker-check` fails if the Web UI ever demands credentials again.
+- An external qBittorrent that keeps authentication enabled remains fully supported: point the server at its URL and provide the username and password in browser Settings (or the `FILELIST_STREAMING_QBITTORRENT_*` environment variables). The credential-free error handling applies only to the bundled sidecar posture.
 
 Application values supplied through `.env.docker` are authoritative and appear read-only in browser Settings. They are not copied into `settings.json`. Keep `.env.docker` private; Git ignores it, and Docker build contexts exclude all local env files.
 
@@ -181,7 +181,7 @@ docker compose --env-file .env.docker ps
 Invoke-RestMethod http://localhost:8097/api/v1/system/info
 ```
 
-Open `http://localhost:8097`. Obtain the PC's private IPv4 address with `Get-NetIPAddress -AddressFamily IPv4`, then use `http://PRIVATE_IP:8097` from the TV. Allow inbound TCP `8097` only on the Windows Private network profile when LAN clients need it. qBittorrent's Web UI remains bound to localhost by default.
+Open `http://localhost:8097`. Obtain the PC's private IPv4 address with `Get-NetIPAddress -AddressFamily IPv4`, then use `http://PRIVATE_IP:8097` from the TV. Allow inbound TCP `8097` only on the Windows Private network profile when LAN clients need it. qBittorrent's Web UI is bound to all interfaces by default and answers without credentials from the LAN; set `QBITTORRENT_WEBUI_BIND_IP=127.0.0.1` in `.env.docker` to keep it local.
 
 For upgrades, keep `.env.docker` and the three mounted directories, pull or unpack the new repository version, and run the same Compose `up -d --build --wait` command. Each qBittorrent container start makes a new config backup before applying the sanitized streaming storage policy. Stop without deleting mounted media/configuration by running:
 
@@ -320,7 +320,7 @@ curl -fsS http://127.0.0.1:8097/api/v1/system/info
 Open `http://SERVER_LAN_IP:8097` from the private LAN. In Settings, configure:
 
 - FileList URL, username, and passkey;
-- qBittorrent Web UI URL, username, password, and the same server-visible download root;
+- qBittorrent Web UI URL and the same server-visible download root; the Docker sidecar has no Web UI credentials, while an external engine also takes its username and password;
 - optional TMDB and SubDL credentials;
 - English preferred audio, Romanian preferred subtitles, and English subtitle fallback;
 - FFmpeg/ffprobe and cache paths when defaults differ.

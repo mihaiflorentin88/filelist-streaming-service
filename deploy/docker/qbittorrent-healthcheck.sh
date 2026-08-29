@@ -6,11 +6,6 @@ api_host=$(hostname -i 2>/dev/null | awk '{print $1}')
 [ -n "$api_host" ] || api_host=127.0.0.1
 case "$api_host" in *:*) api_host="[$api_host]" ;; esac
 base_url="http://${api_host}:${QBT_WEBUI_PORT:-8080}"
-cookie=/tmp/filelist-qbittorrent-health-cookie
-rm -f "$cookie"
-curl -fsS -c "$cookie" \
-  -H "Referer: $base_url" \
-  --data-urlencode "username=$QBITTORRENT_USERNAME" \
-  --data-urlencode "password=$QBITTORRENT_PASSWORD" \
-  "$base_url/api/v2/auth/login" >/dev/null
-curl -fsS -b "$cookie" "$base_url/api/v2/app/version" >/dev/null
+# The sidecar answers without credentials from its allowed subnets (ADR-0005);
+# a 401/403 here means the no-auth posture drifted and the container is unhealthy.
+curl -fsS -H "Referer: $base_url" "$base_url/api/v2/app/version" >/dev/null

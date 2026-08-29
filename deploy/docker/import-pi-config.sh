@@ -52,8 +52,6 @@ settings = json.loads(source.read_text(encoding="utf-8"))
 creds = {
     "FILELIST_USERNAME": settings.get("fileListUsername", ""),
     "FILELIST_PASSKEY": settings.get("fileListPasskey", ""),
-    "QBITTORRENT_USERNAME": settings.get("qbittorrentUsername", "admin"),
-    "QBITTORRENT_PASSWORD": settings.get("qbittorrentPassword", ""),
     "TMDB_API_KEY": settings.get("tmdbApiKey", ""),
     "SUBDL_API_KEY": settings.get("subDLApiKey", ""),
     "SERVER_INSTANCE_NAME": settings.get("instanceName", "FileList Streaming"),

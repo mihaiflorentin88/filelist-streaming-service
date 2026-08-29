@@ -30,6 +30,7 @@ type Client struct {
 	prepare  sync.Map
 	ready    sync.Map
 	logged   bool
+	authless bool
 }
 
 func New(settings func() (string, string, string)) *Client {
@@ -49,8 +50,15 @@ func (c *Client) login(ctx context.Context) error {
 	if c.logged {
 		return nil
 	}
-	if user == "" || pass == "" {
-		return fmt.Errorf("qBittorrent credentials are not configured")
+	switch {
+	case user == "" && pass == "":
+		// The bundled no-auth sidecar (ADR-0005) bypasses WebUI
+		// authentication for the household LAN, so no session is needed.
+		c.authless = true
+		c.logged = true
+		return nil
+	case user == "" || pass == "":
+		return fmt.Errorf("qBittorrent credentials are misconfigured: set both username and password, or leave both empty for the credential-free sidecar")
 	}
 	form := url.Values{"username": {user}, "password": {pass}}
 	r, err := outbound.Do(ctx, c.http, func() (*http.Request, error) {
@@ -113,8 +121,12 @@ func (c *Client) do(ctx context.Context, method, path string, body io.Reader, co
 	}
 	resp.Body.Close()
 	c.mu.Lock()
+	authless := c.authless
 	c.logged = false
 	c.mu.Unlock()
+	if authless {
+		return nil, fmt.Errorf("qBittorrent rejected the credential-free request with HTTP 403")
+	}
 	if err := c.login(ctx); err != nil {
 		return nil, err
 	}

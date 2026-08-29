@@ -31,6 +31,25 @@ class QBittorrentConfigTests(unittest.TestCase):
         self.assertIn(b"[Preferences]\r\n", merged)
         self.assertIn(b"Downloads\\TempPath=/big/temp/\r\n", merged)
 
+    def test_noauth_flag_enables_lan_bypass_and_keeps_default_merge(self):
+        original = (
+            b"[Preferences]\n"
+            b"WebUI\\AuthSubnetWhitelistEnabled=false\n"
+            b"WebUI\\AuthSubnetWhitelist=192.168.5.0/24\n"
+            b"WebUI\\Username=olduser\n"
+        )
+        merged = merge_config(original, "/big/temp", noauth_webui=True)
+        self.assertIn(b"WebUI\\AuthSubnetWhitelistEnabled=true\n", merged)
+        self.assertIn(b"WebUI\\AuthSubnetWhitelist=0.0.0.0/0\n", merged)
+        self.assertIn(b"WebUI\\Username=admin\n", merged)
+        self.assertNotIn(b"olduser", merged)
+
+    def test_noauth_flag_off_leaves_webui_keys_untouched(self):
+        original = b"[Preferences]\nWebUI\\Username=keepme\n"
+        merged = merge_config(original, "/big/temp")
+        self.assertIn(b"WebUI\\Username=keepme\n", merged)
+        self.assertNotIn(b"AuthSubnetWhitelist", merged)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1281,7 +1281,12 @@ func parseRange(h string, length int64) (int64, int64, bool, bool) {
 }
 
 func configured(v config.Settings) bool {
-	return v.FileListUsername != "" && v.FileListPasskey != "" && v.QBittorrentUsername != "" && v.QBittorrentPassword != ""
+	if v.FileListUsername == "" || v.FileListPasskey == "" {
+		return false
+	}
+	bothSet := v.QBittorrentUsername != "" && v.QBittorrentPassword != ""
+	bothEmpty := v.QBittorrentUsername == "" && v.QBittorrentPassword == ""
+	return bothSet || bothEmpty
 }
 
 func contentType(p string) string {

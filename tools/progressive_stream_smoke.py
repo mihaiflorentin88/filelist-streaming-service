@@ -34,6 +34,10 @@ def qb_opener(settings: dict) -> tuple[urllib.request.OpenerDirector, str]:
     opener = urllib.request.build_opener(
         urllib.request.HTTPCookieProcessor(jar)
     )
+    if not settings["qbittorrentUsername"] and not settings["qbittorrentPassword"]:
+        # The bundled sidecar bypasses WebUI authentication for the LAN, so
+        # the direct API calls below need no login session.
+        return opener, base
     login = urllib.parse.urlencode(
         {
             "username": settings["qbittorrentUsername"],
@@ -275,8 +279,8 @@ def main() -> int:
             "qbittorrentPassword": os.environ.get("FILELIST_STREAMING_QBITTORRENT_PASSWORD", settings.get("qbittorrentPassword", "")),
         }
     )
-    if not all(settings.values()):
-        raise RuntimeError("qBittorrent URL, username, and password are required")
+    if not settings["qbittorrentUrl"]:
+        raise RuntimeError("qBittorrent URL is required; username and password are optional")
 
     existing = json_request(base + "/api/v1/downloads").get("items", [])
     if any(str(item.get("releaseId")) == args.release_id for item in existing):

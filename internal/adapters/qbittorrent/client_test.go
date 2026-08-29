@@ -330,3 +330,84 @@ func TestResumeReportsTorrentNotFoundForUnknownHash(t *testing.T) {
 		t.Fatalf("resume of an unknown hash should report the torrent missing: %v", err)
 	}
 }
+func TestCredentialFreeClientPerformsStatusAndAddWithoutLogin(t *testing.T) {
+	torrent := []byte("d8:announce13:https://test/4:infod6:lengthi5e4:name9:video.mp412:piece lengthi4e6:pieces20:aaaaaaaaaaaaaaaaaaaaee")
+	loginCalls := 0
+	client := New(func() (string, string, string) { return "http://qb.test", "", "" })
+	client.http.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path == "/api/v2/auth/login" {
+			loginCalls++
+		}
+		body := "{}"
+		switch r.URL.Path {
+		case "/api/v2/torrents/info":
+			body = `[{"state":"downloading","total_size":100,"amount_left":50,"save_path":"/srv/downloads","piece_size":4}]`
+		case "/api/v2/torrents/properties":
+			body = `{"piece_size":4}`
+		case "/api/v2/app/preferences":
+			body = `{"temp_path_enabled":true,"temp_path":"/srv/downloads/.incomplete"}`
+		case "/api/v2/torrents/trackers":
+			body = `[]`
+		case "/api/v2/torrents/add":
+			body = "Ok."
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+	})
+
+	if _, err := client.Status(t.Context(), "abc"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Add(t.Context(), strings.NewReader(string(torrent)), "/srv/downloads"); err != nil {
+		t.Fatal(err)
+	}
+	if loginCalls != 0 {
+		t.Fatalf("credential-free client called the login endpoint %d times", loginCalls)
+	}
+}
+
+func TestCredentialFreeClientTreatsForbiddenAsTerminal(t *testing.T) {
+	requests := 0
+	client := New(func() (string, string, string) { return "http://qb.test", "", "" })
+	client.http.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		requests++
+		return &http.Response{StatusCode: http.StatusForbidden, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("Forbidden")), Request: r}, nil
+	})
+
+	if _, err := client.Status(t.Context(), "abc"); err == nil {
+		t.Fatal("credential-free client must fail on 403 instead of retrying into a login loop")
+	}
+	if requests != 1 {
+		t.Fatalf("credential-free 403 must be terminal after one request, got %d requests", requests)
+	}
+}
+
+func TestHalfConfiguredCredentialsAreRejected(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		user     string
+		password string
+	}{
+		{"only username", "admin", ""},
+		{"only password", "", "secret"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			requests := 0
+			client := New(func() (string, string, string) { return "http://qb.test", tt.user, tt.password })
+			client.http.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				requests++
+				return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("Ok.")), Request: r}, nil
+			})
+
+			_, err := client.Test(t.Context())
+			if err == nil {
+				t.Fatal("exactly one configured credential must produce a clear misconfiguration error")
+			}
+			if !strings.Contains(err.Error(), "both") {
+				t.Fatalf("unclear misconfiguration error: %v", err)
+			}
+			if requests != 0 {
+				t.Fatalf("misconfigured credentials must fail before any request, got %d requests", requests)
+			}
+		})
+	}
+}
