@@ -97,6 +97,66 @@ def delete_with_retry(base: str, download_id: str) -> None:
             time.sleep(0.25)
 
 
+def parse_packets(probe_json: dict) -> list[tuple[int, int, int]]:
+    """Parse ffprobe packet JSON into (stream_index, pts_ms, byte_offset).
+
+    Entries without a readable timestamp are dropped; a missing byte position
+    is kept as zero because the timestamp is still a valid measurement (the
+    packet is only unclassifiable for window attribution).
+    """
+    packets: list[tuple[int, int, int]] = []
+    for entry in probe_json.get("packets", []):
+        pts_time = entry.get("pts_time")
+        if pts_time is None:
+            continue
+        try:
+            pts_ms = round(float(pts_time) * 1000)
+        except (TypeError, ValueError):
+            continue
+        try:
+            pos = int(entry.get("pos") or 0)
+        except (TypeError, ValueError):
+            pos = 0
+        packets.append((int(entry.get("stream_index", 0)), pts_ms, pos))
+    return packets
+
+
+def window_span(
+    packets: list[tuple[int, int, int]], stream_index: int, header_len: int
+) -> tuple[int, int] | None:
+    """First and last PTS, in packet order, of one stream inside the fetch
+    window of a concatenated probe artifact (head bytes + window bytes).
+    Packets belong to the window by byte position (pos >= header_len); PTS is
+    never used for classification because head and window PTS ranges can
+    overlap across discontinuities."""
+    first = last = None
+    for packet_stream, pts_ms, pos in packets:
+        if packet_stream != stream_index or pos < header_len:
+            continue
+        if first is None:
+            first = pts_ms
+        last = pts_ms
+    return None if first is None else (first, last)
+
+
+def sync_verdict(
+    target_s: float,
+    first_pts_ms: int,
+    decoded_duration_ms: int,
+    trim_ms: int,
+    tolerance_ms: int,
+) -> tuple[bool, int]:
+    """Verdict for anchoring a seek on one measured artifact: trimming
+    trim_ms off the decoded audio must place its first sample on the target,
+    and the trim must be achievable (non-negative, within the decoded
+    duration). Returns (ok, offset_ms) with offset = first_pts + trim -
+    target."""
+    target_ms = int(round(target_s * 1000))
+    offset = first_pts_ms + trim_ms - target_ms
+    ok = 0 <= trim_ms < decoded_duration_ms and abs(offset) <= tolerance_ms
+    return ok, offset
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--release-id", required=True)

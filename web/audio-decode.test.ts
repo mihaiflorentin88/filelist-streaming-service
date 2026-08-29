@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AudioDecodeController, byteOffsetForTime, windowByteBudget } from './audio-decode';
 import type { DecodeOptions, DecodeStatus } from './audio-decode';
-import { FakeAudioContext, FakeWorker } from './test-fakes';
+import { FakeAudioContext, FakeWorker, fakeSpanFetcher } from './test-fakes';
 
 describe('Time to byte offset mapping', () => {
   it('maps seconds through the average byte rate', () => {
@@ -52,6 +52,7 @@ async function startController(overrides: Partial<DecodeOptions> = {}, ctxState:
   const statuses: DecodeStatus[] = [];
   const controller = await AudioDecodeController.create({
     video, url: 'stream://title/file.mkv', startSec: 0, totalBytes: 1_000_000, durationSec: 100, audioOrdinal: 0,
+    spanFetch: fakeSpanFetcher(),
     onStatus: status => statuses.push(status),
     createContext: () => ctx as unknown as AudioContext,
     createWorker: () => worker as unknown as Worker,
@@ -65,6 +66,7 @@ describe('Terminal decode failures surface a visible player error', () => {
     const video = { muted: false, currentTime: 0, paused: false, ended: false } as unknown as HTMLVideoElement;
     const promise = AudioDecodeController.create({
       video, url: 'stream://title/file.mkv', startSec: 0, totalBytes: 1_000_000, durationSec: 100, audioOrdinal: 0,
+      spanFetch: fakeSpanFetcher(),
       onStatus: () => { },
       createContext: () => { throw new Error('no audio device') },
       createWorker: () => new FakeWorker() as unknown as Worker,
@@ -79,6 +81,7 @@ describe('Terminal decode failures surface a visible player error', () => {
     const video = { muted: false, currentTime: 0, paused: false, ended: false } as unknown as HTMLVideoElement;
     const promise = AudioDecodeController.create({
       video, url: 'stream://title/file.mkv', startSec: 0, totalBytes: 1_000_000, durationSec: 100, audioOrdinal: 0,
+      spanFetch: fakeSpanFetcher(),
       onStatus: () => { },
       createContext: () => ctx as unknown as AudioContext,
       createWorker: () => { throw new Error('worker blocked by policy') },
@@ -162,6 +165,7 @@ describe('Terminal decode failures surface a visible player error', () => {
     worker.postMessage = () => { throw new Error('worker gone') };
     const promise = AudioDecodeController.create({
       video, url: 'stream://title/file.mkv', startSec: 0, totalBytes: 1_000_000, durationSec: 100, audioOrdinal: 0,
+      spanFetch: fakeSpanFetcher(),
       onStatus: () => { },
       createContext: () => ctx as unknown as AudioContext,
       createWorker: () => worker as unknown as Worker,

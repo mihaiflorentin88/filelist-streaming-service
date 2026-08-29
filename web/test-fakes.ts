@@ -5,6 +5,16 @@
 // code never passes the factories.
 import { DECODE_SAMPLE_RATE } from './audio-decode';
 import type { WorkerInMessage, WorkerOutMessage } from './audio-decode';
+import type { AudioSpan, SpanFetcher } from '@filelist/shared';
+
+// Uniform measured spans for controller tests: audio content runs at exactly
+// 500 bytes per millisecond, so the PTS at byte b is round(b / 500).
+export function fakeSpanFetcher(calls: { startByte: number; lengthBytes: number }[] = []): SpanFetcher {
+  return async (startByte: number, lengthBytes: number): Promise<AudioSpan> => {
+    calls.push({ startByte, lengthBytes });
+    return { streamIndex: 1, startByte, lengthBytes, firstPtsMs: Math.round(startByte / 500), lastPtsMs: Math.round((startByte + lengthBytes) / 500), windowLengthMs: Math.round(lengthBytes / 500) };
+  };
+}
 
 export class FakeAudioContext {
   state: AudioContextState;

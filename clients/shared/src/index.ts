@@ -1,3 +1,4 @@
+import type { AudioSpan } from './anchor';
 export interface Page<T> { items: T[]; nextCursor: string | null; total: number; stale?: boolean }
 export interface Release { id: string; name: string; category: string; sizeBytes: number; seeders: number; leechers: number; freeleech: boolean; imdbId?: string }
 export type MediaKind = 'movie' | 'series'
@@ -92,6 +93,11 @@ export class API {
   updatePlaybackPreferences(sourceId: string, value: PlaybackPreferences) { return this.call<PlaybackPreferences>(`/playback/${encodeURIComponent(sourceId)}/preferences`, { method: 'PUT', body: JSON.stringify(value) }) }
   setWatched(sourceId: string, watched: boolean) { return this.call<PlaybackState>(`/playback/${encodeURIComponent(sourceId)}/watched`, { method: 'PUT', body: JSON.stringify({ watched }) }) }
   streamURL(path: string) { return new URL(path, this.base).toString() }
+  audioAnchor(sourceId: string, startByte: number, lengthBytes: number, streamIndex: number) { return this.call<AudioSpan>(`/downloads/${encodeURIComponent(sourceId)}/audio-anchor?startByte=${startByte}&lengthBytes=${lengthBytes}&streamIndex=${streamIndex}`) }
 }
+export { ANCHOR_WINDOW_BYTES, MAX_ANCHOR_PROBES, planSessionStart } from './anchor';
+export type { AudioSpan, SessionAnchor, SpanFetcher } from './anchor';
 export { ControlsVisibility } from './controls-visibility';
 export type { ControlsVisibilityOptions, ControlsVisibilityPolicy } from './controls-visibility';
+export { DEFAULT_PLAYER_SETTINGS, PLAYER_MUTED_KEY, PLAYER_VOLUME_KEY, clampVolume, loadPlayerSettings, savePlayerSettings } from './player-settings';
+export type { PlayerSettings, PlayerSettingsStorage } from './player-settings';

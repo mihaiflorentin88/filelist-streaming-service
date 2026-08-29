@@ -29,6 +29,11 @@ const harness = vi.hoisted(() => {
     prepareSubtitle() { return Promise.resolve({}) }
     downloads() { return state.downloads ? state.downloads() : Promise.resolve({ items: [] }) }
     streamURL(path: string) { return new URL(path, 'http://server.test').toString() }
+  audioAnchor(_sourceId: unknown, startByte: number, lengthBytes: number, streamIndex: number) {
+    // Uniform 500 B/ms content model: the planner converges in one probe for
+    // every resume position these tests use.
+    return Promise.resolve({ streamIndex, startByte, lengthBytes, firstPtsMs: Math.round(startByte / 500), lastPtsMs: Math.round((startByte + lengthBytes) / 500), windowLengthMs: Math.round(lengthBytes / 500) });
+  }
   }
   return { state, FakeAPI };
 });

@@ -1,6 +1,6 @@
 import { render } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { API, audioPlaybackRoute, canonicalHouseholdItems, CatalogDetail, CatalogSource, CatalogTitle, ControlsVisibility, Download, DownloadSort, fallbackAudioTrack, formatBytes, HouseholdItem, HouseholdState, Job, JobLog, languageDisplayName, LibraryCategory, logicalPlaybackPosition, MediaAudioTrack, MediaInfo, MediaState, canonicalLanguage, subtitleRank, orderDownloadIDs, PlaybackPreferences, preferredAudioTrack, reconcileDownloads, resumeActionLabel, resumeForTitle, resumeSummary, seasonPackActionLabel, SettingsField, SubtitleCandidate, subtitleItemLabel, subtitleMenuGroups, SubtitleWarning } from '@filelist/shared';
+import { API, audioPlaybackRoute, canonicalHouseholdItems, CatalogDetail, CatalogSource, CatalogTitle, clampVolume, ControlsVisibility, Download, DownloadSort, fallbackAudioTrack, formatBytes, HouseholdItem, HouseholdState, Job, JobLog, languageDisplayName, LibraryCategory, loadPlayerSettings, logicalPlaybackPosition, MediaAudioTrack, MediaInfo, MediaState, canonicalLanguage, subtitleRank, orderDownloadIDs, PlaybackPreferences, PlayerSettingsStorage, preferredAudioTrack, reconcileDownloads, resumeActionLabel, resumeForTitle, resumeSummary, savePlayerSettings, seasonPackActionLabel, SettingsField, SubtitleCandidate, subtitleItemLabel, subtitleMenuGroups, SubtitleWarning } from '@filelist/shared';
 import { AudioDecodeController } from './audio-decode';
 import './style.css';
 
@@ -12,6 +12,10 @@ const emptyState: HouseholdState = { favorites: [], continueWatching: [], recent
 const needsEpisodeExpansion = (detail: CatalogDetail) => detail.title.kind === 'series' && detail.seasons.some(season => (season.packSources?.length || 0) > 0 && season.episodes.length === 0);
 function formatPlaybackTime(milliseconds: number) { const total = Math.max(0, Math.floor(milliseconds / 1000)); const hours = Math.floor(total / 3600); const minutes = Math.floor(total % 3600 / 60); const seconds = total % 60; return hours ? `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}` : `${minutes}:${String(seconds).padStart(2, '0')}` }
 function audioTrackLabel(track: MediaAudioTrack) { const language = languageDisplayName(track.language || '') || track.language?.toUpperCase() || 'Language unavailable'; const channels = track.channels === 1 ? 'Mono' : track.channels === 2 ? 'Stereo' : track.channels && track.channels > 2 ? `${track.channels} channels` : ''; return [track.title, language, track.codec?.toUpperCase(), channels].filter(Boolean).join(' · ') }
+// Storage access itself can throw or be missing (blocked cookies, odd embeds,
+// non-browser runs); the player then runs with defaults and no persistence
+// instead of crashing.
+function persistedStore(): PlayerSettingsStorage { try { const store = localStorage; if (store) return store } catch { } return { getItem: () => null, setItem: () => { } } }
 function permanentPersistenceFailure(error: unknown): boolean {
   if (typeof error !== 'object' || error === null || !('status' in error)) return false;
   return error.status === 404 || error.status === 409;
@@ -77,13 +81,21 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
   const [selectedAudio, setSelectedAudio] = useState(-1);
   const [position, setPosition] = useState(0);
   const [playing, setPlaying] = useState(false);
-  const [volume, setVolume] = useState(1);
-  const [muted, setMuted] = useState(false);
+  // Volume and mute persist per browser (localStorage): loaded once per mount,
+  // saved on every change, applied to whichever audio route is active.
+  const [volume, setVolume] = useState(() => loadPlayerSettings(persistedStore()).volume);
+  const [muted, setMuted] = useState(() => loadPlayerSettings(persistedStore()).muted);
   const [candidates, setCandidates] = useState<SubtitleCandidate[]>([]);
   const [warnings, setWarnings] = useState<SubtitleWarning[]>([]);
   const [subtitleOpen, setSubtitleOpen] = useState(false);
   const [audioOpen, setAudioOpen] = useState(false);
   const decoderRef = useRef<AudioDecodeController | null>(null);
+  // Render-visible mirror of decoderRef: the loudness-sync effect must re-run
+  // when a decode session appears or ends, which a ref alone cannot trigger.
+  const [decoder, setDecoder] = useState<AudioDecodeController | null>(null);
+  // True from decode-session start to teardown: the element's audio output
+  // belongs to the controller, and loudness state must not touch the element.
+  const decodeOwned = useRef(false);
   const decodeFailed = useRef(false);
   // Stream indexes whose decode already failed this playback; the fallback chooser
   // excludes all of them so repeated failures walk forward instead of looping.
@@ -147,15 +159,18 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
     const track = mediaInfo?.audioTracks.find(item => item.streamIndex === selectedAudio);
     const element = video.current;
     if (!mediaInfo || !playbackURL || !element || !track) return; decodeFailed.current = false; const ordinal = Math.max(0, mediaInfo.audioTracks.findIndex(item => item.streamIndex === selectedAudio)); const route = audioPlaybackRoute(track.codec); const multiTrackSwitch = mediaInfo.audioTracks.length > 1 && !track.default; console.debug(`[audio] route=${route} reason=${route === 'decode' ? `codec "${track.codec}" is not natively decodable` : multiTrackSwitch ? 'selected track is a non-default track in a multi-track file' : `codec "${track.codec}" plays through the element`} (track ${ordinal})`); if (route !== 'decode' && !multiTrackSwitch) return;
+    decodeOwned.current = true;
     let cancelled = false;
     let instance: AudioDecodeController | null = null;
     const startSec = Math.min(Math.max(0, active.resumeMs), Math.max(0, mediaInfo.durationMs - 1000)) / 1000;
     void AudioDecodeController.create({
-      video: element, audioOrdinal: ordinal, url: api.streamURL(playbackURL), startSec, totalBytes: active.download.sizeBytes, durationSec: mediaInfo.durationMs / 1000, onStatus: status => {
+      video: element, audioOrdinal: ordinal, url: api.streamURL(playbackURL), startSec, totalBytes: active.download.sizeBytes, durationSec: mediaInfo.durationMs / 1000, spanFetch: (startByte, lengthBytes) => api.audioAnchor(active.download.id, startByte, lengthBytes, track.streamIndex), onStatus: status => {
         if (cancelled) return;
         if (status.status !== 'error') { setMessage(status.message); return }
         decodeFailed.current = true;
         decoderRef.current = null;
+        decodeOwned.current = false;
+        setDecoder(null);
         failedAudio.current = [...failedAudio.current, track.streamIndex];
         const replacement = fallbackAudioTrack(mediaInfo.audioTracks, preferenceRef.current, failedAudio.current);
         if (!replacement) { setMessage(status.message); return }
@@ -168,9 +183,22 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
       if (cancelled) { value.destroy(); return }
       instance = value;
       decoderRef.current = value;
+      setDecoder(value);
     }).catch(error => { if (!cancelled) setMessage(`Audio decode unavailable: ${(error as Error).message}`) });
-    return () => { cancelled = true; decoderRef.current = null; instance?.destroy() };
+    return () => { cancelled = true; decodeOwned.current = false; decoderRef.current = null; setDecoder(null); instance?.destroy() };
   }, [mediaInfo, selectedAudio, playbackURL]);
+  // Loudness truth lives in persisted React state; this effect pushes it to
+  // whichever output owns audio — the decoder gain during a decode session,
+  // the element otherwise. The element's muted flag while decoding is the
+  // controller's implementation detail and is never mirrored back into the
+  // UI (that mirror used to show 0 while the decoder played at full gain).
+  useEffect(() => {
+    if (decoder) { decoder.setVolume(volume); decoder.setMuted(muted); return }
+    if (decodeOwned.current) return;
+    const element = video.current;
+    if (!element) return;
+    element.volume = volume; element.muted = muted;
+  }, [decoder, volume, muted]);
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -258,14 +286,18 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
   function togglePlayback() { const element = video.current; if (!element) return; if (element.paused) { shouldPlay.current = true; void element.play().catch(error => setMessage(`Playback could not start: ${error.message}`)) } else { shouldPlay.current = false; element.pause() } }
   function revealControls() { controls.reveal() }
   function hideControls() { controls.hide() }
-  function setPlayerVolume(value: number) { const element = video.current; if (!element) return; if (decoderRef.current) { decoderRef.current.setVolume(value); decoderRef.current.setMuted(value === 0); setVolume(value); setMuted(value === 0); return } element.volume = value; element.muted = value === 0; setVolume(value); setMuted(value === 0) }
+  // Loudness changes update persisted React state; the sync effect pushes them
+  // to the decoder or the element, and the browser store keeps them for the
+  // next mount. Sliding to zero mutes, sliding up from zero unmutes.
+  function setPlayerVolume(value: number) { const next = clampVolume(value); setVolume(next); setMuted(next === 0); savePlayerSettings(persistedStore(), { volume: next, muted: next === 0 }) }
+  function toggleMuted() { setMuted(!muted); savePlayerSettings(persistedStore(), { volume, muted: !muted }) }
   async function toggleFullscreen() { try { if (document.fullscreenElement) await document.exitFullscreen(); else await root.current?.requestFullscreen() } catch (error) { setMessage(`Fullscreen unavailable: ${(error as Error).message}`) } }
   return <div ref={root} class={`video ${controlsVisible ? 'controls-visible' : ''}`} role="dialog" aria-modal="true" aria-label={`Playing ${active.download.displayTitle || active.download.filePath}`}>
-    <video ref={video} src={playbackURL ? api.streamURL(playbackURL) : undefined} autoplay playsInline onLoadedMetadata={event => { if (active.resumeMs > 0) event.currentTarget.currentTime = active.resumeMs / 1000; if (shouldPlay.current) void event.currentTarget.play().catch(() => setMessage('Press Play to start playback.')) }} onWaiting={() => { if (!decodeFailed.current) setMessage(active.download.playbackMode === 'progressive' ? 'Buffering the next downloaded segment…' : 'Buffering…') }} onCanPlay={() => { recovering.current = false; recoverAttempts.current = 0; if (!decodeFailed.current) setMessage('') }} onPlaying={() => { decoderRef.current?.resume(); recovering.current = false; recoverAttempts.current = 0; setPlaying(true); if (!decodeFailed.current) setMessage('') }} onTimeUpdate={event => { const next = logicalPlaybackPosition(0, event.currentTarget.currentTime, durationRef.current); const now = Date.now(); if (now - lastRendered.current >= 250) { lastRendered.current = now; setPosition(next) } if (now - lastSaved.current > 10000) { lastSaved.current = now; void save() } }} onVolumeChange={event => { setVolume(event.currentTarget.volume); setMuted(event.currentTarget.muted) }} onPause={() => { decoderRef.current?.suspend(); setPlaying(false); void save() }} onEnded={() => void save().then(() => onAdvance(preferenceRef.current))} onError={() => void recover()} onSeeking={event => decoderRef.current?.seek(event.currentTarget.currentTime)} />
+    <video ref={video} src={playbackURL ? api.streamURL(playbackURL) : undefined} autoplay playsInline onLoadedMetadata={event => { if (active.resumeMs > 0) event.currentTarget.currentTime = active.resumeMs / 1000; if (shouldPlay.current) void event.currentTarget.play().catch(() => setMessage('Press Play to start playback.')) }} onWaiting={() => { if (!decodeFailed.current) setMessage(active.download.playbackMode === 'progressive' ? 'Buffering the next downloaded segment…' : 'Buffering…') }} onCanPlay={() => { recovering.current = false; recoverAttempts.current = 0; if (!decodeFailed.current) setMessage('') }} onPlaying={() => { decoderRef.current?.resume(); recovering.current = false; recoverAttempts.current = 0; setPlaying(true); if (!decodeFailed.current) setMessage('') }} onTimeUpdate={event => { const next = logicalPlaybackPosition(0, event.currentTarget.currentTime, durationRef.current); const now = Date.now(); if (now - lastRendered.current >= 250) { lastRendered.current = now; setPosition(next) } if (now - lastSaved.current > 10000) { lastSaved.current = now; void save() } }} onPause={() => { decoderRef.current?.suspend(); setPlaying(false); void save() }} onEnded={() => void save().then(() => onAdvance(preferenceRef.current))} onError={() => void recover()} onSeeking={event => decoderRef.current?.seek(event.currentTarget.currentTime)} />
     <div class="player-chrome">
       <div class="player-heading"><strong>{active.download.displayTitle || active.download.filePath}</strong><span>{active.download.playbackMode === 'progressive' ? 'Streaming while downloading' : 'Downloaded file'}</span></div>
       <div class="player-scrubber"><input aria-label="Playback position" type="range" min="0" max={mediaInfo?.durationMs || 1} step="1000" value={Math.min(position, mediaInfo?.durationMs || 1)} disabled={!mediaInfo} onInput={event => setPosition(Number(event.currentTarget.value))} onChange={event => restartAt(Number(event.currentTarget.value))} /><div><time>{formatPlaybackTime(position)}</time><time>{mediaInfo ? formatPlaybackTime(mediaInfo.durationMs) : 'Preparing…'}</time></div></div>
-      <div class="player-control-row"><button class="player-play" onClick={togglePlayback}>{playing ? 'Pause' : 'Play'}</button><button onClick={() => restartAt(position - 10000)} disabled={!mediaInfo}>−10 seconds</button><button onClick={() => restartAt(position + 10000)} disabled={!mediaInfo}>+10 seconds</button><label class="player-volume"><span>Volume</span><input aria-label="Volume" type="range" min="0" max="1" step="0.05" value={muted ? 0 : volume} onInput={event => setPlayerVolume(Number(event.currentTarget.value))} /></label><button onClick={() => { if (decoderRef.current) { decoderRef.current.setMuted(!muted); setMuted(!muted); return } if (video.current) video.current.muted = !video.current.muted }}>{muted ? 'Unmute' : 'Mute'}</button><button onClick={() => { setSubtitleOpen(false); setAudioOpen(value => !value); revealControls() }} disabled={!mediaInfo}>Audio{currentTrack ? ` · ${audioTrackLabel(currentTrack).split(' · ')[0]}` : ''}</button><button onClick={() => { setAudioOpen(false); setSubtitleOpen(value => !value); revealControls() }}>Subtitles{selectedSubtitle === 'off' ? ' · Off' : ''}</button><button onClick={() => void toggleFullscreen()}>Fullscreen</button><button onClick={hideControls} aria-label="Hide controls">Hide</button><button onClick={() => { void save(); onClose() }} aria-label="Close player">Close</button></div>
+      <div class="player-control-row"><button class="player-play" onClick={togglePlayback}>{playing ? 'Pause' : 'Play'}</button><button onClick={() => restartAt(position - 10000)} disabled={!mediaInfo}>−10 seconds</button><button onClick={() => restartAt(position + 10000)} disabled={!mediaInfo}>+10 seconds</button><label class="player-volume"><span>Volume</span><input aria-label="Volume" type="range" min="0" max="1" step="0.05" value={muted ? 0 : volume} onInput={event => setPlayerVolume(Number(event.currentTarget.value))} /></label><button onClick={toggleMuted}>{muted ? 'Unmute' : 'Mute'}</button><button onClick={() => { setSubtitleOpen(false); setAudioOpen(value => !value); revealControls() }} disabled={!mediaInfo}>Audio{currentTrack ? ` · ${audioTrackLabel(currentTrack).split(' · ')[0]}` : ''}</button><button onClick={() => { setAudioOpen(false); setSubtitleOpen(value => !value); revealControls() }}>Subtitles{selectedSubtitle === 'off' ? ' · Off' : ''}</button><button onClick={() => void toggleFullscreen()}>Fullscreen</button><button onClick={hideControls} aria-label="Hide controls">Hide</button><button onClick={() => { void save(); onClose() }} aria-label="Close player">Close</button></div>
     </div>
     {audioOpen && <section class="subtitle-panel audio-panel"><h2>Audio track</h2>{mediaInfo?.audioTracks.map(track => <button class={track.streamIndex === selectedAudio ? 'selected' : ''} onClick={() => void chooseAudio(track)}><strong>{audioTrackLabel(track)}</strong>{track.default && <span>Default track</span>}</button>)}</section>}
     {subtitleOpen && <section class="subtitle-panel"><h2>Subtitles</h2><button class={selectedSubtitle === 'off' ? 'selected' : ''} onClick={() => disableSubtitles()}>Off</button>{subtitleGroups.map(group => <div class="subtitle-group" key={group.key}><p class="subtitle-group-label">{group.label}</p>{group.items.map(candidate => { const position = subtitlePositions.get(candidate) ?? 0; return <button key={`${candidate.provider}:${candidate.id}`} class={selectedSubtitle === `${candidate.provider}:${candidate.id}` ? 'selected' : ''} onClick={() => void chooseSubtitle(candidate)}><strong>{subtitleItemLabel(candidate, position)}</strong><span>{[languageDisplayName(candidate.language), candidate.format || '', candidate.hearingImpaired ? 'hearing impaired' : ''].filter(Boolean).join(' · ')}</span>{candidate.releaseName && <small>{candidate.releaseName}</small>}</button> })}</div>)}{candidates.length === 0 && <p>No matching downloadable subtitles were found.</p>}{warnings.map(w => <p class="danger"><strong>{w.provider}</strong>: {w.message}</p>)}</section>}

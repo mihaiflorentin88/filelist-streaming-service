@@ -494,6 +494,51 @@ paths:
             },
           "422": { $ref: "#/components/responses/Problem" },
         }
+  /downloads/{id}/audio-anchor:
+    get:
+      operationId: getDownloadAudioAnchor
+      parameters:
+        [
+          { in: path, name: id, required: true, schema: { type: string } },
+          {
+            in: query,
+            name: startByte,
+            required: true,
+            schema: { type: integer, format: int64, minimum: 0 },
+          },
+          {
+            in: query,
+            name: lengthBytes,
+            required: true,
+            schema: { type: integer, format: int64, minimum: 1 },
+          },
+          {
+            in: query,
+            name: streamIndex,
+            required: true,
+            schema: { type: integer, minimum: 0 },
+          },
+        ]
+      responses:
+        {
+          "200":
+            {
+              description: Measured audio content span of the fetch window,
+              in media timestamps (ADR-0002),
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/AudioSpan" } },
+                },
+            },
+          "404": { $ref: "#/components/responses/Problem" },
+          "422": { $ref: "#/components/responses/Problem" },
+          "503":
+            {
+              description: Window is not readable yet,
+              headers: { Retry-After: { schema: { type: integer } } },
+            },
+        }
   /jobs:
     get:
       operationId: listJobs
@@ -1297,6 +1342,19 @@ components:
                 items: { $ref: "#/components/schemas/MediaAudioTrack" },
               },
             probedAt: { type: string, format: date-time },
+          },
+      }
+    AudioSpan:
+      {
+        type: object,
+        required: [streamIndex, startByte, lengthBytes, firstPtsMs, lastPtsMs],
+        properties:
+          {
+            streamIndex: { type: integer, minimum: 0 },
+            startByte: { type: integer, format: int64, minimum: 0 },
+            lengthBytes: { type: integer, format: int64, minimum: 1 },
+            firstPtsMs: { type: integer, format: int64, minimum: 0 },
+            lastPtsMs: { type: integer, format: int64, minimum: 0 },
           },
       }
     Job:

@@ -3,6 +3,7 @@
 // windows to raw PCM; this module owns the Web Audio graph that schedules decoded
 // buffers against the video clock. The video element stays muted while a controller
 // is alive; the native path never constructs one.
+import { planSessionStart, type SpanFetcher } from '@filelist/shared';
 export type WorkerInMessage =
   | { type: 'start'; session: number; url: string; startByte: number; totalBytes: number; bytesPerSecond: number; audioOrdinal: number }
   | { type: 'pause' }
@@ -38,7 +39,7 @@ const PENDING_RESUME_SECONDS = 45;
 const SUSPENDED_GRACE_SECONDS = 5;
 
 export type DecodeStatus = { status: 'ready' | 'stalling' | 'error'; message: string };
-export type DecodeOptions = { video: HTMLVideoElement; url: string; startSec: number; totalBytes: number; durationSec: number; audioOrdinal: number; onStatus: (status: DecodeStatus) => void; createContext?: () => AudioContext; createWorker?: () => Worker };
+export type DecodeOptions = { video: HTMLVideoElement; url: string; startSec: number; totalBytes: number; durationSec: number; audioOrdinal: number; spanFetch: SpanFetcher; onStatus: (status: DecodeStatus) => void; createContext?: () => AudioContext; createWorker?: () => Worker };
 
 // Production defaults for the injection seam; tests inject fakes instead.
 function defaultCreateContext(): AudioContext { return new AudioContext({ latencyHint: 'playback' }) }
@@ -64,6 +65,9 @@ export class AudioDecodeController {
   private anchorMediaAt = 0;
   private scheduledMediaEnd = 0;
   private trimRemaining = 0;
+  private readonly spanFetch: SpanFetcher;
+  private windowFirstPtsMs: number | null = null;
+  private windowLengthMs = 0;
   private throttled = false;
   private stalledNote = false;
   private volume = 1;
@@ -82,6 +86,7 @@ export class AudioDecodeController {
     this.url = options.url;
     this.totalBytes = options.totalBytes;
     this.audioOrdinal = options.audioOrdinal;
+    this.spanFetch = options.spanFetch;
     this.bytesPerSecond = options.durationSec > 0 && options.totalBytes > 0 ? options.totalBytes / options.durationSec : 0;
     this.lastVideoTime = video.currentTime;
     this.gain = ctx.createGain();
@@ -102,7 +107,7 @@ export class AudioDecodeController {
       console.debug(`[audio-decode] controller created (audio context ${ctx.state}, video element muted for the decode session)`);
       worker.onmessage = event => created.receive(event.data as WorkerOutMessage);
       worker.onerror = () => created.fail('Audio decode failed: the audio decoder could not be loaded.');
-      created.startSession(options.startSec);
+      await created.startSession(options.startSec);
       created.tickLoop();
       return created;
     } catch (error) {
@@ -117,7 +122,7 @@ export class AudioDecodeController {
   seek(seconds: number) {
     if (this.destroyed) return;
     if (this.anchored && Math.abs(seconds - this.anchorMediaAt) < DRIFT_LIMIT_SECONDS) return;
-    this.startSession(seconds);
+    void this.startSession(seconds);
   }
 
   suspend() { if (!this.destroyed) void this.ctx.suspend() }
@@ -146,9 +151,9 @@ export class AudioDecodeController {
     this.video.muted = false;
   }
 
-  private startSession(seconds: number) {
-    console.debug(`[audio-decode] session ${this.session + 1} from ${seconds.toFixed(2)}s`);
-    this.session++;
+  private async startSession(seconds: number) {
+    const session = ++this.session;
+    console.debug(`[audio-decode] session ${session} from ${seconds.toFixed(2)}s`);
     this.sessionStartSec = seconds;
     this.anchored = false;
     this.pending = [];
@@ -156,7 +161,22 @@ export class AudioDecodeController {
     this.trimRemaining = 0;
     this.stopSources();
     this.throttle(false);
-    this.worker.postMessage({ type: 'start', session: this.session, url: this.url, startByte: byteOffsetForTime(seconds, this.bytesPerSecond, this.totalBytes), totalBytes: this.totalBytes, bytesPerSecond: this.bytesPerSecond, audioOrdinal: this.audioOrdinal } satisfies WorkerInMessage);
+    const hint = byteOffsetForTime(seconds, this.bytesPerSecond, this.totalBytes);
+    let startByte = hint;
+    try {
+      // The hint only picks where probing starts (ADR-0002); the measured
+      // span decides which bytes the session actually decodes.
+      const plan = await planSessionStart(seconds * 1000, hint, this.totalBytes, this.spanFetch, windowByteBudget(this.bytesPerSecond));
+      if (this.destroyed || session !== this.session) return;
+      startByte = plan.startByte;
+      this.windowFirstPtsMs = plan.windowFirstPtsMs;
+      this.windowLengthMs = plan.windowLengthMs;
+      console.debug(`[audio-decode] session ${session} anchored: window content starts at ${plan.windowFirstPtsMs} ms and runs ${plan.windowLengthMs} ms (${plan.probes} probe(s))`);
+    } catch (error) {
+      if (session === this.session) this.fail(`Audio decode failed: ${(error as Error).message}`);
+      return;
+    }
+    this.worker.postMessage({ type: 'start', session, url: this.url, startByte, totalBytes: this.totalBytes, bytesPerSecond: this.bytesPerSecond, audioOrdinal: this.audioOrdinal } satisfies WorkerInMessage);
   }
 
   private receive(message: WorkerOutMessage) {
@@ -218,7 +238,7 @@ export class AudioDecodeController {
     const audible = this.sources.size > 0 || this.pending.length > 0;
     const drift = this.anchored && audible ? this.anchorMediaAt + (this.ctx.currentTime - this.anchorCtxAt) - this.video.currentTime : 0;
     if (Math.abs(drift) > DRIFT_LIMIT_SECONDS) {
-      this.startSession(this.video.currentTime);
+      void this.startSession(this.video.currentTime);
       return;
     }
     while (this.pending.length > 0 && this.scheduledMediaEnd - this.video.currentTime < SCHEDULE_AHEAD_SECONDS) this.scheduleNext();
@@ -239,10 +259,18 @@ export class AudioDecodeController {
       this.anchorMediaAt = this.video.currentTime;
       this.anchorCtxAt = this.ctx.currentTime + ANCHOR_LEAD_SECONDS;
       this.scheduledMediaEnd = this.anchorMediaAt;
-      // Sessions clamped into the container-header region decode from byte 0; the
-      // first window's beginByte is the actual content position, so trim the front
-      // down to the requested position.
-      this.trimRemaining = Math.max(0, this.sessionStartSec - (this.totalBytes > 0 && this.bytesPerSecond > 0 ? item.beginByte / this.bytesPerSecond : 0));
+      // Measured trim (ADR-0002): computed at anchor time so the window's
+      // first content PTS lands on the video clock as it is NOW, not as it
+      // was when the span was probed.
+      const trimMs = this.windowFirstPtsMs !== null ? this.anchorMediaAt * 1000 - this.windowFirstPtsMs : 0;
+      if (trimMs < 0 || trimMs > this.windowLengthMs) {
+        // The video clock moved out of the probed window while spans were
+        // measured: replan at the current position.
+        this.anchored = false;
+        void this.startSession(this.anchorMediaAt);
+        return;
+      }
+      this.trimRemaining = trimMs / 1000;
     }
     const dropFrames = this.trimRemaining > 0 ? Math.min(frames, Math.round(this.trimRemaining * DECODE_SAMPLE_RATE)) : 0;
     this.trimRemaining -= dropFrames / DECODE_SAMPLE_RATE;

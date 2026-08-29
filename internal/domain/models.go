@@ -235,3 +235,16 @@ type MediaAudioTrack struct {
 	Channels int    `json:"channels,omitempty"`
 	Default  bool   `json:"default,omitempty"`
 }
+
+// AudioSpan is the measured audio content of one probe window, taken from
+// the same concatenated probe artifact (container head plus fetch window)
+// that the decoder consumes. Packets are attributed to the fetch window by
+// their byte position in the artifact (pos >= head length); all values are
+// measured facts from packet data, never bitrate arithmetic (ADR-0002).
+type AudioSpan struct {
+	StreamIndex int   `json:"streamIndex"`
+	StartByte   int64 `json:"startByte"`
+	LengthBytes int64 `json:"lengthBytes"`
+	FirstPTSMS  int64 `json:"firstPtsMs"`
+	LastPTSMS   int64 `json:"lastPtsMs"`
+}

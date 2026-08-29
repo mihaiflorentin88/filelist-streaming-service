@@ -61,6 +61,7 @@ func New(service *application.Service, settings *config.Store, log *slog.Logger,
 	mux.HandleFunc("POST /api/v1/releases/{id}/prepare-season", a.prepareSeason)
 	mux.HandleFunc("GET /api/v1/downloads", a.downloads)
 	mux.HandleFunc("GET /api/v1/downloads/{id}/media-info", a.mediaInfo)
+	mux.HandleFunc("GET /api/v1/downloads/{id}/audio-anchor", a.audioAnchor)
 	mux.HandleFunc("DELETE /api/v1/downloads/{id}", a.deleteDownload)
 	mux.HandleFunc("POST /api/v1/downloads/{id}/next-episode", a.nextEpisode)
 	mux.HandleFunc("GET /api/v1/jobs", a.jobs)
@@ -92,7 +93,7 @@ func New(service *application.Service, settings *config.Store, log *slog.Logger,
 
 func (a *API) info(w http.ResponseWriter, r *http.Request) {
 	settings := a.settings.Get()
-	write(w, 200, map[string]any{"name": "FileList Streaming", "instanceName": settings.InstanceName, "version": a.version, "apiVersion": "v1", "configured": configured(settings), "capabilities": []string{"catalog", "canonicalCatalog", "metadata", "artworkProxy", "qbittorrent", "rangeStreaming", "mediaInfo", "settingsFile", "householdState", "canonicalFavorites", "persistentJobs", "subtitles", "serverDiscovery"}})
+	write(w, 200, map[string]any{"name": "FileList Streaming", "instanceName": settings.InstanceName, "version": a.version, "apiVersion": "v1", "configured": configured(settings), "capabilities": []string{"catalog", "canonicalCatalog", "metadata", "artworkProxy", "qbittorrent", "rangeStreaming", "mediaInfo", "audioAnchor", "settingsFile", "householdState", "canonicalFavorites", "persistentJobs", "subtitles", "serverDiscovery"}})
 }
 
 func (a *API) clientDiagnostic(w http.ResponseWriter, r *http.Request) {
@@ -896,6 +897,39 @@ func (a *API) putWatched(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	write(w, 200, p)
+}
+
+// audioAnchor measures the decoded-audio content span of one fetch window
+// (ADR-0002): the client anchors decoded audio by these measured timestamps
+// instead of average-bitrate guesses.
+func (a *API) audioAnchor(w http.ResponseWriter, r *http.Request) {
+	startByte, startErr := strconv.ParseInt(r.URL.Query().Get("startByte"), 10, 64)
+	lengthBytes, lengthErr := strconv.ParseInt(r.URL.Query().Get("lengthBytes"), 10, 64)
+	streamIndex, streamErr := strconv.Atoi(r.URL.Query().Get("streamIndex"))
+	if startErr != nil || lengthErr != nil || streamErr != nil {
+		problem(w, http.StatusBadRequest, fmt.Errorf("startByte, lengthBytes, and streamIndex are required integers"))
+		return
+	}
+	span, retryable, err := a.service.AudioSpan(r.Context(), r.PathValue("id"), startByte, lengthBytes, streamIndex)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			problem(w, http.StatusNotFound, err)
+			return
+		}
+		var invalid *application.InvalidAudioWindowError
+		if errors.As(err, &invalid) {
+			problem(w, http.StatusUnprocessableEntity, err)
+			return
+		}
+		if retryable {
+			w.Header().Set("Retry-After", "2")
+			problem(w, http.StatusServiceUnavailable, err)
+			return
+		}
+		problem(w, http.StatusInternalServerError, fmt.Errorf("measure audio span: %w", err))
+		return
+	}
+	write(w, http.StatusOK, span)
 }
 
 func (a *API) mediaInfo(w http.ResponseWriter, r *http.Request) {
