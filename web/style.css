@@ -759,6 +759,53 @@ progress {
  max-width: 1000px
 }
 
+.settings-tabs {
+ display: flex;
+ flex-wrap: wrap;
+ gap: 2px;
+ border-bottom: 1px solid var(--line);
+ margin: 18px 0 4px
+}
+
+.settings-tabs button {
+ position: relative;
+ background: none;
+ border: 0;
+ border-radius: 0;
+ padding: 11px 16px 13px;
+ color: var(--muted);
+ font-size: 15px;
+ font-weight: 650
+}
+
+.settings-tabs button:hover {
+ color: var(--text)
+}
+
+.settings-tabs button[aria-selected="true"] {
+ color: var(--text)
+}
+
+.settings-tabs button[aria-selected="true"]::after {
+ content: '';
+ position: absolute;
+ left: 12px;
+ right: 12px;
+ bottom: -1px;
+ height: 2px;
+ background: var(--teal)
+}
+
+.settings-tabs .ops-start {
+ margin-left: 14px;
+ padding-left: 22px;
+ border-left: 1px solid var(--line)
+}
+
+.settings-panel {
+ padding-top: 18px
+}
+
 .settings fieldset {
  border: 0;
  border-top: 1px solid var(--line);
@@ -795,9 +842,17 @@ progress {
 }
 
 .settings-actions {
+ position: sticky;
+ bottom: 12px;
  display: flex;
  gap: 15px;
- align-items: center
+ align-items: center;
+ margin-top: 10px;
+ padding: 12px 16px;
+ background: var(--panel);
+ border: 1px solid var(--line);
+ border-radius: var(--radius);
+ box-shadow: 0 14px 30px #0009
 }
 
 .video {

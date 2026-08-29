@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { API, audioPlaybackRoute, buildPath, canonicalHouseholdItems, CatalogDetail, CatalogSource, CatalogTitle, clampVolume, ControlsVisibility, Download, DownloadSort, downloadTransferActions, DownloadTransferAction, formatBytes, HouseholdItem, HouseholdState, Job, JobLog, languageDisplayName, LibraryCategory, loadPlayerSettings, logicalPlaybackPosition, MediaAudioTrack, MediaInfo, MediaState, canonicalLanguage, subtitleRank, orderDownloadIDs, parsePath, PlaybackPreferences, PlayerSettingsStorage, preferredAudioTrack, reconcileDownloads, Route, resumeActionLabel, resumeForTitle, resumeSummary, savePlayerSettings, seasonPackActionLabel, SettingsField, SubtitleCandidate, subtitleItemLabel, subtitleMenuGroups, SubtitleWarning, View } from '@filelist/shared';
 import { applyVolumeStep, fractionTarget, resolveEscape, resolveShortcut, ScrubCoalescer, seekTarget, type PlayerCommand } from './shortcuts';
 import { OsdLayer, type OsdFeedback } from './osd';
-import { CacheCoverage, Events, Settings, SubtitleProviderSettings } from './settings';
+import { CacheCoverage, Events, Settings } from './settings';
 import './style.css';
 
 const api = new API(location.origin);
@@ -603,7 +603,7 @@ export function App() {
     }
     {view === 'events' && <><CacheCoverage /><Events onError={setError} /></>
     }
-    {view === 'settings' && settings && <><Settings value={settings} fields={settingsFields} onSaved={setSettings} onError={setError} /><CacheCoverage /><SubtitleProviderSettings value={settings} fields={settingsFields} onSaved={setSettings} onError={setError} /></>
+    {view === 'settings' && settings && <Settings value={settings} fields={settingsFields} onSaved={setSettings} onError={setError} />
     }
   </main>{detail && <Detail key={`${detail.title.id}:${detailTarget.season || 0}:${detailTarget.episode || 0}`} detail={detail} target={detailTarget} resume={resumeForTitle(household.continueWatching, detail.title.id)} favorite={household.favorites.some(item => item.titleId === detail.title.id || item.catalog?.id === detail.title.id)} onClose={closeDetail} onPlay={() => playDetail(detail)} onResume={playLegacy} onSource={s => void prepare(s)} onPackAction={manageSeasonPack} onFavorite={async value => { await api.titleFavorite(detail.title.id, value); await loadState(); }} />}{picker && <SourcePicker sources={picker} onClose={() => setPicker(null)} onChoose={s => void prepare(s)} />} {player && <BrowserPlayer key={player.download.id} active={player} onClose={closePlayer} onStateChanged={loadState} onAdvance={advanceEpisode} />}</div>;
 }
