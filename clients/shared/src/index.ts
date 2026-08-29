@@ -19,6 +19,16 @@ const downloadRenderFingerprint = (item: Download) => [item.releaseId, item.titl
 export function reconcileDownloads(current: Download[], incoming: Download[]): Download[] { const unique: Download[] = []; const byID = new Map<string, Download>(); for (const item of incoming) { if (byID.has(item.id)) continue; byID.set(item.id, item); unique.push(item) } if (current.length === 0) return unique; const currentIDs = new Set(current.map(item => item.id)); const added = unique.filter(item => !currentIDs.has(item.id)); const retained: Download[] = []; for (const old of current) { const next = byID.get(old.id); if (!next) continue; retained.push(downloadRenderFingerprint(old) === downloadRenderFingerprint(next) ? old : { ...old, ...next }) } return [...added, ...retained] }
 export type DownloadSort = 'recent' | 'title' | 'progress' | 'size' | 'speed'
 export function orderDownloadIDs(items: Download[], sort: DownloadSort): string[] { return [...items].sort((a, b) => { const difference = sort === 'title' ? (a.displayTitle || a.filePath).localeCompare(b.displayTitle || b.filePath) : sort === 'progress' ? b.progress - a.progress : sort === 'size' ? b.sizeBytes - a.sizeBytes : sort === 'speed' ? b.speedBytesPerSecond - a.speedBytesPerSecond : Date.parse(b.createdAt || '') - Date.parse(a.createdAt || ''); return difference || a.id.localeCompare(b.id) }).map(item => item.id) }
+export type DownloadTransferAction = 'pause' | 'resume' | 'retry';
+export interface DownloadTransferActionItem { action: DownloadTransferAction; label: string; pendingLabel: string }
+// Which transfer controls a managed download row exposes, decided purely from
+// the raw engine state plus the surfaced error. Errored rows retry (a plain
+// resume cannot clear a tracker/engine failure), halted rows resume, rows
+// transferring or queued to transfer pause; seeding, checking, and unknown
+// rows (including the server's transient action markers) expose nothing.
+const ACTIVE_TRANSFER_STATES: Record<string, true> = { allocating: true, downloading: true, forceddl: true, forcedmetadl: true, metadl: true, queueddl: true, stalleddl: true };
+const HALTED_TRANSFER_STATES: Record<string, true> = { pauseddl: true, pausedup: true, stoppeddl: true, stoppedup: true };
+export function downloadTransferActions(download: Pick<Download, 'state' | 'error'>): DownloadTransferActionItem[] { const state = (download.state || '').trim().toLowerCase(); if (download.error || state === 'error' || state === 'missingfiles') return [{ action: 'retry', label: 'Retry download', pendingLabel: 'Retrying…' }]; if (HALTED_TRANSFER_STATES[state]) return [{ action: 'resume', label: 'Resume', pendingLabel: 'Resuming…' }]; if (ACTIVE_TRANSFER_STATES[state]) return [{ action: 'pause', label: 'Pause', pendingLabel: 'Pausing…' }]; return [] }
 export interface Job { id: string; kind: string; state: string; label: string; dedupeKey: string; progress: number; attempt: number; error?: string; retryable: boolean; nextAttemptAt?: string; createdAt: string; updatedAt: string }
 export interface JobLog { id: number; jobId: string; attempt: number; level: string; phase: string; message: string; context?: Record<string, unknown>; createdAt: string }
 export interface SearchResult extends Page<CatalogTitle> { job: Job }
