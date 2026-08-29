@@ -2,10 +2,16 @@ package application
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/mihaiflorentin88/filelist-streaming-service/internal/adapters/sqlite"
 	"github.com/mihaiflorentin88/filelist-streaming-service/internal/domain"
 	"github.com/mihaiflorentin88/filelist-streaming-service/internal/platform/config"
 )
@@ -148,5 +154,133 @@ func TestDedupeManagedDownloadsKeepsDistinctSeasonEpisodes(t *testing.T) {
 	got := dedupeManagedDownloads(items)
 	if len(got) != 2 || got[0].ID != "new" || got[1].ID != "next-episode" {
 		t.Fatalf("unexpected download reconciliation: %#v", got)
+	}
+}
+
+type retryEngine struct {
+	TorrentEngine
+	resumeErr error
+	resumes   int
+	adds      int
+	prepared  [][]int
+}
+
+func (e *retryEngine) Resume(context.Context, string) error { e.resumes++; return e.resumeErr }
+func (e *retryEngine) Add(context.Context, io.Reader, string) (string, error) {
+	e.adds++
+	return "livehash", nil
+}
+
+func (e *retryEngine) Files(context.Context, string) ([]domain.TorrentFile, error) {
+	return []domain.TorrentFile{{Index: 2, Path: "Show.S01E02.mkv", SizeBytes: 4096, Playable: true}}, nil
+}
+
+func (e *retryEngine) PrepareFiles(_ context.Context, _ string, indices []int, _ []int) error {
+	e.prepared = append(e.prepared, indices)
+	return nil
+}
+
+func (e *retryEngine) Status(context.Context, string) (domain.DownloadStatus, error) {
+	return domain.DownloadStatus{Hash: "livehash", State: "downloading", TotalBytes: 4096}, nil
+}
+
+type openCatalog struct{ TrackerCatalog }
+
+func (openCatalog) OpenTorrent(context.Context, string) (io.ReadCloser, error) {
+	return io.NopCloser(strings.NewReader("d4:infod6:lengthi4eee")), nil
+}
+
+func retryHarness(t *testing.T) (*sqlite.Repository, *config.Store) {
+	t.Helper()
+	dir := t.TempDir()
+	previous, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(previous) })
+	settings, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	value := settings.Get()
+	value.DownloadRoot = dir
+	if err := settings.Save(value); err != nil {
+		t.Fatal(err)
+	}
+	repo, err := sqlite.Open(filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { repo.Close() })
+	return repo, settings
+}
+
+func seedRetryDownload(t *testing.T, repo *sqlite.Repository, releaseID string, seedRelease bool) {
+	t.Helper()
+	ctx := context.Background()
+	if seedRelease {
+		release := domain.TorrentRelease{ID: releaseID, Name: "Show.S01.1080p.WEB-DL", Category: "Series"}
+		if err := repo.UpsertReleases(ctx, []domain.TorrentRelease{release}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Now().UTC()
+	download := domain.Download{ID: "episode", ReleaseID: releaseID, EngineID: "qb:deadhash", FileIndex: 2, FilePath: "Show.S01E02.mkv", State: "unavailable", CreatedAt: now, UpdatedAt: now}
+	if err := repo.SaveDownload(ctx, download); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRetryResumesExistingTorrent(t *testing.T) {
+	repo, settings := retryHarness(t)
+	seedRetryDownload(t, repo, "release", true)
+	engine := &retryEngine{}
+	service := NewService(openCatalog{}, engine, repo, settings)
+	if err := service.Manage(context.Background(), "episode", "retry", false); err != nil {
+		t.Fatal(err)
+	}
+	if engine.resumes != 1 || engine.adds != 0 {
+		t.Fatalf("retry of a live torrent must resume in place: resumes=%d adds=%d", engine.resumes, engine.adds)
+	}
+	row, err := repo.GetDownload(context.Background(), "episode")
+	if err != nil || row.State != "retry" {
+		t.Fatalf("retry did not stamp the action marker: %#v %v", row, err)
+	}
+}
+
+func TestRetryRepreparesVanishedTorrent(t *testing.T) {
+	repo, settings := retryHarness(t)
+	seedRetryDownload(t, repo, "release", true)
+	engine := &retryEngine{resumeErr: domain.ErrTorrentNotFound}
+	service := NewService(openCatalog{}, engine, repo, settings)
+	if err := service.Manage(context.Background(), "episode", "retry", false); err != nil {
+		t.Fatal(err)
+	}
+	if engine.resumes != 1 || engine.adds != 1 || len(engine.prepared) != 1 {
+		t.Fatalf("retry of a vanished torrent must re-prepare: resumes=%d adds=%d prepared=%v", engine.resumes, engine.adds, engine.prepared)
+	}
+	if _, err := repo.GetDownload(context.Background(), "episode"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("stale row for the vanished torrent survived: %v", err)
+	}
+	row, err := repo.FindDownload(context.Background(), "release", 2)
+	if err != nil || row.EngineID != "qb:livehash" || row.ReleaseID != "release" || row.FileIndex != 2 || row.State != "downloading" {
+		t.Fatalf("re-prepared row does not carry the cached release and file: %#v %v", row, err)
+	}
+}
+
+func TestRetrySurfacesErrorWhenReleaseGone(t *testing.T) {
+	repo, settings := retryHarness(t)
+	seedRetryDownload(t, repo, "gone", false)
+	engine := &retryEngine{resumeErr: domain.ErrTorrentNotFound}
+	service := NewService(openCatalog{}, engine, repo, settings)
+	err := service.Manage(context.Background(), "episode", "retry", false)
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("retry without a cached release must surface the lookup error: %v", err)
+	}
+	if engine.adds != 0 {
+		t.Fatalf("missing release was silently re-added: adds=%d", engine.adds)
 	}
 }

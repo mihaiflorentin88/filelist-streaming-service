@@ -55,8 +55,10 @@ type metadataRequest struct {
 	Kind    domain.MediaKind
 }
 
-type titleRefreshRequest struct{ TitleID, Query string }
-type trackerSearchRequest struct{ Query string }
+type (
+	titleRefreshRequest  struct{ TitleID, Query string }
+	trackerSearchRequest struct{ Query string }
+)
 
 func NewService(c TrackerCatalog, e TorrentEngine, r Repository, s *config.Store, subtitles ...SubtitleProvider) *Service {
 	limit := s.Get().MaxConcurrentJobs
@@ -100,12 +102,14 @@ func (s *Service) acquire(ctx context.Context, tracker bool) error {
 		return ctx.Err()
 	}
 }
+
 func (s *Service) release(tracker bool) {
 	<-s.jobSlots
 	if tracker {
 		<-s.trackerSlots
 	}
 }
+
 func (s *Service) jobLog(job domain.Job, level, phase, message string, fields map[string]any) {
 	entry, err := s.repo.AppendJobLog(context.Background(), domain.JobLog{JobID: job.ID, Attempt: job.Attempt, Level: level, Phase: phase, Message: message, Context: fields})
 	if err == nil {
@@ -195,6 +199,7 @@ func (s *Service) SubscribeEvents() (<-chan domain.Event, func()) {
 		s.eventMu.Unlock()
 	}
 }
+
 func (s *Service) Events(ctx context.Context, after int64, limit int) ([]domain.Event, error) {
 	return s.repo.ListEvents(ctx, after, limit)
 }
@@ -202,6 +207,7 @@ func (s *Service) Events(ctx context.Context, after int64, limit int) ([]domain.
 func (s *Service) EnsureMetadata(ctx context.Context, titleIDs []string) int {
 	return s.ensureMetadata(ctx, titleIDs, false)
 }
+
 func (s *Service) ensureMetadata(ctx context.Context, titleIDs []string, force bool) int {
 	if len(titleIDs) > 24 {
 		titleIDs = titleIDs[:24]
@@ -286,6 +292,7 @@ func (s *Service) SyncCatalog(mode string) (domain.Job, error) {
 	go s.runCatalogSync(job, mode)
 	return job, nil
 }
+
 func (s *Service) runCatalogSync(job domain.Job, mode string) {
 	s.syncMu.Lock()
 	defer s.syncMu.Unlock()
@@ -409,6 +416,7 @@ func (s *Service) failOrWait(job *domain.Job, err error, phase string) {
 	}
 	s.jobLog(*job, "error", phase, "Job attempt failed", map[string]any{"error": err.Error(), "retryable": job.Retryable})
 }
+
 func isTransient(err error) bool {
 	if err == nil {
 		return false
@@ -523,6 +531,7 @@ func (s *Service) recoverInterruptedJobs() {
 func (s *Service) Jobs(ctx context.Context, limit int) ([]domain.Job, error) {
 	return s.repo.ListJobs(ctx, limit)
 }
+
 func (s *Service) CatalogStatus(ctx context.Context) (map[string]any, error) {
 	total, discoverable, err := s.repo.CatalogCounts(ctx)
 	if err != nil {
@@ -530,18 +539,22 @@ func (s *Service) CatalogStatus(ctx context.Context) (map[string]any, error) {
 	}
 	return map[string]any{"policy": "append-only observed cache", "observedReleases": total, "discoverableReleases": discoverable, "hiddenZeroSeeders": total - discoverable, "fileListLatestWindowLimit": 100, "historicalPagination": false}, nil
 }
+
 func (s *Service) QueryJobs(ctx context.Context, search, state, kind, retryable string, updatedSince int64, limit, offset int) (domain.Page[domain.Job], error) {
 	return s.repo.QueryJobs(ctx, search, state, kind, retryable, updatedSince, limit, offset)
 }
+
 func (s *Service) Job(ctx context.Context, id string) (domain.Job, error) {
 	return s.repo.GetJob(ctx, id)
 }
+
 func (s *Service) JobLogs(ctx context.Context, id string, before int64, limit int) (domain.Page[domain.JobLog], error) {
 	if _, err := s.repo.GetJob(ctx, id); err != nil {
 		return domain.Page[domain.JobLog]{}, err
 	}
 	return s.repo.ListJobLogs(ctx, id, before, limit)
 }
+
 func (s *Service) Browse(ctx context.Context, search, category string, limit, offset int) (domain.Page[domain.TorrentRelease], error) {
 	key := "latest"
 	age, err := s.repo.SyncAge(ctx, key)
@@ -553,6 +566,7 @@ func (s *Service) Browse(ctx context.Context, search, category string, limit, of
 	page.Stale = stale
 	return page, err
 }
+
 func (s *Service) Search(ctx context.Context, q string) (domain.Page[domain.TorrentRelease], error) {
 	if len([]rune(strings.TrimSpace(q))) < 3 {
 		return domain.Page[domain.TorrentRelease]{Items: []domain.TorrentRelease{}}, nil
@@ -783,6 +797,7 @@ func (s *Service) titleRefreshWorker() {
 		s.release(true)
 	}
 }
+
 func (s *Service) TestFileList(ctx context.Context) (int, error) {
 	items, err := s.catalog.Latest(ctx)
 	return len(items), err
@@ -1325,6 +1340,7 @@ func (s *Service) enrichDownload(ctx context.Context, download *domain.Download,
 		download.Rating, download.RatingVotes, download.RatingProvider = metadata.Rating, metadata.RatingVotes, metadata.RatingProvider
 	}
 }
+
 func (s *Service) Manage(ctx context.Context, id, action string, _ bool) error {
 	d, err := s.repo.GetDownload(ctx, id)
 	if err != nil {
@@ -1339,6 +1355,17 @@ func (s *Service) Manage(ctx context.Context, id, action string, _ bool) error {
 		err = s.engine.Pause(ctx, hash)
 	case "resume", "retry":
 		err = s.engine.Resume(ctx, hash)
+		if action == "retry" && errors.Is(err, domain.ErrTorrentNotFound) {
+			// The torrent vanished from the engine; forget the rows pinned to
+			// it and re-prepare from the cached release, the same path a
+			// fresh prepare uses when no download row exists.
+			if forgetErr := s.forgetEngineRows(ctx, d.EngineID); forgetErr != nil {
+				return forgetErr
+			}
+			if _, err = s.Prepare(ctx, d.ReleaseID, d.FileIndex); err == nil {
+				return nil
+			}
+		}
 	case "remove":
 		managed, listErr := s.repo.ListDownloads(ctx)
 		if listErr != nil {
@@ -1380,6 +1407,22 @@ func (s *Service) Manage(ctx context.Context, id, action string, _ bool) error {
 		}
 	}
 	return err
+}
+
+func (s *Service) forgetEngineRows(ctx context.Context, engineID string) error {
+	managed, err := s.repo.ListDownloads(ctx)
+	if err != nil {
+		return err
+	}
+	for _, item := range managed {
+		if item.EngineID != engineID {
+			continue
+		}
+		if deleteErr := s.repo.DeleteDownload(ctx, item.ID); deleteErr != nil {
+			return deleteErr
+		}
+	}
+	return nil
 }
 
 const householdProfile = "household"
@@ -1673,6 +1716,7 @@ func (s *Service) householdItem(ctx context.Context, p domain.PlaybackState, fav
 	}
 	return item, true
 }
+
 func (s *Service) Acquire(ctx context.Context, id string) (domain.Download, error) {
 	d, err := s.repo.GetDownload(ctx, id)
 	if err != nil {
@@ -1688,11 +1732,13 @@ func (s *Service) Acquire(ctx context.Context, id string) (domain.Download, erro
 	d.Leased = true
 	return d, nil
 }
+
 func (s *Service) Release(id string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	_ = s.repo.SetLease(ctx, id, false)
 }
+
 func (s *Service) WaitRange(ctx context.Context, d domain.Download, start, count int64) error {
 	hash, ok := engineHash(d.EngineID)
 	if !ok {
@@ -1735,10 +1781,12 @@ func (s *Service) WaitRange(ctx context.Context, d domain.Download, start, count
 		}
 	}
 }
+
 func (s *Service) WaitReadableRange(ctx context.Context, d domain.Download, start, count int64) error {
 	_, err := s.ReadableRangePath(ctx, d, start, count)
 	return err
 }
+
 func (s *Service) ValidateSourcePath(d domain.Download) error {
 	root, err := filepath.Abs(s.settings.Get().DownloadRoot)
 	if err != nil {
@@ -1757,6 +1805,7 @@ func (s *Service) ValidateSourcePath(d domain.Download) error {
 	}
 	return nil
 }
+
 func (s *Service) TestStorage() (string, error) {
 	root := s.settings.Get().DownloadRoot
 	info, err := os.Stat(root)
@@ -1773,6 +1822,7 @@ func (s *Service) TestStorage() (string, error) {
 	_ = f.Close()
 	return "Download root is readable", nil
 }
+
 func sourceID(release, path string) string {
 	sum := sha256.Sum256([]byte(release + "\x00" + path))
 	return base64.RawURLEncoding.EncodeToString(sum[:18])
@@ -1793,6 +1843,7 @@ func safeJoin(root, name string) (string, error) {
 	}
 	return p, nil
 }
+
 func safeQBPath(root, savePath, name string) (string, error) {
 	rootAbs, err := filepath.Abs(root)
 	if err != nil {
@@ -1811,6 +1862,7 @@ func safeQBPath(root, savePath, name string) (string, error) {
 	}
 	return safeJoin(saveAbs, name)
 }
+
 func subtitle(p string) bool {
 	switch strings.ToLower(filepath.Ext(p)) {
 	case ".srt", ".ass", ".ssa", ".vtt":
@@ -1818,6 +1870,7 @@ func subtitle(p string) bool {
 	}
 	return false
 }
+
 func trackerError(s domain.DownloadStatus) string {
 	for _, t := range s.Trackers {
 		if t.Status == 4 && t.Message != "" {
@@ -1827,5 +1880,7 @@ func trackerError(s domain.DownloadStatus) string {
 	return ""
 }
 
-var _ = io.EOF
-var _ = sql.ErrNoRows
+var (
+	_ = io.EOF
+	_ = sql.ErrNoRows
+)

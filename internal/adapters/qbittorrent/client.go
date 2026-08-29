@@ -373,7 +373,17 @@ func (c *Client) Pause(ctx context.Context, hash string) error {
 }
 
 func (c *Client) Resume(ctx context.Context, hash string) error {
-	return c.command(ctx, "resume", url.Values{"hashes": {hash}})
+	code, err := c.commandStatus(ctx, "resume", url.Values{"hashes": {hash}})
+	if err != nil {
+		return err
+	}
+	if code == http.StatusNotFound {
+		return fmt.Errorf("qBittorrent resume: %w", domain.ErrTorrentNotFound)
+	}
+	if code/100 != 2 {
+		return fmt.Errorf("qBittorrent resume returned HTTP %d", code)
+	}
+	return nil
 }
 
 func (c *Client) Remove(ctx context.Context, hash string, deleteFiles bool) error {
@@ -381,15 +391,23 @@ func (c *Client) Remove(ctx context.Context, hash string, deleteFiles bool) erro
 }
 
 func (c *Client) command(ctx context.Context, path string, v url.Values) error {
-	r, err := c.do(ctx, http.MethodPost, "api/v2/torrents/"+path, strings.NewReader(v.Encode()), "application/x-www-form-urlencoded")
+	code, err := c.commandStatus(ctx, path, v)
 	if err != nil {
 		return err
 	}
-	defer r.Body.Close()
-	if r.StatusCode/100 != 2 {
-		return fmt.Errorf("qBittorrent %s returned HTTP %d", path, r.StatusCode)
+	if code/100 != 2 {
+		return fmt.Errorf("qBittorrent %s returned HTTP %d", path, code)
 	}
 	return nil
+}
+
+func (c *Client) commandStatus(ctx context.Context, path string, v url.Values) (int, error) {
+	r, err := c.do(ctx, http.MethodPost, "api/v2/torrents/"+path, strings.NewReader(v.Encode()), "application/x-www-form-urlencoded")
+	if err != nil {
+		return 0, err
+	}
+	defer r.Body.Close()
+	return r.StatusCode, nil
 }
 
 func (c *Client) getJSON(ctx context.Context, path string, out any) error {

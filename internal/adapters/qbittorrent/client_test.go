@@ -1,11 +1,14 @@
 package qbittorrent
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/mihaiflorentin88/filelist-streaming-service/internal/domain"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -309,5 +312,21 @@ func TestAddReusesExistingTorrentAfter409Conflict(t *testing.T) {
 	}
 	if hash != "52e0ec3afc6723a6be6a2dad955dc4027babc55c" {
 		t.Fatalf("unexpected hash %q", hash)
+	}
+}
+
+func TestResumeReportsTorrentNotFoundForUnknownHash(t *testing.T) {
+	client := New(func() (string, string, string) { return "http://qb.test", "user", "password" })
+	client.http.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		body := "Ok."
+		status := http.StatusOK
+		if r.URL.Path == "/api/v2/torrents/resume" {
+			status = http.StatusNotFound
+			body = ""
+		}
+		return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+	})
+	if err := client.Resume(t.Context(), "vanished"); !errors.Is(err, domain.ErrTorrentNotFound) {
+		t.Fatalf("resume of an unknown hash should report the torrent missing: %v", err)
 	}
 }
