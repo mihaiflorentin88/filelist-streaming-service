@@ -108,8 +108,69 @@ describe("planSessionStart", () => {
     expect(anchor.windowLengthMs).toBe(Number.POSITIVE_INFINITY);
   });
 
-  it("gives up after the probe budget when the target is beyond the file", async () => {
+  it("clamps to the tail window when the target is beyond the content", async () => {
     const { fetchSpan } = tableFile();
-    await expect(planSessionStart(10_000_000, 200 << 20, 300 << 20, fetchSpan)).rejects.toThrow(/did not converge/);
+    const anchor = await planSessionStart(10_000_000, 200 << 20, 300 << 20, fetchSpan);
+    expect(anchor.degradedMs).toBeGreaterThan(0);
+    expect(anchor.windowFirstPtsMs).toBeGreaterThan(100_000);
+    expect(anchor.trimMs).toBe(anchor.windowLengthMs);
+  });
+});
+
+describe("planSessionStart convergence sweep", () => {
+  it("converges for every target across a density-boundary file", async () => {
+    const { windowBytes, fetchSpan } = denseThenSparseFile();
+    const failures: number[] = [];
+    for (let target = 5_000; target <= 1_050_000; target += 5_000) {
+      try {
+        await planSessionStart(target, 124_700_000, 270 << 20, fetchSpan, windowBytes);
+      } catch {
+        failures.push(target);
+      }
+    }
+    expect(failures).toEqual([]);
+  });
+
+  it("converges for every target on a uniform file", async () => {
+    const { fetchSpan } = tableFile();
+    const failures: number[] = [];
+    for (let target = 5_000; target <= 280_000; target += 5_000) {
+      try {
+        await planSessionStart(target, 100_000_000, 300 << 20, fetchSpan);
+      } catch {
+        failures.push(target);
+      }
+    }
+    expect(failures).toEqual([]);
+  });
+});
+
+describe("planSessionStart oscillation regression (Fightland S01E02)", () => {
+  // Real measured spans from the live server at the two hints the planner
+  // ping-ponged between: the 2227829 ms target sits 213 ms past the first
+  // window's end and 427 ms before the second window's start.
+  const OSCILLATION_SPANS: Record<number, AudioSpan> = {
+    2261091258: { streamIndex: 1, startByte: 2261091258, lengthBytes: 16777216, firstPtsMs: 2210048, lastPtsMs: 2227616 },
+    2277868474: { streamIndex: 1, startByte: 2277868474, lengthBytes: 16777216, firstPtsMs: 2228256, lastPtsMs: 2244224 },
+  };
+  const SIZE = 3160217036;
+  // Adjacent-window tiling: every 16 MiB window starting before B's offset
+  // measures like A (its leading cluster is the same local content), every
+  // window at or after B's offset measures like B.
+  const fetchSpan = async (start: number): Promise<AudioSpan> =>
+    start < 2277868474 ? OSCILLATION_SPANS[2261091258] : OSCILLATION_SPANS[2277868474];
+
+  it("resolves a seam-seated target instead of ping-ponging", async () => {
+    const anchor = await planSessionStart(2227829, 2261091258, SIZE, fetchSpan);
+    expect(anchor.trimMs).toBeGreaterThanOrEqual(0);
+    expect(anchor.trimMs).toBeLessThanOrEqual(anchor.windowLengthMs);
+    expect(anchor.degradedMs).toBeDefined();
+  });
+
+  it("converges normally when a window contains the target", async () => {
+    const anchor = await planSessionStart(2220000, 2261091258, SIZE, fetchSpan);
+    expect(anchor.windowFirstPtsMs).toBe(2210048);
+    expect(anchor.trimMs).toBe(9952);
+    expect(anchor.degradedMs).toBeUndefined();
   });
 });

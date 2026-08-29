@@ -2,6 +2,16 @@ import { render } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { API, audioPlaybackRoute, canonicalHouseholdItems, CatalogDetail, CatalogSource, CatalogTitle, clampVolume, ControlsVisibility, Download, DownloadSort, fallbackAudioTrack, formatBytes, HouseholdItem, HouseholdState, Job, JobLog, languageDisplayName, LibraryCategory, loadPlayerSettings, logicalPlaybackPosition, MediaAudioTrack, MediaInfo, MediaState, canonicalLanguage, subtitleRank, orderDownloadIDs, PlaybackPreferences, PlayerSettingsStorage, preferredAudioTrack, reconcileDownloads, resumeActionLabel, resumeForTitle, resumeSummary, savePlayerSettings, seasonPackActionLabel, SettingsField, SubtitleCandidate, subtitleItemLabel, subtitleMenuGroups, SubtitleWarning } from '@filelist/shared';
 import { AudioDecodeController } from './audio-decode';
+
+declare global {
+  interface Window {
+    __audioDecode?: {
+      driftSeconds: () => number;
+      state: () => import('./audio-decode').DebugState | null;
+      resume: () => void;
+    };
+  }
+}
 import './style.css';
 
 const api = new API(location.origin);
@@ -184,8 +194,20 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
       instance = value;
       decoderRef.current = value;
       setDecoder(value);
+      window.__audioDecode = {
+        driftSeconds: () => instance?.driftSeconds() ?? 0,
+        state: () => instance?.debugState() ?? null,
+        resume: () => instance?.resume(),
+      };
     }).catch(error => { decodeOwned.current = false; setDecoder(null); if (!cancelled) setMessage(`Audio decode unavailable: ${(error as Error).message}`) });
-    return () => { cancelled = true; decodeOwned.current = false; decoderRef.current = null; setDecoder(null); instance?.destroy() };
+    // Autoplay policies start the AudioContext suspended until a gesture; the
+    // muted video then plays in silence while the session waits. Any input on
+    // the player is a gesture — resume the context on the first one.
+    const kickContext = () => { void instance?.resume() };
+    element.addEventListener('pointerdown', kickContext);
+    element.addEventListener('play', kickContext);
+    window.addEventListener('keydown', kickContext);
+    return () => { cancelled = true; decodeOwned.current = false; decoderRef.current = null; setDecoder(null); delete window.__audioDecode; element.removeEventListener('pointerdown', kickContext); element.removeEventListener('play', kickContext); window.removeEventListener('keydown', kickContext); instance?.destroy() };
   }, [mediaInfo, selectedAudio, playbackURL]);
   // Loudness truth lives in persisted React state; this effect pushes it to
   // whichever output owns audio — the decoder gain during a decode session,

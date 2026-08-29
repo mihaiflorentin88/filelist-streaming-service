@@ -43,6 +43,7 @@ const PENDING_RESUME_SECONDS = 45;
 const ANCHOR_LEAD_SECONDS = 0.08;
 
 export type DecodeStatus = { status: 'ready' | 'stalling' | 'error'; message: string };
+export type DebugState = { volume: number; muted: boolean; contextState: AudioContextState; anchored: boolean; scheduledEnd: number; drift: number };
 export type DecodeOptions = { video: HTMLVideoElement; url: string; startSec: number; totalBytes: number; durationSec: number; audioOrdinal: number; spanFetch: SpanFetcher; onStatus: (status: DecodeStatus) => void; createContext?: () => AudioContext; createWorker?: () => Worker };
 
 // Production defaults for the injection seam; tests inject fakes instead.
@@ -81,6 +82,7 @@ export class AudioDecodeController {
   private suspendedNote = false;
   private suspendedSeconds = 0;
   private lastVideoTime = 0;
+  private driftLoggedAt = 0;
 
   private constructor(video: HTMLVideoElement, ctx: AudioContext, worker: Worker, options: DecodeOptions) {
     this.video = video;
@@ -127,6 +129,15 @@ export class AudioDecodeController {
     if (this.destroyed) return;
     if (this.anchored && Math.abs(seconds - this.anchorMediaAt) < DRIFT_LIMIT_SECONDS) return;
     void this.startSession(seconds);
+  }
+
+  /** Live A/V placement diagnostics for validation harnesses. */
+  driftSeconds(): number {
+    if (this.destroyed || !this.anchored) return 0;
+    return this.anchorMediaAt + (this.ctx.currentTime - this.anchorCtxAt) - this.video.currentTime;
+  }
+  debugState(): DebugState {
+    return { volume: this.volume, muted: this.muted, contextState: this.ctx.state, anchored: this.anchored, scheduledEnd: this.scheduledMediaEnd, drift: this.driftSeconds() };
   }
 
   suspend() { if (!this.destroyed) void this.ctx.suspend() }
@@ -258,6 +269,13 @@ export class AudioDecodeController {
     }
     const audible = this.sources.size > 0 || this.pending.length > 0;
     const drift = this.anchored && audible ? this.anchorMediaAt + (this.ctx.currentTime - this.anchorCtxAt) - this.video.currentTime : 0;
+    if (this.anchored && audible) {
+      const now = performance.now();
+      if (now - this.driftLoggedAt >= 5000) {
+        this.driftLoggedAt = now;
+        console.debug(`[audio-decode] drift ${drift.toFixed(3)}s at video ${this.video.currentTime.toFixed(2)}s`);
+      }
+    }
     if (Math.abs(drift) > DRIFT_LIMIT_SECONDS) {
       void this.startSession(this.video.currentTime);
       return;

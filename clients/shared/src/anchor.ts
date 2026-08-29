@@ -13,18 +13,21 @@ export interface AudioSpan {
 export type SpanFetcher = (startByte: number, lengthBytes: number) => Promise<AudioSpan>;
 
 export interface SessionAnchor {
-  startByte: number;
-  lengthBytes: number;
-  /** Time to drop from the start of the decoded window audio, in ms. */
-  trimMs: number;
-  /** Measured PTS of the window's first audio sample (ffprobe truth). */
-  windowFirstPtsMs: number;
-  /** Measured duration of the window's audio content (lastPtsMs - firstPtsMs). */
-  windowLengthMs: number;
-  probes: number;
+ startByte: number;
+ lengthBytes: number;
+ /** Time to drop from the start of the decoded window audio, in ms. */
+ trimMs: number;
+ /** Measured PTS of the window's first audio sample (ffprobe truth). */
+ windowFirstPtsMs: number;
+ /** Measured duration of the window's audio content (lastPtsMs - firstPtsMs). */
+ windowLengthMs: number;
+ probes: number;
+ /** True when the target fell in a cluster-boundary seam between windows and
+  * the nearest reachable window was accepted with a clamped trim instead. */
+ degradedMs?: number;
 }
 
-export const MAX_ANCHOR_PROBES = 5;
+export const MAX_ANCHOR_PROBES = 8;
 export const ANCHOR_WINDOW_BYTES = 16 << 20;
 
 const assertFinite = (value: number, name: string): number => {
@@ -50,10 +53,13 @@ const clamp = (value: number, low: number, high: number): number => Math.min(Mat
 /**
  * Plans the decode session for a requested position: probes measured audio
  * spans (at most MAX_ANCHOR_PROBES) until a window contains the requested
- * PTS, then returns the window plus the exact time trim that lands the first
- * scheduled sample on the target. Both directions move by the window's own
- * measured byte density, and a tail-clamped window is probed once before
- * giving up. Throws when the target is unreachable.
+ * PTS. Both directions move by the window's own measured byte density; when
+ * a step overshoots into a ping-pong across the target (small targets sit in
+ * cluster-boundary seams between adjacent windows), the search bisects
+ * between the two straddling hints. If no window contains the target exactly,
+ * the nearest reachable window is accepted with a clamped trim and a
+ * `degradedMs` report instead of failing playback. Throws only when nothing
+ * at all was measured.
  */
 export async function planSessionStart(
  requestedMs: number,
@@ -74,23 +80,35 @@ export async function planSessionStart(
  const requestLength = Math.min(windowBytes, totalBytes);
  const maxStart = Math.max(0, totalBytes - requestLength);
  let hint = clamp(Math.round(estimateBytes), 0, maxStart);
+ const measured = new Map<number, { first: number; last: number; span: AudioSpan }>();
+ let previous = -1;
  for (let probe = 1; probe <= MAX_ANCHOR_PROBES; probe++) {
   const span = await fetchSpan(hint, requestLength);
   assertSpan(span);
+  measured.set(hint, { first: span.firstPtsMs, last: span.lastPtsMs, span });
   const trimMs = requestedMs - span.firstPtsMs;
+  const windowMs = span.lastPtsMs - span.firstPtsMs;
   // A discontinuous window (lastPtsMs < firstPtsMs, valid per packet-order
   // measurement) has no PTS-derivable length: accept it on trim >= 0 and
   // report an unbounded length so the controller's replan guard never
   // triggers on it.
-  const discontinuous = span.lastPtsMs < span.firstPtsMs;
-  const windowMs = span.lastPtsMs - span.firstPtsMs;
-  if (trimMs >= 0 && (discontinuous || trimMs <= windowMs)) {
+  if (windowMs < 0 && trimMs >= 0) {
    return {
     startByte: span.startByte,
     lengthBytes: span.lengthBytes,
     trimMs,
     windowFirstPtsMs: span.firstPtsMs,
-    windowLengthMs: discontinuous ? Number.POSITIVE_INFINITY : windowMs,
+    windowLengthMs: Number.POSITIVE_INFINITY,
+    probes: probe,
+   };
+  }
+  if (trimMs >= 0 && trimMs <= windowMs) {
+   return {
+    startByte: span.startByte,
+    lengthBytes: span.lengthBytes,
+    trimMs,
+    windowFirstPtsMs: span.firstPtsMs,
+    windowLengthMs: windowMs,
     probes: probe,
    };
   }
@@ -103,9 +121,15 @@ export async function planSessionStart(
    }
    const back = density > 0 ? Math.round((span.firstPtsMs - requestedMs) * density) : windowBytes;
    const next = clamp(hint - Math.max(windowBytes, back), 0, maxStart);
-   if (next === hint) {
-    break;
+   if (next === hint || measured.has(next)) {
+    hint = bisect(previous === -1 ? 0 : previous, hint, maxStart);
+    if (measured.has(hint)) {
+     break;
+    }
+    previous = hint;
+    continue;
    }
+   previous = hint;
    hint = next;
    continue;
   }
@@ -113,10 +137,48 @@ export async function planSessionStart(
   // guided by the window's own measured byte density.
   const forward = density > 0 ? Math.round((requestedMs - span.lastPtsMs) * density) : windowBytes;
   const next = clamp(hint + Math.max(windowBytes, forward), 0, maxStart);
-  if (next === hint) {
-   break;
+  if (next === hint || measured.has(next)) {
+   hint = bisect(previous === -1 ? maxStart : previous, hint, maxStart);
+   if (measured.has(hint)) {
+    break;
+   }
+   previous = hint;
+   continue;
   }
+  previous = hint;
   hint = next;
  }
- throw new Error(`audio anchor did not converge for ${requestedMs} ms within ${MAX_ANCHOR_PROBES} probes`);
+ if (measured.size === 0) {
+  throw new Error(`audio anchor measured no windows for ${requestedMs} ms`);
+ }
+ // No probed window contains the target exactly: it sits in a seam between
+ // adjacent windows (cluster-boundary rounding). Accept the nearest window
+ // with a clamped trim rather than failing playback.
+ let best: { hint: number; distance: number } | undefined;
+ for (const [key, entry] of measured) {
+  const distance = requestedMs < entry.first ? entry.first - requestedMs : requestedMs > entry.last ? requestedMs - entry.last : 0;
+  if (best === undefined || distance < best.distance) {
+   best = { hint: key, distance };
+  }
+ }
+ if (best === undefined) {
+    throw new Error(`audio anchor measured no windows for ${requestedMs} ms`);
+  }
+  const entry = measured.get(best.hint)!;
+ const trimMs = clamp(requestedMs - entry.first, 0, entry.last - entry.first);
+ return {
+  startByte: entry.span.startByte,
+  lengthBytes: entry.span.lengthBytes,
+  trimMs,
+  windowFirstPtsMs: entry.first,
+  windowLengthMs: entry.last - entry.first,
+  probes: measured.size,
+  degradedMs: best.distance === 0 ? undefined : Math.round(best.distance),
+ };
+}
+
+function bisect(low: number, high: number, maxStart: number): number {
+ const a = clamp(Math.min(low, high), 0, maxStart);
+ const b = clamp(Math.max(low, high), 0, maxStart);
+ return clamp(Math.round((a + b) / 2), 0, maxStart);
 }
