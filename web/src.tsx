@@ -15,11 +15,13 @@ function audioTrackLabel(track: MediaAudioTrack) { const language = languageDisp
 // converted to AAC) served as fragmented MP4. It exists for codecs the
 // browser cannot decode (E-AC-3 in most releases). A live transcode is not
 // range-addressable, so seeking re-issues the request at the new position.
-export function browserPlaybackURL(download: Download, audioTrack = -1, startMs = 0) {
+export function browserPlaybackURL(download: Download, audioTrack = -1, startMs = 0, snapped = false) {
   if (!download.browserStreamUrl) return download.streamUrl;
   const value = new URL(download.browserStreamUrl, location.origin);
   if (audioTrack >= 0) value.searchParams.set('audioTrack', String(audioTrack));
   if (startMs > 0) value.searchParams.set('startMs', String(Math.round(startMs)));
+  // startMs is already a keyframe: the server skips its own probe.
+  if (snapped) value.searchParams.set('snapped', '1');
   return `${value.pathname}${value.search}`;
 }
 // Storage access itself can throw or be missing (blocked cookies, odd embeds,
@@ -103,6 +105,9 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
   // element's clock starts at zero for that request, so the logical position
   // is offset + element.currentTime (see logicalPlaybackPosition).
   const offsetRef = useRef(0);
+  // Whether offsetRef holds a probed keyframe; forwards snapped=1 so the
+  // stream route skips its own probe.
+  const snappedRef = useRef(false);
   const [streamOffset, setStreamOffset] = useState(0);
   // True while a compatibility re-request is in flight; suppresses buffering
   // chatter and recovery for the reload window.
@@ -123,7 +128,7 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
   const browserMode = !!currentTrack && !!mediaInfo && (audioPlaybackRoute(currentTrack.codec) === 'decode' || (mediaInfo.audioTracks.length > 1 && !currentTrack.default));
   const playbackURL = useMemo(() => {
     if (!mediaInfo) return '';
-    if (browserMode) return browserPlaybackURL(active.download, selectedAudio, streamOffset);
+    if (browserMode) return browserPlaybackURL(active.download, selectedAudio, streamOffset, snappedRef.current);
     return active.download.streamUrl;
   }, [active.download.id, mediaInfo, browserMode, selectedAudio, streamOffset]);
   const subtitlePositions = useMemo(() => new Map(candidates.map((candidate, index) => [candidate, index + 1])), [candidates]);
@@ -159,10 +164,11 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
         const chosen = track;
         const useBrowser = !!chosen && (audioPlaybackRoute(chosen.codec) === 'decode' || (info.audioTracks.length > 1 && !chosen.default));
         offsetRef.current = 0;
+        snappedRef.current = false;
         if (useBrowser && initial > 0) {
           // The route snaps seeks onto a video keyframe; clock and subtitle
           // offsets must use that effective start, not the requested one.
-          try { offsetRef.current = (await api.snapStreamStart(active.download.id, initial)).startMs } catch { offsetRef.current = initial }
+          try { const snap = await api.snapStreamStart(active.download.id, initial); offsetRef.current = snap.startMs; snappedRef.current = snap.snapped } catch { offsetRef.current = initial }
         }
         setStreamOffset(offsetRef.current);
         setSelectedAudio(track?.streamIndex ?? -1);
@@ -284,8 +290,10 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
     if (!browserMode) { video.current.currentTime = target / 1000; setPosition(target); return }
     reloading.current = true;
     let start = target;
-    try { start = (await api.snapStreamStart(active.download.id, target)).startMs } catch { }
+    let snapped = false;
+    try { const snap = await api.snapStreamStart(active.download.id, target); start = snap.startMs; snapped = snap.snapped } catch { }
     offsetRef.current = start;
+    snappedRef.current = snapped;
     syncSubtitleOffset(start);
     setPosition(start);
     setStreamOffset(start);
@@ -297,10 +305,13 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
       const target = logicalPlaybackPosition(offsetRef.current, video.current?.currentTime || 0, durationRef.current);
       if (nextBrowser) {
         let start = target;
-        try { start = (await api.snapStreamStart(active.download.id, target)).startMs } catch { }
+        let snapped = false;
+        try { const snap = await api.snapStreamStart(active.download.id, target); start = snap.startMs; snapped = snap.snapped } catch { }
         offsetRef.current = start;
+        snappedRef.current = snapped;
       } else {
         offsetRef.current = 0;
+        snappedRef.current = false;
       }
       pendingSeekRef.current = nextBrowser ? -1 : target;
       setStreamOffset(offsetRef.current);

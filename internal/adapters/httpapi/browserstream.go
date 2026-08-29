@@ -21,9 +21,9 @@ const keyframeSnapWindow = 15
 // (measured: 0.2-1.7s on this library). Aligning both streams on the
 // keyframe removes the offset by construction. Any probe failure degrades
 // to the raw target: playback must never be blocked by the snap.
-func snapStartToVideoKeyframe(ctx context.Context, ffprobePath, input string, targetMs int64, log *slog.Logger) int64 {
+func snapStartToVideoKeyframe(ctx context.Context, ffprobePath, input string, targetMs int64, log *slog.Logger) (int64, bool) {
 	if targetMs <= 0 {
-		return 0
+		return 0, false
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
@@ -43,7 +43,7 @@ func snapStartToVideoKeyframe(ctx context.Context, ffprobePath, input string, ta
 	).Output()
 	if err != nil {
 		log.Warn("keyframe snap probe failed; using raw seek target", "targetMs", targetMs, "error", err)
-		return targetMs
+		return targetMs, false
 	}
 	best := -1.0
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
@@ -60,9 +60,9 @@ func snapStartToVideoKeyframe(ctx context.Context, ffprobePath, input string, ta
 		}
 	}
 	if best < 0 {
-		return targetMs
+		return targetMs, false
 	}
-	return int64(best * 1000)
+	return int64(best * 1000), true
 }
 
 // parseStartQuery validates the raw startMs query value against the media

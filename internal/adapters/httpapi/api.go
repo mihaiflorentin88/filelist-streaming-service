@@ -1094,8 +1094,8 @@ func (a *API) streamSnap(w http.ResponseWriter, r *http.Request) {
 	}
 	requested := parseStartQuery(r.URL.Query().Get("startMs"), 0)
 	input := "http://127.0.0.1:" + port + "/api/v1/streams/" + r.PathValue("id")
-	snapped := snapStartToVideoKeyframe(r.Context(), settings.FFprobePath, input, requested, a.log)
-	write(w, 200, map[string]any{"requested": requested, "startMs": snapped})
+	start, probed := snapStartToVideoKeyframe(r.Context(), settings.FFprobePath, input, requested, a.log)
+	write(w, 200, map[string]any{"requested": requested, "startMs": start, "snapped": probed})
 }
 
 // browserStream preserves the original video while converting browser-hostile
@@ -1123,9 +1123,15 @@ func (a *API) browserStream(w http.ResponseWriter, r *http.Request) {
 	// Stream-copied video resumes on the previous keyframe while re-encoded
 	// audio resumes exactly at the target, so a raw seek leaves the audio
 	// leading the picture by up to one GOP. Snap the target onto the
-	// keyframe: both streams then start at the same content point.
-	snapped := snapStartToVideoKeyframe(r.Context(), settings.FFprobePath, input, parseStartQuery(r.URL.Query().Get("startMs"), info.DurationMS), a.log)
-	args, _, err := browserStreamArgs(input, info, r.URL.Query().Get("audioTrack"), strconv.FormatInt(snapped, 10))
+	// keyframe: both streams then start at the same content point. Clients
+	// that already resolved the snap (snapped=1) reuse it and spare the Pi
+	// a second probe per seek.
+	startMs := parseStartQuery(r.URL.Query().Get("startMs"), info.DurationMS)
+	if r.URL.Query().Get("snapped") != "1" {
+		probed, _ := snapStartToVideoKeyframe(r.Context(), settings.FFprobePath, input, startMs, a.log)
+		startMs = probed
+	}
+	args, _, err := browserStreamArgs(input, info, r.URL.Query().Get("audioTrack"), strconv.FormatInt(startMs, 10))
 	if err != nil {
 		problem(w, http.StatusBadRequest, err)
 		return

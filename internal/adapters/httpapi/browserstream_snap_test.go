@@ -46,19 +46,19 @@ func TestSnapStartToVideoKeyframe(t *testing.T) {
 
 	// 5s target snaps back onto the 4s keyframe; sync demands both streams
 	// start on the same content point, and copied video cannot start mid-GOP.
-	if got := snapStartToVideoKeyframe(context.Background(), "ffprobe", path, 5_000, log); got != 4_000 {
-		t.Fatalf("snapped start = %dms, want 4000ms", got)
+	if got, ok := snapStartToVideoKeyframe(context.Background(), "ffprobe", path, 5_000, log); got != 4_000 || !ok {
+		t.Fatalf("snapped start = %dms ok=%v, want 4000ms true", got, ok)
 	}
 	// A target on the keyframe stays put; zero stays zero.
-	if got := snapStartToVideoKeyframe(context.Background(), "ffprobe", path, 8_000, log); got != 8_000 {
+	if got, _ := snapStartToVideoKeyframe(context.Background(), "ffprobe", path, 8_000, log); got != 8_000 {
 		t.Fatalf("snapped start = %dms, want 8000ms", got)
 	}
-	if got := snapStartToVideoKeyframe(context.Background(), "ffprobe", path, 0, log); got != 0 {
-		t.Fatalf("snapped start = %dms, want 0", got)
+	if got, ok := snapStartToVideoKeyframe(context.Background(), "ffprobe", path, 0, log); got != 0 || ok {
+		t.Fatalf("snapped start = %dms ok=%v, want 0 false", got, ok)
 	}
 	// A broken probe degrades to the raw target instead of blocking playback.
-	if got := snapStartToVideoKeyframe(context.Background(), "ffprobe", filepath.Join(t.TempDir(), "missing.mkv"), 5_000, log); got != 5_000 {
-		t.Fatalf("probe failure should fall back to target, got %dms", got)
+	if got, ok := snapStartToVideoKeyframe(context.Background(), "ffprobe", filepath.Join(t.TempDir(), "missing.mkv"), 5_000, log); got != 5_000 || ok {
+		t.Fatalf("probe failure should fall back to target, got %dms ok=%v", got, ok)
 	}
 }
 
@@ -96,13 +96,14 @@ func TestStreamSnapEndpointFallsBackToTarget(t *testing.T) {
 	var payload struct {
 		Requested int64 `json:"requested"`
 		StartMs   int64 `json:"startMs"`
+		Snapped   bool  `json:"snapped"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("snap payload: %v", err)
 	}
 	// The harness media file is not a real container: the probe degrades and
-	// the endpoint must still answer with a usable start.
-	if payload.Requested != 61000 || payload.StartMs != 61000 {
-		t.Fatalf("snap payload = %+v, want requested=startMs=61000", payload)
+	// the endpoint must still answer with a usable, unsnapped start.
+	if payload.Requested != 61000 || payload.StartMs != 61000 || payload.Snapped {
+		t.Fatalf("snap payload = %+v, want requested=startMs=61000 snapped=false", payload)
 	}
 }
