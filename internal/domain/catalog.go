@@ -28,7 +28,7 @@ type ParsedRelease struct {
 	EpisodeEnd   int       `json:"episodeEnd,omitempty"`
 	EpisodeTitle string    `json:"episodeTitle,omitempty"`
 	Resolution   string    `json:"resolution,omitempty"`
-	Source       string    `json:"source,omitempty"`
+	Quality      string    `json:"quality,omitempty"`
 	VideoCodec   string    `json:"videoCodec,omitempty"`
 	Audio        string    `json:"audio,omitempty"`
 	HDR          string    `json:"hdr,omitempty"`
@@ -86,7 +86,7 @@ type CatalogQuery struct {
 	Kind       MediaKind
 	Resolution string
 	HDR        string
-	Source     string
+	Quality    string
 	Codec      string
 	MinSeeders int
 	Freeleech  *bool
@@ -126,7 +126,7 @@ type CatalogFacets struct {
 	Kinds       []string `json:"kinds"`
 	Resolutions []string `json:"resolutions"`
 	HDR         []string `json:"hdr"`
-	Sources     []string `json:"sources"`
+	Qualities   []string `json:"qualities"`
 	Codecs      []string `json:"codecs"`
 }
 
@@ -228,7 +228,7 @@ func ParseRelease(release TorrentRelease) ParsedRelease {
 		}
 	}
 	upper := strings.ToUpper(name)
-	p.Source = firstMatch(upper, []string{"REMUX", "BLU-RAY", "BLURAY", "WEB-DL", "WEBRIP", "HDTV", "DVDRIP"})
+	p.Quality = firstMatch(upper, []string{"REMUX", "BLU-RAY", "BLURAY", "WEB-DL", "WEBRIP", "HDTV", "DVDRIP"})
 	p.VideoCodec = firstMatch(upper, []string{"AV1", "H.265", "H265", "HEVC", "X265", "H.264", "H264", "X264", "XVID"})
 	p.Audio = firstMatch(upper, []string{"TRUEHD", "ATMOS", "DTS-HD", "DTS", "EAC3", "DDP", "AC3", "AAC", "FLAC"})
 	p.HDR = firstMatch(upper, []string{"DOLBY VISION", "DOVI", "HDR10+", "HDR10", "HDR"})

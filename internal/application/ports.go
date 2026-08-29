@@ -8,18 +8,18 @@ import (
 	"github.com/mihaiflorentin88/filelist-streaming-service/internal/domain"
 )
 
-type CatalogSource interface {
+type TrackerCatalog interface {
 	Latest(context.Context) ([]domain.TorrentRelease, error)
 	Category(context.Context, int) ([]domain.TorrentRelease, error)
 	Search(context.Context, string) ([]domain.TorrentRelease, error)
 	OpenTorrent(context.Context, string) (io.ReadCloser, error)
 }
 
-// Tracker is the provider-neutral catalog boundary. CatalogSource remains the
+// Tracker is the provider-neutral catalog boundary. TrackerCatalog remains the
 // minimum compatibility surface for existing adapters and tests; new trackers
 // advertise their identity and capabilities through this interface.
 type Tracker interface {
-	CatalogSource
+	TrackerCatalog
 	ID() string
 	Capabilities() TrackerCapabilities
 }

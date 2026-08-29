@@ -197,7 +197,7 @@ paths:
           }
         - { in: query, name: resolution, schema: { type: string } }
         - { in: query, name: hdr, schema: { type: string } }
-        - { in: query, name: source, schema: { type: string } }
+        - { in: query, name: quality, schema: { type: string } }
         - { in: query, name: codec, schema: { type: string } }
         - { in: query, name: minSeeders, schema: { type: integer, minimum: 0 } }
         - { in: query, name: freeleech, schema: { type: boolean } }
@@ -1103,7 +1103,7 @@ components:
             episodeEnd: { type: integer },
             episodeTitle: { type: string },
             resolution: { type: string },
-            source: { type: string },
+            quality: { type: string },
             videoCodec: { type: string },
             audio: { type: string },
             hdr: { type: string },
@@ -1258,14 +1258,14 @@ components:
     CatalogFacets:
       {
         type: object,
-        required: [categories, kinds, resolutions, hdr, sources, codecs],
+        required: [categories, kinds, resolutions, hdr, qualities, codecs],
         properties:
           {
             categories: { type: array, items: { type: string } },
             kinds: { type: array, items: { type: string } },
             resolutions: { type: array, items: { type: string } },
             hdr: { type: array, items: { type: string } },
-            sources: { type: array, items: { type: string } },
+            qualities: { type: array, items: { type: string } },
             codecs: { type: array, items: { type: string } },
           },
       }

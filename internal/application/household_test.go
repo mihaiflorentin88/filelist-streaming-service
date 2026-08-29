@@ -49,7 +49,7 @@ func (e *streamingEngine) PrepareFiles(context.Context, string, []int, []int) er
 func (e *streamingEngine) Resume(context.Context, string) error { e.resumed = true; return nil }
 
 type failingCatalog struct {
-	CatalogSource
+	TrackerCatalog
 	opens int
 }
 

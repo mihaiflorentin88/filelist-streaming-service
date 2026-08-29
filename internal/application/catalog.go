@@ -624,7 +624,7 @@ func filterCatalogSources(items []domain.CatalogSource, q domain.CatalogQuery) [
 		if q.HDR != "" && !strings.EqualFold(p.HDR, q.HDR) {
 			continue
 		}
-		if q.Source != "" && !strings.EqualFold(p.Source, q.Source) {
+		if q.Quality != "" && !strings.EqualFold(p.Quality, q.Quality) {
 			continue
 		}
 		if q.Codec != "" && !strings.EqualFold(p.VideoCodec, q.Codec) {

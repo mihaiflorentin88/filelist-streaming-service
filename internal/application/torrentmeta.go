@@ -178,7 +178,7 @@ func episodeSource(base domain.CatalogSource, file domain.TorrentFile) (domain.C
 	if parsed.EpisodeStart <= 0 {
 		return domain.CatalogSource{}, false
 	}
-	for value, target := range map[string]*string{base.Parsed.Resolution: &parsed.Resolution, base.Parsed.Source: &parsed.Source, base.Parsed.VideoCodec: &parsed.VideoCodec, base.Parsed.Audio: &parsed.Audio, base.Parsed.HDR: &parsed.HDR} {
+	for value, target := range map[string]*string{base.Parsed.Resolution: &parsed.Resolution, base.Parsed.Quality: &parsed.Quality, base.Parsed.VideoCodec: &parsed.VideoCodec, base.Parsed.Audio: &parsed.Audio, base.Parsed.HDR: &parsed.HDR} {
 		if *target == "" {
 			*target = value
 		}

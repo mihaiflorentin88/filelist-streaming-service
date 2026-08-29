@@ -173,7 +173,7 @@ media_kind=excluded.media_kind,year=excluded.year,season_start=excluded.season_s
 episode_end=excluded.episode_end,episode_title=excluded.episode_title,resolution=excluded.resolution,source=excluded.source,video_codec=excluded.video_codec,
 audio=excluded.audio,hdr=excluded.hdr,edition=excluded.edition,release_group=excluded.release_group`,
 			x.ID, domain.CatalogTitleID(x, parsed), parsed.Title, parsed.SortTitle, parsed.Kind, parsed.Year, parsed.SeasonStart, parsed.SeasonEnd,
-			parsed.EpisodeStart, parsed.EpisodeEnd, parsed.EpisodeTitle, parsed.Resolution, parsed.Source, parsed.VideoCodec, parsed.Audio, parsed.HDR, parsed.Edition, parsed.ReleaseGroup); err != nil {
+			parsed.EpisodeStart, parsed.EpisodeEnd, parsed.EpisodeTitle, parsed.Resolution, parsed.Quality, parsed.VideoCodec, parsed.Audio, parsed.HDR, parsed.Edition, parsed.ReleaseGroup); err != nil {
 			return err
 		}
 	}
@@ -201,7 +201,7 @@ func scanCatalogSources(rows *sql.Rows) ([]domain.CatalogSource, error) {
 		if err := rows.Scan(&x.Release.ID, &x.Release.Name, &x.Release.Category, &x.Release.SizeBytes, &x.Release.IMDbID, &x.Release.Seeders, &x.Release.Leechers,
 			&x.Release.TimesCompleted, &x.Release.Freeleech, &x.Release.DoubleUp, &x.Release.Internal, &x.Release.Moderated, &x.Release.SmallDescription, &uploaded,
 			&x.Release.FileCount, &x.Release.Comments, &x.Parsed.Title, &x.Parsed.SortTitle, &x.Parsed.Kind, &x.Parsed.Year, &x.Parsed.SeasonStart,
-			&x.Parsed.SeasonEnd, &x.Parsed.EpisodeStart, &x.Parsed.EpisodeEnd, &x.Parsed.EpisodeTitle, &x.Parsed.Resolution, &x.Parsed.Source,
+			&x.Parsed.SeasonEnd, &x.Parsed.EpisodeStart, &x.Parsed.EpisodeEnd, &x.Parsed.EpisodeTitle, &x.Parsed.Resolution, &x.Parsed.Quality,
 			&x.Parsed.VideoCodec, &x.Parsed.Audio, &x.Parsed.HDR, &x.Parsed.Edition, &x.Parsed.ReleaseGroup); err != nil {
 			return nil, err
 		}
@@ -234,7 +234,7 @@ func catalogFilter(q domain.CatalogQuery) (string, []any) {
 		like := "%" + escapeLike(search) + "%"
 		args = append(args, like, like, like)
 	}
-	for value, column := range map[string]string{q.Category: "r.category", string(q.Kind): "c.media_kind", q.Resolution: "c.resolution", q.HDR: "c.hdr", q.Source: "c.source", q.Codec: "c.video_codec"} {
+	for value, column := range map[string]string{q.Category: "r.category", string(q.Kind): "c.media_kind", q.Resolution: "c.resolution", q.HDR: "c.hdr", q.Quality: "c.source", q.Codec: "c.video_codec"} {
 		if value != "" {
 			where = append(where, column+"=?")
 			args = append(args, value)
@@ -391,7 +391,7 @@ func (r *Repository) CatalogFacets(ctx context.Context) (domain.CatalogFacets, e
 	if f.HDR, err = read("c.hdr"); err != nil {
 		return f, err
 	}
-	if f.Sources, err = read("c.source"); err != nil {
+	if f.Qualities, err = read("c.source"); err != nil {
 		return f, err
 	}
 	f.Codecs, err = read("c.video_codec")

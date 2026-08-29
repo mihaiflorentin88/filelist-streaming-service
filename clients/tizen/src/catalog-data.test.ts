@@ -6,7 +6,7 @@ const empty={favorites:[],continueWatching:[],recent:[],watched:[]} as Household
 
 describe('Tizen route data parity',()=>{
   it('uses the complete facet response for tracker categories',()=>{
-    const facets={categories:['Movies 4K','TV-Series HD'],kinds:[],resolutions:[],hdr:[],sources:[],codecs:[]} as CatalogFacets;
+    const facets={categories:['Movies 4K','TV-Series HD'],kinds:[],resolutions:[],hdr:[],qualities:[],codecs:[]} as CatalogFacets;
     expect(trackerCategories(facets)).toEqual(facets.categories);
   });
   it('matches the website household sections',()=>{

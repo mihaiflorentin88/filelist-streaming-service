@@ -392,7 +392,7 @@ func (a *API) catalogTitles(w http.ResponseWriter, r *http.Request) {
 	q := domain.CatalogQuery{
 		Search: strings.TrimSpace(r.URL.Query().Get("search")), Category: r.URL.Query().Get("category"),
 		Kind: domain.MediaKind(r.URL.Query().Get("kind")), Resolution: r.URL.Query().Get("resolution"), HDR: r.URL.Query().Get("hdr"),
-		Source: r.URL.Query().Get("source"), Codec: r.URL.Query().Get("codec"), MinSeeders: integer(r, "minSeeders", 0),
+		Quality: r.URL.Query().Get("quality"), Codec: r.URL.Query().Get("codec"), MinSeeders: integer(r, "minSeeders", 0),
 		Sort: r.URL.Query().Get("sort"), Limit: integer(r, "pageSize", 24), Offset: offset,
 	}
 	if q.Kind != "" && q.Kind != domain.MediaMovie && q.Kind != domain.MediaSeries {

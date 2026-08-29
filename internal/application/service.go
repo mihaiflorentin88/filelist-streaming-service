@@ -22,7 +22,7 @@ import (
 )
 
 type Service struct {
-	catalog          CatalogSource
+	catalog          TrackerCatalog
 	engine           TorrentEngine
 	repo             Repository
 	settings         *config.Store
@@ -58,7 +58,7 @@ type metadataRequest struct {
 type titleRefreshRequest struct{ TitleID, Query string }
 type trackerSearchRequest struct{ Query string }
 
-func NewService(c CatalogSource, e TorrentEngine, r Repository, s *config.Store, subtitles ...SubtitleProvider) *Service {
+func NewService(c TrackerCatalog, e TorrentEngine, r Repository, s *config.Store, subtitles ...SubtitleProvider) *Service {
 	limit := s.Get().MaxConcurrentJobs
 	if limit < 1 {
 		limit = 10
