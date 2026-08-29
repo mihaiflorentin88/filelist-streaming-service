@@ -37,7 +37,7 @@ services:
       context: .
       dockerfile: deploy/docker/Dockerfile.server
       args:
-        VERSION: ${FILELIST_STREAMING_VERSION:-0.2.16}
+        VERSION: ${FILELIST_STREAMING_VERSION:-0.2.18}
     restart: unless-stopped
     user: "${PUID:-1000}:${PGID:-1000}"
     depends_on:

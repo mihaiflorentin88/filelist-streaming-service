@@ -283,7 +283,11 @@ func (s *Service) PrepareSubtitle(ctx context.Context, downloadID, providerName,
 	if err != nil {
 		return domain.SubtitleAsset{}, err
 	}
-	sum := sha256.Sum256(append([]byte(providerName+"\x00"+candidateID+"\x00"+target+"\x00"), converted...))
+	// The id is scoped to the download on purpose: identical subtitle content
+	// is common across releases of the same episode, and the asset table keys
+	// rows per source - a source-independent id collides on the primary key
+	// the moment a second download prepares the same subtitle.
+	sum := sha256.Sum256(append([]byte(downloadID+"\x00"+providerName+"\x00"+candidateID+"\x00"+target+"\x00"), converted...))
 	id := hex.EncodeToString(sum[:16])
 	cache := s.settings.Get().SubtitleCachePath
 	if err = os.MkdirAll(cache, 0o750); err != nil {

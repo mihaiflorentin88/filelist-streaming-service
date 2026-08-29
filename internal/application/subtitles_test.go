@@ -2,6 +2,8 @@ package application
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -201,4 +203,66 @@ func TestSearchSubtitlesMarksPreparedProviderCandidatesCached(t *testing.T) {
 	if provider.ID != "p1" || !provider.Cached {
 		t.Fatalf("subdl candidate = %#v, want cached=true once an asset is prepared", provider)
 	}
+}
+
+func TestSubtitleAssetIDIsScopedToTheSource(t *testing.T) {
+	repo := newSubtitleTestRepository(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	// Two downloads share the same subtitle candidate and identical converted
+	// content; the asset id must still be per-source or the second insert
+	// collides on the primary key (bug: UNIQUE constraint failed:
+	// subtitle_assets.id).
+	first := prepareAssetForTest(t, repo, "download-a", now)
+	second := prepareAssetForTest(t, repo, "download-b", now)
+
+	if first.ID == second.ID {
+		t.Fatalf("asset ids must differ across sources, both %q", first.ID)
+	}
+	for source, asset := range map[string]domain.SubtitleAsset{"download-a": first, "download-b": second} {
+		got, err := repo.GetSubtitleAsset(ctx, source, asset.Provider, asset.CandidateID, asset.Format)
+		if err != nil {
+			t.Fatalf("asset for %s missing after save: %v", source, err)
+		}
+		if got.Path != asset.Path {
+			t.Fatalf("asset for %s points at %q, want %q", source, got.Path, asset.Path)
+		}
+	}
+}
+
+func prepareAssetForTest(t *testing.T, repo *sqlite.Repository, sourceID string, now time.Time) domain.SubtitleAsset {
+	t.Helper()
+	asset := domain.SubtitleAsset{
+		ID:        subtitleAssetIDForTest(sourceID, "subtitle content"),
+		SourceID:  sourceID,
+		Provider:  "subdl",
+		CandidateID: "p1",
+		Name:      "Movie.ro.srt",
+		Language:  "ro",
+		Format:    "vtt",
+		MimeType:  "text/vtt",
+		Path:      "/tmp/asset-" + sourceID + ".vtt",
+		CreatedAt: now,
+		LastUsedAt: now,
+	}
+	if err := repo.SaveSubtitleAsset(context.Background(), asset); err != nil {
+		t.Fatalf("SaveSubtitleAsset(%s): %v", sourceID, err)
+	}
+	return asset
+}
+
+func subtitleAssetIDForTest(source, content string) string {
+	sum := sha256.Sum256([]byte(source + "\x00content\x00" + content))
+	return hex.EncodeToString(sum[:16])
+}
+
+func newSubtitleTestRepository(t *testing.T) *sqlite.Repository {
+	t.Helper()
+	repo, err := sqlite.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	return repo
 }
