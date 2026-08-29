@@ -53,6 +53,9 @@ function tabFromHash(): string {
   return TABS.some(tab => tab.id === id) ? id : 'tracker';
 }
 
+const tabFieldKeys = (id: string): string[] => (TAB_GROUPS[id] || []).flatMap(group => group.fields.map(field => field[1]));
+const isConfigTab = (id: string) => Boolean(TAB_GROUPS[id]);
+
 export function Settings({ value, fields, onSaved, onError }: { value: Record<string, unknown>; fields: SettingsField[]; onSaved: (v: Record<string, unknown>) => void; onError: (s: string) => void }) {
   const [current, setCurrent] = useState({ ...value });
   const [message, setMessage] = useState('');
@@ -60,6 +63,7 @@ export function Settings({ value, fields, onSaved, onError }: { value: Record<st
   const [tests, setTests] = useState<Record<string, string>>({});
   const [tab, setTabState] = useState(tabFromHash);
   const setTab = (id: string) => { setTabState(id); history.replaceState(null, '', `#${id}`) };
+  const tabEdits = (id: string) => tabFieldKeys(id).filter(key => current[key] !== value[key]);
   useEffect(() => {
     const followHash = () => setTabState(tabFromHash());
     window.addEventListener('hashchange', followHash);
@@ -68,15 +72,26 @@ export function Settings({ value, fields, onSaved, onError }: { value: Record<st
   const descriptor = (key: string, label: string) => fields.find(field => field.key === key) || { key, label, help: `Controls ${label.toLowerCase()}.`, obtain: '', tvVisible: false, sensitive: false, restartRequired: false, readOnly: false };
   async function save(e: Event) {
     e.preventDefault();
-    const out = { ...current };
+    // One PUT carries the whole settings object, but only the active tab's
+    // edits ride on top of the last-saved values — edits made on other tabs
+    // stay pending until their own tab is saved.
+    const merged: Record<string, unknown> = { ...value };
+    tabFieldKeys(tab).forEach(key => { merged[key] = current[key] });
+    const out = { ...merged };
     Object.keys(out).filter(k => k.endsWith('Configured') || k === 'settingsPath').forEach(k => delete out[k]);
     if (typeof out.trustedCidrs === 'string') out.trustedCidrs = out.trustedCidrs.split(',').map((x: string) => x.trim()).filter(Boolean);
     if (typeof out.evictionRules === 'string') out.evictionRules = (out.evictionRules as string).split(',').map((x: string) => x.trim().toLowerCase()).filter(Boolean);
     try {
       await api.call('/settings', { method: 'PUT', body: JSON.stringify(out) });
       setMessage('Settings saved. Environment-managed values remain controlled by .env.docker.');
-      onSaved(current);
+      onSaved(merged);
     } catch (e) { onError((e as Error).message) }
+  }
+  function discard() {
+    const reverted = { ...current };
+    tabFieldKeys(tab).forEach(key => { reverted[key] = value[key] });
+    setCurrent(reverted);
+    setMessage('');
   }
   async function test(name: string) {
     setTests({ ...tests, [name]: 'Testing…' });
@@ -98,10 +113,10 @@ export function Settings({ value, fields, onSaved, onError }: { value: Record<st
     <form class="settings" onSubmit={save}>
       <p class="supporting">Stored securely at {String(value.settingsPath || 'data/settings.json')}. Blank secrets keep their current value. Fields supplied by the process environment are shown read-only.</p>
       <div class="settings-tabs" role="tablist" aria-label="Settings sections">
-        {TABS.map(t => <button type="button" role="tab" class={t.ops ? 'ops' + (t.id === 'maintenance' ? ' ops-start' : '') : ''} aria-selected={tab === t.id} onClick={() => setTab(t.id)}>{t.label}</button>)}
+        {TABS.map(t => <button type="button" role="tab" class={[t.ops ? 'ops' : '', t.id === 'maintenance' ? 'ops-start' : '', tabEdits(t.id).length > 0 ? 'dirty' : ''].filter(Boolean).join(' ')} aria-selected={tab === t.id} onClick={() => setTab(t.id)}>{t.label}</button>)}
       </div>
       <div class="settings-panel" role="tabpanel">{panelContent()}</div>
-      <div class="settings-actions"><button class="primary" type="submit">Save changes</button>{message && <span role="status">{message}</span>}</div>
+      {isConfigTab(tab) && <div class="settings-actions"><span class="dirty-count" role="status">{tabEdits(tab).length > 0 ? `${tabEdits(tab).length} unsaved ${tabEdits(tab).length === 1 ? 'change' : 'changes'}` : ''}</span><button type="button" disabled={tabEdits(tab).length === 0} onClick={discard}>Discard changes</button><button class="primary" type="submit" disabled={tabEdits(tab).length === 0}>Save changes</button>{message && <span role="status">{message}</span>}</div>}
     </form>
     {help && <div class="overlay" role="dialog" aria-modal="true" aria-label={`Help for ${help.label}`}><section class="help-modal"><button class="close" onClick={() => setHelp(null)}>Close</button><h2>{help.label}</h2><p>{help.help}</p>{help.readOnly && <p><strong>This setting is managed by the process environment and cannot be edited here.</strong></p>}{help.restartRequired && <p><strong>Restart required after changing this setting.</strong></p>}{help.obtain && <><h3>Where to get it</h3><p>{help.obtain}</p></>}<button onClick={() => void navigator.clipboard.writeText([help.help, help.obtain].filter(Boolean).join('\n\n')).then(() => setMessage('Help copied.'))}>Copy help</button></section></div>}
   </>

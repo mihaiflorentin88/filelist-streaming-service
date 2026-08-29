@@ -84,9 +84,16 @@ async function settle() {
 }
 const panel = () => document.querySelector('.settings-panel')!;
 
+const fieldInput = (label: string) => Array.from(document.querySelectorAll('.settings-panel label')).find(item => item.querySelector('span')?.textContent?.startsWith(label))!.querySelector('input')!;
+
+function setFieldInput(label: string, value: string) {
+ const input = fieldInput(label);
+ input.value = value;
+ input.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
 beforeEach(() => {
  vi.stubGlobal('EventSource', FakeEventSource);
- vi.spyOn(API.prototype, 'state').mockResolvedValue(emptyHousehold);
  vi.spyOn(API.prototype, 'facets').mockResolvedValue({ categories: [], kinds: [], resolutions: [], hdr: [], qualities: [], codecs: [] });
  vi.spyOn(API.prototype, 'titles').mockResolvedValue({ items: [], nextCursor: null, total: 0 });
  vi.spyOn(API.prototype, 'ensureMetadata').mockResolvedValue({ queued: 0 });
@@ -184,5 +191,53 @@ describe('settings tabs', () => {
   expect(subdlLabels).toHaveLength(1);
   expect(panel().textContent).toContain('Subtitle cache path');
   expect(panel().textContent).toContain('ffprobe path');
+ });
+
+ it('saves one tab merged over last-saved values without sweeping other tabs\' edits', async () => {
+  await openSettings();
+  await act(async () => { settingsTabs()[1].click() });
+  await settle();
+  await act(async () => { setFieldInput('Download root', '/srv/new') });
+  await act(async () => { settingsTabs()[0].click() });
+  await settle();
+  await act(async () => { setFieldInput('FileList URL', 'https://filelist-edited.example') });
+  await act(async () => { settingsTabs()[1].click() });
+  await settle();
+  await act(async () => { document.querySelector<HTMLButtonElement>('.settings-actions button[type="submit"]')!.click() });
+  await settle();
+  expect(putCalls).toHaveLength(1);
+  expect(putCalls[0].body.downloadRoot).toBe('/srv/new');
+  expect(putCalls[0].body.fileListUrl).toBe('https://filelist.io');
+  expect(document.querySelector('.settings-actions')!.textContent).toContain('Settings saved.');
+ });
+
+ it('discards the tab back to last-saved values and never sends them', async () => {
+  await openSettings();
+  await act(async () => { setFieldInput('FileList URL', 'https://discarded.example') });
+  await settle();
+  await act(async () => { Array.from(document.querySelectorAll('.settings-actions button')).find(button => button.textContent === 'Discard changes')!.click() });
+  await settle();
+  expect(fieldInput('FileList URL').value).toBe('https://filelist.io');
+  expect(putCalls).toHaveLength(0);
+ });
+
+ it('marks dirty tabs, counts unsaved changes, and disables actions when clean', async () => {
+  await openSettings();
+  expect(document.querySelector('.settings-actions button[type="submit"]')!.hasAttribute('disabled')).toBe(true);
+  await act(async () => { setFieldInput('TMDB API key or token', 'tmdb-edited') });
+  await settle();
+  expect(document.querySelector('.settings-actions')!.textContent).toContain('1 unsaved change');
+  expect(settingsTabs()[0].className).toContain('dirty');
+  await act(async () => { settingsTabs()[3].click() });
+  await settle();
+  expect(document.querySelector('.settings-actions button[type="submit"]')!.hasAttribute('disabled')).toBe(true);
+  expect(settingsTabs()[0].className).toContain('dirty');
+  expect(settingsTabs()[3].className).not.toContain('dirty');
+  await act(async () => { settingsTabs()[0].click() });
+  await settle();
+  await act(async () => { document.querySelector<HTMLButtonElement>('.settings-actions button[type="submit"]')!.click() });
+  await settle();
+  expect(settingsTabs()[0].className).not.toContain('dirty');
+  expect(putCalls[0].body.tmdbApiKey).toBe('tmdb-edited');
  });
 });
