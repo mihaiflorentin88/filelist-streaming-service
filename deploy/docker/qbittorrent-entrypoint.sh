@@ -28,7 +28,7 @@ if [ -f "$config" ]; then
 else
   fresh=true
   bootstrap=true
-  printf '%s\n' '[BitTorrent]' 'Session\DefaultSavePath=/downloads' 'Session\Port=6881' '[Meta]' 'MigrationVersion=9999' '[Preferences]' "WebUI\Port=${QBT_WEBUI_PORT:-8080}" > "$config"
+  printf '%s\n' '[BitTorrent]' 'Session\DefaultSavePath=/downloads' 'Session\Port=6881' '[Meta]' 'MigrationVersion=9999' '[Preferences]' "WebUI\Port=${QBT_WEBUI_PORT:-8080}" >"$config"
 fi
 
 python3 /usr/local/lib/filelist/qbittorrent_config.py \
@@ -40,7 +40,7 @@ mv /tmp/qBittorrent.streaming.conf "$config"
 chmod 0600 "$config"
 
 case "${QBITTORRENT_FORCE_CREDENTIAL_ROTATION:-false}" in
-  true|TRUE|1|yes|YES) bootstrap=true ;;
+true | TRUE | 1 | yes | YES) bootstrap=true ;;
 esac
 if [ "$bootstrap" = true ]; then
   python3 /usr/local/lib/filelist/qbittorrent_bootstrap.py --input "$config" --output /tmp/qBittorrent.bootstrap.conf
@@ -105,6 +105,13 @@ if [ "$bootstrap" = true ]; then
 elif ! login; then
   stop_with_error "The existing qBittorrent credentials were preserved but do not match QBITTORRENT_USERNAME/QBITTORRENT_PASSWORD. Correct .env.docker or explicitly set QBITTORRENT_FORCE_CREDENTIAL_ROTATION=true for one start."
 fi
+
+# qBittorrent 5 moved the progressive-streaming storage policy out of the
+# legacy Downloads\* INI keys (temp path, preallocation, queueing), so the
+# policy is applied through the Web API on every start and persists in the
+# container's own configuration.
+curl -fsS -b "$cookie" --data-urlencode 'json={"temp_path_enabled":true,"temp_path":"'"$temp_path"'","preallocate_all":false,"queueing_enabled":false}' \
+  "$base_url/api/v2/app/setPreferences" >/dev/null || stop_with_error "Could not apply the progressive-streaming qBittorrent storage policy."
 
 touch "$ready"
 if [ "$fresh" = true ]; then
