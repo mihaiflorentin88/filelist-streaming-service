@@ -831,18 +831,24 @@ func (s *Service) ensureAllocationRoom(ctx context.Context, release domain.Torre
 	plan.storedBytes += incoming
 	reason, tripped := retentionDeficit(plan, settings)
 	rules := config.NormalizeEvictionRules(settings.EvictionRules)
-	for tripped && reason == "cap" {
+	for tripped {
 		_, evicted, evictErr := s.evictNext(ctx, plan, reason, settings, rules)
 		if evictErr != nil {
 			return evictErr
 		}
 		if !evicted {
-			return &domain.AllocationError{
-				Release:       release.Name,
-				RequiredBytes: incoming,
-				FreeBytes:     gigabytesToBytes(settings.AllocationGB) - (plan.storedBytes - incoming),
-				CapacityBytes: gigabytesToBytes(settings.AllocationGB),
+			if reason == "cap" {
+				return &domain.AllocationError{
+					Release:       release.Name,
+					RequiredBytes: incoming,
+					FreeBytes:     gigabytesToBytes(settings.AllocationGB) - (plan.storedBytes - incoming),
+					CapacityBytes: gigabytesToBytes(settings.AllocationGB),
+				}
 			}
+			// A reserve breach nothing evictable can fix is not the incoming
+			// download's fault: proceed and let the hourly retention job keep
+			// enforcing the reserve.
+			break
 		}
 		if plan, err = s.retentionSurvey(ctx); err != nil {
 			return err

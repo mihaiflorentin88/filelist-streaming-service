@@ -159,6 +159,9 @@ func (s *Service) PrepareSubtitle(ctx context.Context, downloadID, providerName,
 	}
 	if cached, cacheErr := s.repo.GetSubtitleAsset(ctx, downloadID, providerName, candidateID, target); cacheErr == nil {
 		if _, statErr := os.Stat(cached.Path); statErr == nil {
+			if target == "vtt" {
+				restampWebVTTCuePositioning(cached.Path)
+			}
 			cached.LastUsedAt = time.Now().UTC()
 			_ = s.repo.SaveSubtitleAsset(ctx, cached)
 			return cached, nil
@@ -408,7 +411,24 @@ func positionCueLines(text string) string {
 			lines[i] = m[0] + suffix
 		}
 	}
+
 	return strings.Join(lines, "\n")
+}
+
+// restampWebVTTCuePositioning re-applies the control-bar cue positioning to
+// a cached WebVTT prepared before the lift existed, so every Subtitle asset
+// serves positioned regardless of when it was prepared. It reports whether
+// the file changed.
+func restampWebVTTCuePositioning(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	stamped := positionCueLines(string(data))
+	if stamped == string(data) {
+		return false
+	}
+	return os.WriteFile(path, []byte(stamped), 0o640) == nil
 }
 
 func unpackSubtitle(data []byte, format, name, mediaPath string) ([]byte, string, error) {
