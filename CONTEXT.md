@@ -64,11 +64,11 @@ The player surface that renders video with an HTML5 video element in a browser.
 _Avoid_: web client, web player
 
 **Player command**:
-A logical playback action — play/pause, seek, volume step, mute, fullscreen, subtitle menu, fraction jump — triggered by keys or buttons.
+A logical playback action — play/pause, seek, volume step, mute, fullscreen, subtitle Player panel, fraction jump — triggered by keys or buttons.
 _Avoid_: player action
 
 **Player shortcut**:
-A keyboard binding on the Browser player that fires a Player command while the player view is active and no menu or dialog has focus.
+A keyboard binding on the Browser player that fires a Player command while no Player panel is open.
 _Avoid_: hotkey, keybinding
 
 **Player panel**:

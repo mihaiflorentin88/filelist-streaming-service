@@ -2180,6 +2180,25 @@ progress {
   background: var(--teal)
 }
 
+/* Slider flash: brief highlight on volume OSD feedback; the fill is remounted
+   on each feedback identity so the animation restarts. Neutralized for
+   prefers-reduced-motion by the global animation:none !important rule above. */
+.osd-volume-fill.osd-volume-flash {
+  animation: osd-volume-flash 450ms ease-out
+}
+
+@keyframes osd-volume-flash {
+  from {
+    box-shadow: 0 0 0 1px var(--teal);
+    filter: brightness(1.9)
+  }
+
+  to {
+    box-shadow: 0 0 0 5px transparent;
+    filter: brightness(1)
+  }
+}
+
 .osd-mute-label {
   display: inline-flex;
   align-items: center

@@ -15,10 +15,9 @@
   "include": [
     "src.tsx",
     "shortcuts.ts",
-    "shortcuts.test.ts",
+    "*.test.ts",
+    "*.test.tsx",
     "osd.tsx",
-    "osd.test.tsx",
-    "player-shortcuts.test.tsx",
     "assets.d.ts",
     "../clients/shared/src"
   ]

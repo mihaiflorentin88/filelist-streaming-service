@@ -7,7 +7,7 @@ const download: Download = {
   id: 'dl-9', releaseId: 'r', engineId: 'qb:x', fileIndex: 2, filePath: 'a.mkv',
   mimeType: 'video/x-matroska', sizeBytes: 1, state: 'downloading', progress: 0.1,
   downloadedBytes: 0, speedBytesPerSecond: 0, etaSeconds: 0, peers: 0, seeds: 0,
-  leased: false, streamUrl: '/api/v1/streams/dl-9',
+  leased: false, streamUrl: '/api/v1/streams/dl-9', playbackMode: 'progressive',
 };
 
 // Watch deep links: the player entry point records the Managed download, the

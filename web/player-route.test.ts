@@ -6,7 +6,7 @@ const streamDownload: Download = {
   id: 'abc', releaseId: 'r', engineId: 'qb:x', fileIndex: 0, filePath: 'a.mkv',
   mimeType: 'video/x-matroska', sizeBytes: 1, state: 'downloading', progress: 0.1,
   downloadedBytes: 0, speedBytesPerSecond: 0, etaSeconds: 0, peers: 0, seeds: 0,
-  leased: false, streamUrl: '/api/v1/streams/abc', browserStreamUrl: '/api/v1/streams/abc/browser',
+  leased: false, streamUrl: '/api/v1/streams/abc', browserStreamUrl: '/api/v1/streams/abc/browser', playbackMode: 'progressive',
 };
 
 const bareDownload: Download = { ...streamDownload, browserStreamUrl: undefined };

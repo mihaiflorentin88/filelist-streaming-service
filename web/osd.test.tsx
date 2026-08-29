@@ -43,6 +43,35 @@ describe('OsdLayer rendering', () => {
     expect(root.querySelector('.osd-volume-label')!.textContent).toBe('42%');
   });
 
+  it('renders volume feedback with a slider flash marker on the fill', () => {
+    const host = mount({ kind: 'volume', percent: 42 });
+    const fill = host.querySelector('.osd-volume-fill')!;
+    expect(fill.classList.contains('osd-volume-flash')).toBe(true);
+  });
+
+  it('replaces the fill element when feedback identity changes so the flash restarts', () => {
+    const host = mount({ kind: 'volume', percent: 40 });
+    const first = host.querySelector('.osd-volume-fill')!;
+    swap(host, { kind: 'volume', percent: 50 });
+    const second = host.querySelector('.osd-volume-fill')!;
+    expect(second).not.toBe(first);
+    expect(second.classList.contains('osd-volume-flash')).toBe(true);
+  });
+
+  it('keeps the fill element while the feedback object is unchanged', () => {
+    const feedback: OsdFeedback = { kind: 'volume', percent: 40 };
+    const host = mount(feedback);
+    const first = host.querySelector('.osd-volume-fill')!;
+    swap(host, feedback);
+    expect(host.querySelector('.osd-volume-fill')).toBe(first);
+  });
+
+  it('renders seek, mute and hint feedback without a volume flash marker', () => {
+    expect(mount({ kind: 'seek', fraction: 0.5, hint: '+5s' }).querySelector('.osd-volume-flash')).toBeNull();
+    expect(mount({ kind: 'mute', muted: true }).querySelector('.osd-volume-flash')).toBeNull();
+    expect(mount({ kind: 'hint', text: 'Subtitles on' }).querySelector('.osd-volume-flash')).toBeNull();
+  });
+
   it('renders mute feedback icon with accessible label', () => {
     const muted = mount({ kind: 'mute', muted: true });
     expect(muted.querySelector('.osd-mute-label svg')).not.toBeNull();

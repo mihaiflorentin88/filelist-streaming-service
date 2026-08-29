@@ -85,8 +85,55 @@ function restoreDownloadAnchor(anchor: ViewportAnchor | null) { if (!anchor) ret
 
 function Rail({ title, children, empty, landscape = false }: { title: string; children: any; empty?: string; landscape?: boolean }) { const list = Array.isArray(children) ? children.filter(Boolean) : children; return <section class="rail-section"><div class="section-heading"><h2>{title}</h2></div>{(!list || list.length === 0) ? <p class="empty">{empty || 'Nothing here yet.'}</p> : <div class={`rail ${landscape ? 'landscape' : ''}`}>{list}</div>}</section> }
 
-function useModalFocus(root: { current: HTMLElement | null }, onClose: () => void) { useEffect(() => { const previous = document.activeElement as HTMLElement | null; const background = Array.from(document.querySelectorAll<HTMLElement>('.sidebar,.content')); background.forEach(element => element.setAttribute('inert', '')); const focusable = () => Array.from(root.current?.querySelectorAll<HTMLElement>('button:not([disabled]),input:not([disabled]),select:not([disabled]),video[controls],[tabindex]:not([tabindex="-1"])') || []); const timer = window.setTimeout(() => focusable()[0]?.focus(), 0); const key = (event: KeyboardEvent) => { if (event.key !== 'Tab') return; const items = focusable(); if (items.length === 0) return; const index = items.indexOf(document.activeElement as HTMLElement); event.preventDefault(); items[(index + (event.shiftKey ? -1 : 1) + items.length) % items.length].focus() }; document.addEventListener('keydown', key); return () => { window.clearTimeout(timer); document.removeEventListener('keydown', key); background.forEach(element => element.removeAttribute('inert')); previous?.focus() }; }, []) }
-function useOverlayFocus(active: boolean, onClose: () => void) { useEffect(() => { if (!active) return; const root = { get current() { const overlays = document.querySelectorAll<HTMLElement>('.overlay'); return overlays[overlays.length - 1] || null } }; const previous = document.activeElement as HTMLElement | null; const overlay = root.current; const background = Array.from(document.querySelectorAll<HTMLElement>('.sidebar,.content')).filter(element => !overlay || !element.contains(overlay)); background.forEach(element => element.setAttribute('inert', '')); const focusable = () => Array.from(root.current?.querySelectorAll<HTMLElement>('button:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])') || []); const timer = window.setTimeout(() => focusable()[0]?.focus(), 0); const key = (event: KeyboardEvent) => { if (event.key !== 'Tab') return; const items = focusable(); if (!items.length) return; const index = items.indexOf(document.activeElement as HTMLElement); event.preventDefault(); items[(index + (event.shiftKey ? -1 : 1) + items.length) % items.length].focus() }; document.addEventListener('keydown', key); return () => { window.clearTimeout(timer); document.removeEventListener('keydown', key); background.forEach(element => element.removeAttribute('inert')); previous?.focus() }; }, [active]) }
+// Shared modal focus machinery: inert the page background, move focus into
+// the surface, Tab-cycle inside it, and restore focus on teardown. Escape is
+// an explicit per-caller policy: surfaces that own Escape pass onEscape
+// (preventDefault, then invoke); surfaces whose Escape belongs to another
+// chain omit it and get a Tab-only trap.
+function trapFocus(surface: () => HTMLElement | null, focusableSelector: string, background: (surface: HTMLElement | null) => HTMLElement[], onEscape?: () => void): () => void {
+  const previous = document.activeElement as HTMLElement | null;
+  const root = surface();
+  const inertElements = background(root);
+  inertElements.forEach(element => element.setAttribute('inert', ''));
+  const focusable = () => Array.from(surface()?.querySelectorAll<HTMLElement>(focusableSelector) || []);
+  const timer = window.setTimeout(() => focusable()[0]?.focus(), 0);
+  const key = (event: KeyboardEvent) => {
+    if (event.key === 'Escape') { if (!onEscape) return; event.preventDefault(); onEscape(); return }
+    if (event.key !== 'Tab') return;
+    const items = focusable();
+    if (!items.length) return;
+    const index = items.indexOf(document.activeElement as HTMLElement);
+    event.preventDefault();
+    items[(index + (event.shiftKey ? -1 : 1) + items.length) % items.length].focus();
+  };
+  document.addEventListener('keydown', key);
+  return () => { window.clearTimeout(timer); document.removeEventListener('keydown', key); inertElements.forEach(element => element.removeAttribute('inert')); previous?.focus() };
+}
+
+// Tab-trap only: the player's resolveEscape chain owns Escape (fullscreen →
+// panel → hide-chrome → close), so no onEscape is declared here. The surface
+// is a controls-bearing <video>, a legitimate Tab stop plain overlays lack.
+function useModalFocus(root: { current: HTMLElement | null }) {
+  useEffect(() => trapFocus(() => root.current, 'button:not([disabled]),input:not([disabled]),select:not([disabled]),video[controls],[tabindex]:not([tabindex="-1"])', () => Array.from(document.querySelectorAll<HTMLElement>('.sidebar,.content'))), []);
+}
+
+function useOverlayFocus(active: boolean, onClose: () => void) {
+  // Escape runs the latest onClose: consumers capture state (the Downloads
+  // removal confirm stays open while a removal is in flight), so the listener
+  // registered when the overlay opened must not go stale.
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  useEffect(() => {
+    if (!active) return;
+    // The trap follows the topmost overlay: nested overlays (detail → source
+    // picker) cycle within the one actually on top.
+    const surface = () => { const overlays = document.querySelectorAll<HTMLElement>('.overlay'); return overlays[overlays.length - 1] || null };
+    return trapFocus(surface, 'button:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])', overlay => Array.from(document.querySelectorAll<HTMLElement>('.sidebar,.content')).filter(element => !overlay || !element.contains(overlay)), () => closeRef.current());
+  }, [active]);
+}
+
+// Seek commands before the media's duration is known cannot compute a target.
+const seekUnavailableHint = 'Seek unavailable — still reading the media.';
 
 export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { active: ActivePlayer; onClose: () => void; onStateChanged: () => void; onAdvance: (preferences: PlaybackPreferences) => Promise<void> }) {
   const defaults: PlaybackPreferences = { audioLanguage: 'en', audioTrackIndex: -1, subtitleLanguage: 'ro', subtitleMode: 'auto' };
@@ -143,7 +190,7 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
   const controls = useMemo(() => new ControlsVisibility({ policy: { armWhilePaused: true, statusHolds: true, manualHideSuppressionMs: 500 }, onChange: setControlsVisible }), []);
   controls.setStatus(message !== '');
   controls.setPanelOpen(subtitleOpen || audioOpen);
-  useModalFocus(root, onClose);
+  useModalFocus(root);
 
   const currentTrack = mediaInfo?.audioTracks.find(track => track.streamIndex === selectedAudio);
   const browserMode = !!currentTrack && !!mediaInfo && (audioPlaybackRoute(currentTrack.codec) === 'decode' || (mediaInfo.audioTracks.length > 1 && !currentTrack.default));
@@ -370,9 +417,10 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
     void runCommand({ kind: 'toggle-fullscreen' });
   }
   // Player shortcut dispatch: resolve the keydown at the command layer and
-  // execute. Bound keys are consumed (preventDefault so a focused chrome
-  // button cannot double-fire; stopPropagation so the modal Escape hook never
-  // races the shortcut chain); unbound keys keep today's reveal behavior.
+  // execute. Bound keys are consumed with preventDefault so a focused chrome
+  // button cannot double-fire; stopPropagation cannot order listeners here —
+  // this handler and the focus hooks all sit on the same document node.
+  // Unbound keys keep today's reveal behavior.
   function onKey(event: KeyboardEvent) {
     // Native slider/stepper keys win while a form control is focused (ARIA
     // contract); the shortcut layer stays out of the way.
@@ -392,7 +440,7 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
     if (command.kind === 'pause' || command.kind === 'stop') { shouldPlay.current = false; if (video.current && !video.current.paused) video.current.pause(); return }
     if (command.kind === 'open-subtitles') { setSubtitleOpen(true); revealControls(); return }
     if (command.kind === 'seek-fraction') {
-      if (!mediaInfo) { setOsd({ kind: 'hint', text: 'Seek unavailable — still reading the media.' }); return }
+      if (!mediaInfo) { setOsd({ kind: 'hint', text: seekUnavailableHint }); return }
       restartAt(fractionTarget(command.fraction, mediaInfo.durationMs));
       setOsd({ kind: 'seek', fraction: command.fraction, hint: `${Math.round(command.fraction * 100)}%` });
       return;
@@ -417,6 +465,7 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
       return;
     }
     if (command.kind === 'seek') {
+      if (!mediaInfo) { setOsd({ kind: 'hint', text: seekUnavailableHint }); return }
       const base = scrub.current?.target ?? position;
       const target = seekTarget(base, mediaInfo?.durationMs ?? 0, command.deltaMs);
       const hint = `${command.deltaMs > 0 ? '+' : '−'}${Math.abs(command.deltaMs) / 1000}s`;
@@ -449,7 +498,7 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
   </div>;
 }
 
-function App() {
+export function App() {
   const initialRoute = parsePath(location.pathname, location.search);
   const [view, setView] = useState<View>(initialRoute.view === 'title' || initialRoute.view === 'watch' ? 'home' : initialRoute.view); const [titles, setTitles] = useState<CatalogTitle[]>([]); const [nextCursor, setNextCursor] = useState<string | null>(null); const [household, setHousehold] = useState<HouseholdState>(emptyState); const [downloads, setDownloads] = useState<Download[]>([]); const [hero, setHero] = useState<CatalogTitle | null>(null); const [detail, setDetail] = useState<CatalogDetail | null>(null); const [detailTarget, setDetailTarget] = useState<DetailTarget>({}); const [picker, setPicker] = useState<CatalogSource[] | null>(null); const [player, setPlayer] = useState<ActivePlayer | null>(null); const [draftQuery, setDraftQuery] = useState(initialRoute.query || ''); const [query, setQuery] = useState(initialRoute.query || ''); const [searching, setSearching] = useState(false); const [updatesAvailable, setUpdatesAvailable] = useState(false); const [category, setCategory] = useState(''); const [kind, setKind] = useState(''); const [resolution, setResolution] = useState(''); const [sort, setSort] = useState('newest'); const [facets, setFacets] = useState<{ categories: string[]; resolutions: string[] }>({ categories: [], resolutions: [] }); const [libraryCategories, setLibraryCategories] = useState<LibraryCategory[]>([]); const [error, setError] = useState(''); const [loading, setLoading] = useState(true); const [settings, setSettings] = useState<Record<string, unknown> | null>(null); const [settingsFields, setSettingsFields] = useState<SettingsField[]>([]); const loadMore = useRef<HTMLDivElement>(null); const requestGeneration = useRef(0); const inFlightCursor = useRef(''); const viewportInput = useRef(0); const catalogParams = useRef({ query, category, kind, resolution, sort }); catalogParams.current = { query, category, kind, resolution, sort };
   const [jobDeepId, setJobDeepId] = useState<string | undefined>(initialRoute.view === 'jobs' ? initialRoute.id : undefined);

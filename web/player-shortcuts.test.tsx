@@ -115,6 +115,8 @@ describe('transport shortcuts', () => {
 
   it('ArrowRight seeks forward 5s: optimistic position, one committed seek', async () => {
     const mounted = await mountPlayer();
+    mounted.video.dispatchEvent(new Event('loadedmetadata'));
+    await act(async () => { vi.advanceTimersByTime(0) });
     pressKey(mounted.root, 'ArrowRight');
     const scrubber = mounted.host.querySelector<HTMLInputElement>('.player-scrubber input')!;
     expect(scrubber.value).toBe('5000'); // optimistic target is visible immediately
@@ -150,6 +152,43 @@ describe('transport shortcuts', () => {
     pressKey(mounted.root, 'J');
     await act(async () => { vi.advanceTimersByTime(250) });
     expect(mounted.video.currentTime).toBe(55);
+  });
+
+  it('ArrowRight before the duration is known: hint, no optimistic jump, no commit', async () => {
+    const mediaInfoPending = Promise.withResolvers<MediaInfo>();
+    vi.spyOn(API.prototype, 'mediaInfo').mockImplementation(() => mediaInfoPending.promise);
+    const mounted = await mountPlayer(60_000);
+    pressKey(mounted.root, 'ArrowRight');
+    const scrubber = mounted.host.querySelector<HTMLInputElement>('.player-scrubber input')!;
+    expect(scrubber.value).toBe('0'); // no optimistic jump while the duration is unknown
+    expect(mounted.host.querySelector('.osd-ghost')).toBeNull(); // no +5s ghost at 0%
+    expect(mounted.host.querySelector('.osd')!.textContent).toContain('Seek unavailable');
+    // Metadata arrives inside the coalescing window: the stale press must not
+    // commit a seek that lands on 0:00 over the resume position.
+    await act(async () => { mediaInfoPending.resolve(mediaInfo) });
+    mounted.video.dispatchEvent(new Event('loadedmetadata'));
+    await act(async () => { vi.advanceTimersByTime(0) });
+    expect(scrubber.value).toBe('60000'); // resume position untouched
+    expect(mounted.video.currentTime).toBe(60);
+    await act(async () => { vi.advanceTimersByTime(250) }); // coalescing window elapses
+    expect(mounted.video.currentTime).toBe(60); // no seek ever landed at 0
+    expect(scrubber.value).toBe('60000');
+  });
+
+  it('J before the duration is known: hint, position untouched, no commit', async () => {
+    const mediaInfoPending = Promise.withResolvers<MediaInfo>();
+    vi.spyOn(API.prototype, 'mediaInfo').mockImplementation(() => mediaInfoPending.promise);
+    const mounted = await mountPlayer(60_000);
+    pressKey(mounted.root, 'J');
+    expect(mounted.host.querySelector('.osd-ghost')).toBeNull(); // no −10s ghost at 0%
+    expect(mounted.host.querySelector('.osd')!.textContent).toContain('Seek unavailable');
+    await act(async () => { mediaInfoPending.resolve(mediaInfo) });
+    mounted.video.dispatchEvent(new Event('loadedmetadata'));
+    await act(async () => { vi.advanceTimersByTime(0) });
+    expect(mounted.video.currentTime).toBe(60); // resume position untouched
+    await act(async () => { vi.advanceTimersByTime(250) }); // coalescing window elapses
+    expect(mounted.video.currentTime).toBe(60); // no seek ever landed at 0
+    expect(mounted.host.querySelector<HTMLInputElement>('.player-scrubber input')!.value).toBe('60000');
   });
 
   it('unbound keys do nothing harmful', async () => {
