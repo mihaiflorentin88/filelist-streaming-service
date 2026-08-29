@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/netip"
 	"net/url"
 	"os"
@@ -14,8 +15,10 @@ import (
 	"time"
 )
 
-const DefaultSettingsPath = "data/settings.json"
-const EnvironmentPrefix = "FILELIST_STREAMING_"
+const (
+	DefaultSettingsPath = "data/settings.json"
+	EnvironmentPrefix   = "FILELIST_STREAMING_"
+)
 
 type Settings struct {
 	InstanceName               string   `json:"instanceName"`
@@ -34,8 +37,8 @@ type Settings struct {
 	PieceWaitTimeoutSeconds    int      `json:"pieceWaitTimeoutSeconds"`
 	StreamStartBytes           int64    `json:"streamStartBytes"`
 	CatalogMaxAgeHours         int      `json:"catalogMaxAgeHours"`
-	MaximumDownloadBytes       int64    `json:"maximumDownloadBytes"`
-	ReserveFreeBytes           int64    `json:"reserveFreeBytes"`
+	AllocationGB               float64  `json:"allocationGb"`
+	ReserveGB                  float64  `json:"reserveGb"`
 	PreferredSubtitleLanguage  string   `json:"preferredSubtitleLanguage"`
 	FallbackSubtitleLanguage   string   `json:"fallbackSubtitleLanguage"`
 	PreferredAudioLanguage     string   `json:"preferredAudioLanguage"`
@@ -61,7 +64,7 @@ func Defaults() Settings {
 		ListenAddress: ":8097", TrustedCIDRs: []string{"127.0.0.0/8", "::1/128", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"}, DatabasePath: "data/filelist.db",
 		DownloadRoot: "/srv/filelist-downloads", FileListURL: "https://filelist.io", QBittorrentURL: "http://127.0.0.1:8080",
 		InitialBufferBytes: 128 << 20, ReadAheadBytes: 256 << 20, PieceWaitTimeoutSeconds: 600, StreamStartBytes: 2 << 20, CatalogMaxAgeHours: 24,
-		MaximumDownloadBytes: 15 << 30, ReserveFreeBytes: 8 << 30, PreferredSubtitleLanguage: "ro", FallbackSubtitleLanguage: "en", PreferredAudioLanguage: "en",
+		AllocationGB: 15, ReserveGB: 8, PreferredSubtitleLanguage: "ro", FallbackSubtitleLanguage: "en", PreferredAudioLanguage: "en",
 		MetadataLanguage: "ro-RO", MetadataFallbackLanguage: "en-US", ArtworkCachePath: "data/artwork", ArtworkCacheMaxBytes: 512 << 20,
 		SubDLURL: "https://api.subdl.com", MaxConcurrentJobs: 10, TitleRefreshTimeoutMinutes: 30,
 		SubtitleCachePath: "data/subtitles", SubtitleCacheMaxBytes: 256 << 20,
@@ -150,6 +153,7 @@ func (s *Store) EnvironmentManaged(key string) bool {
 	defer s.mu.RUnlock()
 	return s.envManaged[key]
 }
+
 func (s *Store) Save(next Settings) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -184,6 +188,7 @@ func (s *Store) Save(next Settings) error {
 	s.base, s.value, s.envManaged = persisted, effective, managed
 	return nil
 }
+
 func (s *Store) TrustedPrefixes() []netip.Prefix {
 	v := s.Get()
 	out := make([]netip.Prefix, 0, len(v.TrustedCIDRs))
@@ -194,12 +199,15 @@ func (s *Store) TrustedPrefixes() []netip.Prefix {
 	}
 	return out
 }
+
 func (s *Store) PieceWaitTimeout() time.Duration {
 	return time.Duration(s.Get().PieceWaitTimeoutSeconds) * time.Second
 }
+
 func (s *Store) CatalogMaxAge() time.Duration {
 	return time.Duration(s.Get().CatalogMaxAgeHours) * time.Hour
 }
+
 func (s *Store) validate(v Settings) error {
 	if strings.TrimSpace(v.InstanceName) == "" || v.ListenAddress == "" || v.DatabasePath == "" || v.DownloadRoot == "" {
 		return fmt.Errorf("instanceName, listenAddress, databasePath, and downloadRoot are required")
@@ -215,6 +223,12 @@ func (s *Store) validate(v Settings) error {
 	}
 	if v.PieceWaitTimeoutSeconds < 1 {
 		return fmt.Errorf("pieceWaitTimeoutSeconds must be positive")
+	}
+	if err := validateRetentionGB("allocationGb", v.AllocationGB); err != nil {
+		return err
+	}
+	if err := validateRetentionGB("reserveGb", v.ReserveGB); err != nil {
+		return err
 	}
 	if v.WatchedThresholdPercent < 50 || v.WatchedThresholdPercent > 100 {
 		return fmt.Errorf("watchedThresholdPercent must be between 50 and 100")
@@ -251,6 +265,13 @@ func (s *Store) validate(v Settings) error {
 	return nil
 }
 
+func validateRetentionGB(key string, value float64) error {
+	if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 || (value != 0 && (value < 0.1 || value > 100000)) {
+		return fmt.Errorf("%s must be 0 or between 0.1 and 100000 GB", key)
+	}
+	return nil
+}
+
 func applyEnvironment(settings *Settings) (map[string]bool, error) {
 	managed := map[string]bool{}
 	value := reflect.ValueOf(settings).Elem()
@@ -276,6 +297,12 @@ func applyEnvironment(settings *Settings) (map[string]bool, error) {
 				return nil, fmt.Errorf("%s must be an integer: %w", environmentKey, err)
 			}
 			field.SetInt(parsed)
+		case reflect.Float32, reflect.Float64:
+			parsed, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+			if err != nil {
+				return nil, fmt.Errorf("%s must be a number: %w", environmentKey, err)
+			}
+			field.SetFloat(parsed)
 		case reflect.Slice:
 			if field.Type().Elem().Kind() != reflect.String {
 				return nil, fmt.Errorf("%s uses an unsupported settings type", environmentKey)
@@ -320,6 +347,7 @@ func camelToEnvironment(value string) string {
 	}
 	return out.String()
 }
+
 func mergeSecrets(next *Settings, old Settings) {
 	if next.FileListPasskey == "" {
 		next.FileListPasskey = old.FileListPasskey

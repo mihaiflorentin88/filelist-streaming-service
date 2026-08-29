@@ -201,3 +201,131 @@ func TestPlaybackUpdateNegativeInputIs400(t *testing.T) {
 		t.Fatalf("PUT /api/v1/playback/abc status = %d, want 400", rec.Code)
 	}
 }
+
+// — Allocation (GB) and free-space reserve (GB) settings round-trip through the
+// settings API; invalid values fail with the standard validation problem.
+
+func getSettingsBody(t *testing.T, handler http.Handler) map[string]any {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/settings", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/v1/settings status = %d", rec.Code)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	return body
+}
+
+func putSettingsBody(t *testing.T, handler http.Handler, body map[string]any) *httptest.ResponseRecorder {
+	t.Helper()
+	for key := range body {
+		if strings.HasSuffix(key, "Configured") || key == "settingsPath" {
+			delete(body, key)
+		}
+	}
+	b, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPut, "/api/v1/settings", strings.NewReader(string(b)))
+	request.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, request)
+	return rec
+}
+
+func TestSettingsRoundTripsAllocationAndReserve(t *testing.T) {
+	handler := newStubHandler(t, nil)
+	current := getSettingsBody(t, handler)
+	current["allocationGb"] = 0.5
+	current["reserveGb"] = 8.0
+	if rec := putSettingsBody(t, handler, current); rec.Code != http.StatusOK {
+		t.Fatalf("PUT /api/v1/settings status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	saved := getSettingsBody(t, handler)
+	if saved["allocationGb"] != 0.5 || saved["reserveGb"] != 8.0 {
+		t.Fatalf("GET lost the persisted allocation/reserve: %v/%v", saved["allocationGb"], saved["reserveGb"])
+	}
+
+	current = getSettingsBody(t, handler)
+	current["allocationGb"] = -1
+	rec := putSettingsBody(t, handler, current)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("negative allocation status = %d, want 400", rec.Code)
+	}
+	var problemBody struct {
+		Detail string `json:"detail"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &problemBody); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(problemBody.Detail, "allocationGb") {
+		t.Fatalf("validation problem did not name the field: %s", problemBody.Detail)
+	}
+
+	request := httptest.NewRequest(http.MethodPut, "/api/v1/settings", strings.NewReader(`{"allocationGb":NaN}`))
+	request.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, request)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("NaN allocation status = %d, want 400", rec.Code)
+	}
+
+	current = getSettingsBody(t, handler)
+	current["allocationGb"] = 0
+	current["reserveGb"] = 0
+	if rec := putSettingsBody(t, handler, current); rec.Code != http.StatusOK {
+		t.Fatalf("zero (disabled) values status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	saved = getSettingsBody(t, handler)
+	if saved["allocationGb"] != float64(0) || saved["reserveGb"] != float64(0) {
+		t.Fatalf("disabled values did not persist: %v/%v", saved["allocationGb"], saved["reserveGb"])
+	}
+}
+
+func TestSettingsSchemaListsRetentionFields(t *testing.T) {
+	handler := newStubHandler(t, nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/settings/schema", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/v1/settings/schema status = %d", rec.Code)
+	}
+	var page struct {
+		Items []struct {
+			Key       string `json:"key"`
+			Help      string `json:"help"`
+			Sensitive bool   `json:"sensitive"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	descriptors := map[string]struct {
+		Help      string
+		Sensitive bool
+	}{}
+	for _, item := range page.Items {
+		descriptors[item.Key] = struct {
+			Help      string
+			Sensitive bool
+		}{item.Help, item.Sensitive}
+	}
+	for key, phrase := range map[string]string{
+		"allocationGb": "0 disables retention",
+		"reserveGb":    "0 disables the reserve check",
+	} {
+		descriptor, ok := descriptors[key]
+		if !ok {
+			t.Fatalf("settings schema lost %s", key)
+		}
+		if !strings.Contains(descriptor.Help, phrase) {
+			t.Errorf("%s help = %q, want it to mention %q", key, descriptor.Help, phrase)
+		}
+		if descriptor.Sensitive {
+			t.Errorf("%s must not be sensitive", key)
+		}
+	}
+}

@@ -26,8 +26,8 @@ The sanitized qBittorrent template enables its incomplete directory, disables pr
 | Initial buffer | 128 MiB |
 | Read-ahead | 256 MiB |
 | Piece wait timeout | 600 seconds |
-| Managed download ceiling (reserved; not yet enforced) | 15 GiB |
-| Free-space reserve (reserved; not yet enforced) | 8 GiB |
+| Managed download allocation (GB; reserved; not yet enforced) | 15 |
+| Free-space reserve (GB; reserved; not yet enforced) | 8 |
 | Catalog maximum age | 24 hours |
 | Watched threshold | 90% |
 | Preferred audio language | `en` |
@@ -41,7 +41,7 @@ The sanitized qBittorrent template enables its incomplete directory, disables pr
 | FileList concurrent requests | 1 |
 | Title refresh active timeout | 30 minutes |
 
-Buffer values are limited to 2 GiB. Retention and free-space enforcement are not implemented yet; the values above are persisted defaults reserved for that phase.
+Buffer values are limited to 2 GiB. Allocation and free-space reserve are configured in gigabytes and accept fractional values; 0 disables each check. Retention and free-space enforcement are not implemented yet; enforcement arrives with the eviction phase.
 
 The global job limit and title-refresh timeout are browser-configurable and require a service restart. Queue and rate-limit waiting do not consume the title-refresh execution timeout. FileList stays serialized even when metadata jobs use the other worker slots.
 

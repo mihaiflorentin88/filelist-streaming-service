@@ -184,6 +184,8 @@ func (a *API) settingsSchema(w http.ResponseWriter, r *http.Request) {
 		{Key: "qbittorrentUsername", Label: "qBittorrent username", Help: "Username configured in qBittorrent Web UI authentication.", Sensitive: true},
 		{Key: "qbittorrentPassword", Label: "qBittorrent password", Help: "Password configured in qBittorrent Web UI authentication.", Sensitive: true},
 		{Key: "downloadRoot", Label: "Download root", Help: "Server filesystem path where qBittorrent stores media. It must describe the same files visible to this server."},
+		{Key: "allocationGb", Label: "Allocation (GB)", Help: "Total gigabytes of stored torrent content the service keeps; 0 disables retention."},
+		{Key: "reserveGb", Label: "Free-space reserve (GB)", Help: "Gigabytes of free space kept free on the download volume; 0 disables the reserve check."},
 		{Key: "subDLUrl", Label: "SubDL API URL", Help: "Official SubDL API base used for direct subtitle files.", Obtain: "Use https://api.subdl.com.", Sensitive: false},
 		{Key: "subDLApiKey", Label: "SubDL API key", Help: "Free SubDL API credential used to search and download direct subtitle files.", Obtain: "Create a free account and generate a key in the API section at https://subdl.com/panel.", Sensitive: true},
 		{Key: "subtitleCachePath", Label: "Subtitle cache path", Help: "Server directory containing prepared WebVTT and SAMI subtitle files."},
@@ -1209,7 +1211,8 @@ func browserStreamArgs(input string, info domain.MediaInfo, requestedTrack, requ
 	if startMS > 0 {
 		args = append(args, "-ss", strconv.FormatFloat(float64(startMS)/1000, 'f', 3, 64))
 	}
-	args = append(args,
+	args = append(
+		args,
 		"-i", input,
 		"-map", "0:v:0", "-map", "0:"+strconv.Itoa(track.Index),
 		// Raspberry Pi safety invariant: video is always copied. Only the selected
