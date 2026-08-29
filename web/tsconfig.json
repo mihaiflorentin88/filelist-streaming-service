@@ -15,8 +15,6 @@
   "include": [
     "src.tsx",
     "assets.d.ts",
-    "audio-decode.ts",
-    "audio-decode-worker.ts",
     "../clients/shared/src"
   ]
 }

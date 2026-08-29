@@ -70,7 +70,7 @@ All functionality attempted in the previous plugin belongs in the new product ba
 - Persist state, progress, bytes, speed, ETA, peers, seeds, tracker response, buffered range, errors, timestamps and stream leases.
 - Pause, resume, cancel, retry, and remove with/without files.
 - Continue downloading/seeding after playback according to settings.
-- Retention by total bytes and total files. Evict one oldest completed, unleased item at a time. Never evict incomplete or actively streamed media.
+- Retention by total bytes and total files. Evict one oldest completed, unleased item at a time. Never evict incomplete or actively streamed media. (Superseded by ADR-0004: eviction is user-configured and protections are toggles, not guarantees; the defaults preserve this safe posture.)
 - Reserve free disk and reject new downloads before the filesystem reaches critical capacity.
 
 ### Subtitles
