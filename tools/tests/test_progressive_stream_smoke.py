@@ -116,3 +116,103 @@ class SyncVerdictTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CheckSyncTest(unittest.TestCase):
+    """--check-sync orchestration with injected runners: no network, no ffmpeg.
+
+    The server's span is cross-validated against an independent packet scan of
+    the same artifact, and the trim implied by the MEASURED first PTS must be
+    achievable within the window-only decoded duration (artifact decode minus
+    head-only decode).
+    """
+
+    @staticmethod
+    def harness(probe_span, probe_packets, decode_ms, target_s=60.0):
+        calls = []
+
+        def fetch_range(start: int, end: int) -> bytes:
+            calls.append(("fetch", start, end))
+            return bytes([start & 0xFF]) * (end - start + 1)
+
+        def span(download_id, start_byte, length_bytes, stream_index):
+            calls.append(("probe", download_id, start_byte, length_bytes, stream_index))
+            return probe_span(start_byte, length_bytes, stream_index)
+
+        report = smoke.check_sync(
+            download_id="d1", stream_index=1, target_s=target_s, hint_byte=30_000_000,
+            total_bytes=300 << 20, window_bytes=16 << 20, head_bytes=2 << 20,
+            fetch_range=fetch_range, probe_span=span, probe_packets=probe_packets,
+            decode_ms=decode_ms,
+        )
+        return report, calls
+
+    def test_window_duration_is_artifact_decode_minus_head_decode(self):
+        calls = []
+        report, calls_out = self.harness(
+            probe_span=lambda start, length, index: {"firstPtsMs": 60000, "lastPtsMs": 93000},
+            probe_packets=lambda artifact: {"packets": []},
+            decode_ms=lambda media: calls.append(("decode", len(media))) or 1000 * len(media),
+        )
+        self.assertEqual(calls_out[0], ("fetch", 0, (2 << 20) - 1))  # head
+        self.assertEqual(calls_out[1], ("fetch", 30_000_000, 30_000_000 + (16 << 20) - 1))  # window
+        self.assertEqual(calls_out[2][:2], ("probe", "d1"))
+        self.assertEqual(report["windowMs"], 1000 * (16 << 20))  # artifact decode minus head decode
+        self.assertEqual(report["serverFirstPtsMs"], 60000)
+        # This fixture's scan finds no window packets: the report carries the
+        # unavailable local measurement and anchors on the server value.
+        self.assertIsNone(report["localFirstPtsMs"])
+
+    def test_on_target_span_passes_with_zero_offset(self):
+        report, _ = self.harness(
+            probe_span=lambda start, length, index: {"firstPtsMs": 60000, "lastPtsMs": 93000},
+            # Independent scan of the artifact agrees with the server: window
+            # packets start at 60000 ms (positions past the 2 MiB head).
+            probe_packets=lambda artifact: {"packets": [
+                {"stream_index": 1, "pts_time": "0.000000", "pos": "100"},
+                {"stream_index": 1, "pts_time": "60.000000", "pos": str((2 << 20) + 5)},
+                {"stream_index": 1, "pts_time": "92.000000", "pos": str((2 << 20) + 9999)},
+            ]},
+            decode_ms=lambda media: 1000 * len(media),
+        )
+        self.assertTrue(report["measuredMatch"])
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["offsetMs"], 0)
+
+    def test_server_disagreeing_with_local_scan_fails(self):
+        report, _ = self.harness(
+            probe_span=lambda start, length, index: {"firstPtsMs": 60000, "lastPtsMs": 93000},
+            # Independent scan measures 71392: the server window measurement is
+            # not reproducible, so anchoring on it would misplace content.
+            probe_packets=lambda artifact: {"packets": [
+                {"stream_index": 1, "pts_time": "71.392000", "pos": str((2 << 20) + 5)},
+            ]},
+            decode_ms=lambda media: 1000 * len(media),
+        )
+        self.assertFalse(report["measuredMatch"])
+        self.assertEqual(report["localFirstPtsMs"], 71392)
+        self.assertFalse(report["ok"])
+
+    def test_unachievable_trim_fails_even_when_measurements_agree(self):
+        # Span content sits AFTER the target (firstPts 71392 for target 60 s):
+        # the trim would be negative, so no trim can place the content.
+        report, _ = self.harness(
+            probe_span=lambda start, length, index: {"firstPtsMs": 71392, "lastPtsMs": 104000},
+            probe_packets=lambda artifact: {"packets": [
+                {"stream_index": 1, "pts_time": "71.392000", "pos": str((2 << 20) + 5)},
+            ]},
+            decode_ms=lambda media: 1000 * len(media),
+        )
+        self.assertTrue(report["measuredMatch"])
+        self.assertFalse(report["ok"])
+
+
+class FfmpegDecodeMsTest(unittest.TestCase):
+    def test_pcm_length_maps_to_milliseconds_at_48k_stereo_s16le(self):
+        # 192000 bytes = 1 second of 48 kHz stereo s16le.
+        self.assertEqual(smoke.pcm_duration_ms(192_000), 1000)
+        self.assertEqual(smoke.pcm_duration_ms(96_000), 500)
+
+
+if __name__ == "__main__":
+    unittest.main()

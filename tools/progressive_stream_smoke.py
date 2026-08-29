@@ -67,6 +67,17 @@ def qb_json(opener: urllib.request.OpenerDirector, base: str, endpoint: str) -> 
         return json.loads(response.read())
 
 
+def fetch_range_bytes(url: str, start: int, end: int) -> bytes:
+    """Fetch one byte range and return its body (the decoder's raw input)."""
+    request = urllib.request.Request(url, headers={"Range": f"bytes={start}-{end}"})
+    with urllib.request.urlopen(request, timeout=180) as response:
+        body = response.read()
+    expected = end - start + 1
+    if response.status != 206 or len(body) != expected:
+        raise RuntimeError(f"range {start}-{end} returned HTTP {response.status} and {len(body)} bytes")
+    return body
+
+
 def read_range(url: str, start: int, end: int) -> dict:
     request = urllib.request.Request(url, headers={"Range": f"bytes={start}-{end}"})
     started = time.monotonic()
@@ -157,6 +168,88 @@ def sync_verdict(
     return ok, offset
 
 
+def pcm_duration_ms(pcm_bytes: int) -> int:
+    """Duration of raw 48 kHz stereo s16le PCM (the decode target format)."""
+    return pcm_bytes * 1000 // 192_000
+
+
+def check_sync(
+    *,
+    download_id: str,
+    stream_index: int,
+    target_s: float,
+    hint_byte: int,
+    total_bytes: int,
+    window_bytes: int,
+    head_bytes: int,
+    fetch_range,
+    probe_span,
+    probe_packets,
+    decode_ms,
+    tolerance_ms: int = 250,
+) -> dict:
+    """Verify the anchoring contract end to end at one seek target.
+
+    Fetches the same head+window artifact the decoder consumes, cross-checks
+    the server's measured first PTS against an independent packet scan of that
+    artifact, and verifies the measured trim is achievable within the
+    window-only decoded duration (artifact decode minus head-only decode).
+    All side effects are injected: fetch_range, probe_span, probe_packets, and
+    decode_ms are runner callables.
+    """
+    start = max(0, min(hint_byte, total_bytes - window_bytes))
+    head = fetch_range(0, head_bytes - 1)
+    window = fetch_range(start, start + window_bytes - 1)
+    span = probe_span(download_id, start, window_bytes, stream_index)
+    local = window_span(parse_packets(probe_packets(head + window)), stream_index, head_bytes)
+    server_first = int(span["firstPtsMs"])
+    local_first = local[0] if local else None
+    measured_match = local_first is not None and abs(local_first - server_first) <= tolerance_ms
+    first_pts = local_first if local_first is not None else server_first
+    window_ms = decode_ms(head + window) - decode_ms(head)
+    trim_ms = int(round(target_s * 1000)) - first_pts
+    ok, offset = sync_verdict(target_s, first_pts, window_ms, trim_ms, tolerance_ms)
+    return {
+        "targetSec": target_s,
+        "startByte": start,
+        "serverFirstPtsMs": server_first,
+        "localFirstPtsMs": local_first,
+        "measuredMatch": measured_match,
+        "windowMs": window_ms,
+        "trimMs": trim_ms,
+        "ok": ok and measured_match,
+        "offsetMs": offset,
+    }
+
+
+def ffprobe_artifact_packets(ffprobe: str, media: bytes) -> dict:
+    """Independent packet scan of one artifact through an ffprobe runner."""
+    probe = subprocess.run(
+        [ffprobe, "-v", "error", "-show_packets", "-of", "json", "pipe:0"],
+        input=media,
+        check=False,
+        capture_output=True,
+        timeout=150,
+    )
+    if probe.returncode != 0:
+        raise RuntimeError(f"ffprobe packet scan failed: {probe.stderr.decode(errors='replace').strip()[:300]}")
+    return json.loads(probe.stdout or "{}")
+
+
+def ffmpeg_decode_ms(ffmpeg: str, media: bytes) -> int:
+    """Decode one artifact to the worker's PCM format and return its duration."""
+    proc = subprocess.run(
+        [ffmpeg, "-v", "error", "-i", "pipe:0", "-map", "0:a:0", "-ar", "48000", "-ac", "2", "-f", "s16le", "pipe:1"],
+        input=media,
+        check=False,
+        capture_output=True,
+        timeout=300,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f"ffmpeg decode failed: {proc.stderr.decode(errors='replace').strip()[:300]}")
+    return pcm_duration_ms(len(proc.stdout))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--release-id", required=True)
@@ -164,6 +257,10 @@ def main() -> int:
     parser.add_argument("--base-url", default="http://127.0.0.1:8097")
     parser.add_argument("--limit-bytes", type=int, default=2 * 1024 * 1024)
     parser.add_argument("--ffprobe", action="store_true")
+    parser.add_argument("--check-sync", help="comma-separated seek targets in seconds, e.g. 60,980.65,1400")
+    parser.add_argument("--stream-index", type=int, default=1, help="audio stream index used with --check-sync")
+    parser.add_argument("--window-bytes", type=int, default=16 * 1024 * 1024)
+    parser.add_argument("--head-bytes", type=int, default=2 * 1024 * 1024)
     args = parser.parse_args()
 
     base = args.base_url.rstrip("/")
@@ -228,7 +325,7 @@ def main() -> int:
             "tail": read_range(stream_url, size - chunk, size - 1),
         }
 
-        if args.ffprobe:
+        if args.ffprobe or args.check_sync:
             probe = subprocess.run(
                 [
                     "ffprobe",
@@ -254,6 +351,35 @@ def main() -> int:
             }
             if probe.returncode != 0:
                 raise RuntimeError("ffprobe could not parse the progressive stream")
+
+        if args.check_sync:
+            duration_output = result.get("ffprobe", {}).get("output", {}).get("format", {}).get("duration")
+            if not duration_output:
+                raise RuntimeError("--check-sync needs the stream duration, but the format probe did not report one")
+            duration_s = float(duration_output)
+            checks = []
+            for target_s in [float(part) for part in str(args.check_sync).split(",") if part.strip()]:
+                checks.append(
+                    check_sync(
+                        download_id=prepared["id"],
+                        stream_index=args.stream_index,
+                        target_s=target_s,
+                        hint_byte=int(round(target_s * size / duration_s)),
+                        total_bytes=size,
+                        window_bytes=args.window_bytes,
+                        head_bytes=args.head_bytes,
+                        fetch_range=lambda start, end: fetch_range_bytes(stream_url, start, end),
+                        probe_span=lambda download_id, start_byte, length_bytes, stream_index: json_request(
+                            f"{base}/api/v1/downloads/{download_id}/audio-anchor"
+                            f"?startByte={start_byte}&lengthBytes={length_bytes}&streamIndex={stream_index}"
+                        ),
+                        probe_packets=lambda media: ffprobe_artifact_packets("ffprobe", media),
+                        decode_ms=lambda media: ffmpeg_decode_ms("ffmpeg", media),
+                    )
+                )
+            result["checkSync"] = checks
+            if not all(check["ok"] for check in checks):
+                raise RuntimeError("audio anchor sync check failed; see checkSync offsets in the report")
 
         current = json_request(base + "/api/v1/downloads").get("items", [])
         match = next(item for item in current if item["id"] == prepared["id"])
