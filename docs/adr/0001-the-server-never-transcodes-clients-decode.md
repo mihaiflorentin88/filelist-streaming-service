@@ -1,7 +1,7 @@
 # The server never transcodes; clients decode
 
 ---
-status: accepted
+status: revised — the audio-transcode prohibition was reversed by 0003; the video-copy invariant stands
 ---
 
 The Pi 4 box serves original bytes only: progressive piece-serving plus Range. The fMP4/AAC audio-transcode route is removed — an unconditional re-encode through an ffmpeg pipe that the Pi cannot keep ahead of, it made audio drift behind video in every browser session. The TV Direct plays via AVPlay; the web app decodes non-native audio client-side (audio-only WASM decoder) and plays everything else natively.

@@ -60,10 +60,12 @@ def validate_window(*, base, source_id, stream_index, start, length, head_bytes,
     window_ms = decode_ms(ffmpeg, artifact) - head_ms
     # Frames carry no byte positions: drop the head's own audio frames by
     # scanning the head alone and keeping only frames past its last PTS.
-    head_frames = scan_frames(ffprobe, head, stream_index)
     all_frames = scan_frames(ffprobe, artifact, stream_index)
+    # Head-inclusive windows (start 0) contain the head's own frames as real
+    # window content - nothing to strip. Otherwise drop the head's frames.
+    head_frames = scan_frames(ffprobe, head, stream_index) if start > 0 else []
     head_last = head_frames[-1] if head_frames else -1
-    frames = [pts for pts in all_frames if pts > head_last]
+    frames = [pts for pts in all_frames if head_last < 0 or pts > head_last]
     if not frames:
         return {"startByte": start, "error": "decoder produced no window frames", "ok": False}
     decoder_first = frames[0]

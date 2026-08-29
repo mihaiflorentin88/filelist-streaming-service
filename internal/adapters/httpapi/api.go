@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
+	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
@@ -86,6 +87,7 @@ func New(service *application.Service, settings *config.Store, log *slog.Logger,
 	mux.HandleFunc("PUT /api/v1/playback/{sourceId}/watched", a.putWatched)
 	mux.HandleFunc("GET /api/v1/streams/{id}", a.stream)
 	mux.HandleFunc("HEAD /api/v1/streams/{id}", a.stream)
+	mux.HandleFunc("GET /api/v1/streams/{id}/browser", a.browserStream)
 	sub, _ := fs.Sub(static, "static")
 	mux.Handle("/", http.FileServer(http.FS(sub)))
 	return recoverer(log, access(log, trusted(settings, mux)))
@@ -93,7 +95,7 @@ func New(service *application.Service, settings *config.Store, log *slog.Logger,
 
 func (a *API) info(w http.ResponseWriter, r *http.Request) {
 	settings := a.settings.Get()
-	write(w, 200, map[string]any{"name": "FileList Streaming", "instanceName": settings.InstanceName, "version": a.version, "apiVersion": "v1", "configured": configured(settings), "capabilities": []string{"catalog", "canonicalCatalog", "metadata", "artworkProxy", "qbittorrent", "rangeStreaming", "mediaInfo", "audioAnchor", "settingsFile", "householdState", "canonicalFavorites", "persistentJobs", "subtitles", "serverDiscovery"}})
+	write(w, 200, map[string]any{"name": "FileList Streaming", "instanceName": settings.InstanceName, "version": a.version, "apiVersion": "v1", "configured": configured(settings), "capabilities": []string{"catalog", "canonicalCatalog", "metadata", "artworkProxy", "qbittorrent", "rangeStreaming", "mediaInfo", "audioAnchor", "settingsFile", "householdState", "canonicalFavorites", "persistentJobs", "subtitles", "serverDiscovery", "browserAudioTranscode"}})
 }
 
 func (a *API) clientDiagnostic(w http.ResponseWriter, r *http.Request) {
@@ -1078,13 +1080,126 @@ func copyRange(ctx context.Context, w io.Writer, path string, offset, count int6
 	return nil
 }
 
+// browserStream preserves the original video while converting browser-hostile
+// audio (for example E-AC-3 in an MKV release) to AAC in a fragmented MP4.
+// FFmpeg reads through the ordinary range-aware stream, so the same local vs.
+// progressive playback strategy remains authoritative while a torrent grows.
+func (a *API) browserStream(w http.ResponseWriter, r *http.Request) {
+	settings := a.settings.Get()
+	_, port, err := net.SplitHostPort(settings.ListenAddress)
+	if err != nil || port == "" {
+		problem(w, http.StatusInternalServerError, fmt.Errorf("invalid listen address for browser audio compatibility"))
+		return
+	}
+	info, complete, err := a.service.MediaInfo(r.Context(), r.PathValue("id"))
+	if err != nil {
+		if !complete {
+			w.Header().Set("Retry-After", "2")
+			problem(w, http.StatusServiceUnavailable, err)
+		} else {
+			problem(w, http.StatusUnprocessableEntity, err)
+		}
+		return
+	}
+	input := "http://127.0.0.1:" + port + "/api/v1/streams/" + r.PathValue("id")
+	args, _, err := browserStreamArgs(input, info, r.URL.Query().Get("audioTrack"), r.URL.Query().Get("startMs"))
+	if err != nil {
+		problem(w, http.StatusBadRequest, err)
+		return
+	}
+	cmd := exec.CommandContext(r.Context(), settings.FFmpegPath, args...)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		problem(w, http.StatusInternalServerError, err)
+		return
+	}
+	cmd.Stderr = io.Discard
+	if err = cmd.Start(); err != nil {
+		problem(w, http.StatusServiceUnavailable, fmt.Errorf("start browser audio compatibility stream: %w", err))
+		return
+	}
+	w.Header().Set("Content-Type", "video/mp4")
+	w.Header().Set("Content-Disposition", "inline")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, copyErr := io.Copy(w, stdout)
+	waitErr := cmd.Wait()
+	if copyErr != nil && !errors.Is(copyErr, context.Canceled) {
+		a.log.Warn("browser compatibility stream stopped", "sourceId", r.PathValue("id"), "error", copyErr)
+	} else if waitErr != nil && r.Context().Err() == nil {
+		a.log.Warn("browser compatibility transcode stopped", "sourceId", r.PathValue("id"), "error", waitErr)
+	}
+}
+
+// browserStreamArgs selects the requested (default, then English) audio track
+// and builds the transcode argument vector. Video is always copied: the
+// Raspberry Pi never re-encodes video, only the selected audio stream.
+func browserStreamArgs(input string, info domain.MediaInfo, requestedTrack, requestedStart string) ([]string, domain.MediaAudioTrack, error) {
+	if len(info.AudioTracks) == 0 {
+		return nil, domain.MediaAudioTrack{}, fmt.Errorf("the original media has no audio track")
+	}
+	track := info.AudioTracks[0]
+	for _, candidate := range info.AudioTracks {
+		if candidate.Default {
+			track = candidate
+			break
+		}
+	}
+	for _, candidate := range info.AudioTracks {
+		language := strings.ToLower(candidate.Language)
+		if strings.HasPrefix(language, "en") || strings.HasPrefix(language, "eng") {
+			track = candidate
+			break
+		}
+	}
+	if requestedTrack != "" {
+		index, err := strconv.Atoi(requestedTrack)
+		if err != nil || index < 0 {
+			return nil, domain.MediaAudioTrack{}, fmt.Errorf("audioTrack must be an original audio stream index")
+		}
+		found := false
+		for _, candidate := range info.AudioTracks {
+			if candidate.Index == index {
+				track, found = candidate, true
+				break
+			}
+		}
+		if !found {
+			return nil, domain.MediaAudioTrack{}, fmt.Errorf("audioTrack %d is not an audio stream in the original media", index)
+		}
+	}
+	startMS := int64(0)
+	if requestedStart != "" {
+		value, err := strconv.ParseInt(requestedStart, 10, 64)
+		if err != nil || value < 0 || info.DurationMS <= 0 || value >= info.DurationMS {
+			return nil, domain.MediaAudioTrack{}, fmt.Errorf("startMs must be between 0 and the original duration")
+		}
+		startMS = value
+	}
+	args := []string{"-nostdin", "-hide_banner", "-loglevel", "error"}
+	if startMS > 0 {
+		args = append(args, "-ss", strconv.FormatFloat(float64(startMS)/1000, 'f', 3, 64))
+	}
+	args = append(args,
+		"-i", input,
+		"-map", "0:v:0", "-map", "0:"+strconv.Itoa(track.Index),
+		// Raspberry Pi safety invariant: video is always copied. Only the selected
+		// audio stream is transcoded for browser compatibility.
+		"-c:v", "copy", "-c:a", "aac", "-ac", "2", "-b:a", "192k",
+		"-map_metadata", "-1", "-avoid_negative_ts", "make_zero",
+		"-movflags", "frag_keyframe+empty_moov+default_base_moof",
+		"-f", "mp4", "pipe:1",
+	)
+	return args, track, nil
+}
+
 func downloadDTO(d domain.Download) map[string]any {
 	playbackMode := "progressive"
 	state := strings.ToLower(d.State)
 	if d.Progress >= 1 || strings.HasSuffix(state, "up") || state == "completed" {
 		playbackMode = "local"
 	}
-	return map[string]any{"id": d.ID, "releaseId": d.ReleaseID, "titleId": d.TitleID, "displayTitle": d.DisplayTitle, "releaseName": d.ReleaseName, "category": d.Category, "releaseSizeBytes": d.ReleaseSizeBytes, "trackerSeeders": d.TrackerSeeders, "rating": d.Rating, "ratingVotes": d.RatingVotes, "ratingProvider": d.RatingProvider, "parsed": d.Parsed, "engineId": d.EngineID, "fileIndex": d.FileIndex, "filePath": d.FilePath, "mimeType": contentType(d.FilePath), "sizeBytes": d.SizeBytes, "state": d.State, "progress": d.Progress, "playbackMode": playbackMode, "downloadedBytes": d.DownloadedBytes, "speedBytesPerSecond": d.SpeedBytesPerSecond, "etaSeconds": d.ETASeconds, "peers": d.Peers, "seeds": d.Seeds, "bufferedBytes": d.BufferedBytes, "leased": d.Leased, "error": d.Error, "createdAt": d.CreatedAt, "updatedAt": d.UpdatedAt, "streamUrl": "/api/v1/streams/" + d.ID}
+	return map[string]any{"id": d.ID, "releaseId": d.ReleaseID, "titleId": d.TitleID, "displayTitle": d.DisplayTitle, "releaseName": d.ReleaseName, "category": d.Category, "releaseSizeBytes": d.ReleaseSizeBytes, "trackerSeeders": d.TrackerSeeders, "rating": d.Rating, "ratingVotes": d.RatingVotes, "ratingProvider": d.RatingProvider, "parsed": d.Parsed, "engineId": d.EngineID, "fileIndex": d.FileIndex, "filePath": d.FilePath, "mimeType": contentType(d.FilePath), "sizeBytes": d.SizeBytes, "state": d.State, "progress": d.Progress, "playbackMode": playbackMode, "downloadedBytes": d.DownloadedBytes, "speedBytesPerSecond": d.SpeedBytesPerSecond, "etaSeconds": d.ETASeconds, "peers": d.Peers, "seeds": d.Seeds, "bufferedBytes": d.BufferedBytes, "leased": d.Leased, "error": d.Error, "createdAt": d.CreatedAt, "updatedAt": d.UpdatedAt, "streamUrl": "/api/v1/streams/" + d.ID, "browserStreamUrl": "/api/v1/streams/" + d.ID + "/browser"}
 }
 
 func parseRange(h string, length int64) (int64, int64, bool, bool) {

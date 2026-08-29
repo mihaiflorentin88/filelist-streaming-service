@@ -1,4 +1,3 @@
-import type { AudioSpan } from './anchor';
 export interface Page<T> { items: T[]; nextCursor: string | null; total: number; stale?: boolean }
 export interface Release { id: string; name: string; category: string; sizeBytes: number; seeders: number; leechers: number; freeleech: boolean; imdbId?: string }
 export type MediaKind = 'movie' | 'series'
@@ -13,7 +12,7 @@ export interface CatalogEpisode { number: number; title: string; season: number;
 export interface CatalogSeason { number: number; title: string; episodeCount: number; episodes: CatalogEpisode[]; packSources?: CatalogSource[]; libraryState?: MediaState }
 export interface CatalogDetail { title: CatalogTitle; seasons: CatalogSeason[]; sources: CatalogSource[] }
 export interface CatalogFacets { categories: string[]; kinds: string[]; resolutions: string[]; hdr: string[]; sources: string[]; codecs: string[] }
-export interface Download { id: string; releaseId: string; titleId?: string; displayTitle?: string; releaseName?: string; category?: string; releaseSizeBytes?: number; trackerSeeders?: number; rating?: number; ratingVotes?: number; ratingProvider?: string; parsed?: ParsedRelease; engineId: string; fileIndex: number; filePath: string; mimeType: string; sizeBytes: number; state: string; progress: number; playbackMode: 'local' | 'progressive'; downloadedBytes: number; speedBytesPerSecond: number; etaSeconds: number; peers: number; seeds: number; leased: boolean; error?: string; createdAt?: string; updatedAt?: string; streamUrl: string }
+export interface Download { id: string; releaseId: string; titleId?: string; displayTitle?: string; releaseName?: string; category?: string; releaseSizeBytes?: number; trackerSeeders?: number; rating?: number; ratingVotes?: number; ratingProvider?: string; parsed?: ParsedRelease; engineId: string; fileIndex: number; filePath: string; mimeType: string; sizeBytes: number; state: string; progress: number; playbackMode: 'local' | 'progressive'; downloadedBytes: number; speedBytesPerSecond: number; etaSeconds: number; peers: number; seeds: number; leased: boolean; error?: string; createdAt?: string; updatedAt?: string; streamUrl: string; browserStreamUrl?: string }
 export interface MediaAudioTrack { streamIndex: number; language?: string; title?: string; codec?: string; channels?: number; default?: boolean }
 export interface MediaInfo { durationMs: number; audioTracks: MediaAudioTrack[]; probedAt?: string }
 const downloadRenderFingerprint = (item: Download) => [item.releaseId, item.titleId, item.displayTitle, item.releaseName, item.category, item.releaseSizeBytes, item.trackerSeeders, item.rating, item.ratingVotes, item.ratingProvider, item.engineId, item.fileIndex, item.filePath, item.mimeType, item.sizeBytes, item.state, item.progress, item.playbackMode, item.downloadedBytes, item.speedBytesPerSecond, item.etaSeconds, item.peers, item.seeds, item.leased, item.error, item.createdAt, item.updatedAt, item.streamUrl, item.parsed?.title, item.parsed?.seasonStart, item.parsed?.episodeStart, item.parsed?.resolution, item.parsed?.source, item.parsed?.videoCodec, item.parsed?.audio].join('\u0000')
@@ -93,10 +92,7 @@ export class API {
   updatePlaybackPreferences(sourceId: string, value: PlaybackPreferences) { return this.call<PlaybackPreferences>(`/playback/${encodeURIComponent(sourceId)}/preferences`, { method: 'PUT', body: JSON.stringify(value) }) }
   setWatched(sourceId: string, watched: boolean) { return this.call<PlaybackState>(`/playback/${encodeURIComponent(sourceId)}/watched`, { method: 'PUT', body: JSON.stringify({ watched }) }) }
   streamURL(path: string) { return new URL(path, this.base).toString() }
-  audioAnchor(sourceId: string, startByte: number, lengthBytes: number, streamIndex: number) { return this.call<AudioSpan>(`/downloads/${encodeURIComponent(sourceId)}/audio-anchor?startByte=${startByte}&lengthBytes=${lengthBytes}&streamIndex=${streamIndex}`) }
 }
-export { ANCHOR_WINDOW_BYTES, MAX_ANCHOR_PROBES, planSessionStart } from './anchor';
-export type { AudioSpan, SessionAnchor, SpanFetcher } from './anchor';
 export { ControlsVisibility } from './controls-visibility';
 export type { ControlsVisibilityOptions, ControlsVisibilityPolicy } from './controls-visibility';
 export { DEFAULT_PLAYER_SETTINGS, PLAYER_MUTED_KEY, PLAYER_VOLUME_KEY, clampVolume, loadPlayerSettings, savePlayerSettings } from './player-settings';

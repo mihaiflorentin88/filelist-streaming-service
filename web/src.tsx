@@ -1,17 +1,6 @@
 import { render } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { API, audioPlaybackRoute, canonicalHouseholdItems, CatalogDetail, CatalogSource, CatalogTitle, clampVolume, ControlsVisibility, Download, DownloadSort, fallbackAudioTrack, formatBytes, HouseholdItem, HouseholdState, Job, JobLog, languageDisplayName, LibraryCategory, loadPlayerSettings, logicalPlaybackPosition, MediaAudioTrack, MediaInfo, MediaState, canonicalLanguage, subtitleRank, orderDownloadIDs, PlaybackPreferences, PlayerSettingsStorage, preferredAudioTrack, reconcileDownloads, resumeActionLabel, resumeForTitle, resumeSummary, savePlayerSettings, seasonPackActionLabel, SettingsField, SubtitleCandidate, subtitleItemLabel, subtitleMenuGroups, SubtitleWarning } from '@filelist/shared';
-import { AudioDecodeController } from './audio-decode';
-
-declare global {
-  interface Window {
-    __audioDecode?: {
-      driftSeconds: () => number;
-      state: () => import('./audio-decode').DebugState | null;
-      resume: () => void;
-    };
-  }
-}
+import { API, audioPlaybackRoute, canonicalHouseholdItems, CatalogDetail, CatalogSource, CatalogTitle, clampVolume, ControlsVisibility, Download, DownloadSort, formatBytes, HouseholdItem, HouseholdState, Job, JobLog, languageDisplayName, LibraryCategory, loadPlayerSettings, logicalPlaybackPosition, MediaAudioTrack, MediaInfo, MediaState, canonicalLanguage, subtitleRank, orderDownloadIDs, PlaybackPreferences, PlayerSettingsStorage, preferredAudioTrack, reconcileDownloads, resumeActionLabel, resumeForTitle, resumeSummary, savePlayerSettings, seasonPackActionLabel, SettingsField, SubtitleCandidate, subtitleItemLabel, subtitleMenuGroups, SubtitleWarning } from '@filelist/shared';
 import './style.css';
 
 const api = new API(location.origin);
@@ -22,6 +11,17 @@ const emptyState: HouseholdState = { favorites: [], continueWatching: [], recent
 const needsEpisodeExpansion = (detail: CatalogDetail) => detail.title.kind === 'series' && detail.seasons.some(season => (season.packSources?.length || 0) > 0 && season.episodes.length === 0);
 function formatPlaybackTime(milliseconds: number) { const total = Math.max(0, Math.floor(milliseconds / 1000)); const hours = Math.floor(total / 3600); const minutes = Math.floor(total % 3600 / 60); const seconds = total % 60; return hours ? `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}` : `${minutes}:${String(seconds).padStart(2, '0')}` }
 function audioTrackLabel(track: MediaAudioTrack) { const language = languageDisplayName(track.language || '') || track.language?.toUpperCase() || 'Language unavailable'; const channels = track.channels === 1 ? 'Mono' : track.channels === 2 ? 'Stereo' : track.channels && track.channels > 2 ? `${track.channels} channels` : ''; return [track.title, language, track.codec?.toUpperCase(), channels].filter(Boolean).join(' · ') }
+// The compatibility stream is a live ffmpeg transcode (video copied, audio
+// converted to AAC) served as fragmented MP4. It exists for codecs the
+// browser cannot decode (E-AC-3 in most releases). A live transcode is not
+// range-addressable, so seeking re-issues the request at the new position.
+export function browserPlaybackURL(download: Download, audioTrack = -1, startMs = 0) {
+  if (!download.browserStreamUrl) return download.streamUrl;
+  const value = new URL(download.browserStreamUrl, location.origin);
+  if (audioTrack >= 0) value.searchParams.set('audioTrack', String(audioTrack));
+  if (startMs > 0) value.searchParams.set('startMs', String(Math.round(startMs)));
+  return `${value.pathname}${value.search}`;
+}
 // Storage access itself can throw or be missing (blocked cookies, odd embeds,
 // non-browser runs); the player then runs with defaults and no persistence
 // instead of crashing.
@@ -99,17 +99,19 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
   const [warnings, setWarnings] = useState<SubtitleWarning[]>([]);
   const [subtitleOpen, setSubtitleOpen] = useState(false);
   const [audioOpen, setAudioOpen] = useState(false);
-  const decoderRef = useRef<AudioDecodeController | null>(null);
-  // Render-visible mirror of decoderRef: the loudness-sync effect must re-run
-  // when a decode session appears or ends, which a ref alone cannot trigger.
-  const [decoder, setDecoder] = useState<AudioDecodeController | null>(null);
-  // True from decode-session start to teardown: the element's audio output
-  // belongs to the controller, and loudness state must not touch the element.
-  const decodeOwned = useRef(false);
-  const decodeFailed = useRef(false);
-  // Stream indexes whose decode already failed this playback; the fallback chooser
-  // excludes all of them so repeated failures walk forward instead of looping.
-  const failedAudio = useRef<number[]>([]);
+  // Content position at the head of the current compatibility stream. The
+  // element's clock starts at zero for that request, so the logical position
+  // is offset + element.currentTime (see logicalPlaybackPosition).
+  const offsetRef = useRef(0);
+  const [streamOffset, setStreamOffset] = useState(0);
+  // True while a compatibility re-request is in flight; suppresses buffering
+  // chatter and recovery for the reload window.
+  const reloading = useRef(false);
+  // Original VTT cue times so offset re-syncs shift from truth, not drift.
+  const cueTimes = useRef(new Map<TextTrackCue, { start: number; end: number }>());
+  // Pending element seek applied on the next loadedmetadata (track switches
+  // that move between native and compatibility routes).
+  const pendingSeekRef = useRef(-1);
   const [selectedSubtitle, setSelectedSubtitle] = useState('off');
   const [controlsVisible, setControlsVisible] = useState(true);
   const controls = useMemo(() => new ControlsVisibility({ policy: { armWhilePaused: true, statusHolds: true, manualHideSuppressionMs: 500 }, onChange: setControlsVisible }), []);
@@ -117,14 +119,19 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
   controls.setPanelOpen(subtitleOpen || audioOpen);
   useModalFocus(root, onClose);
 
-  const playbackURL = useMemo(() => mediaInfo ? active.download.streamUrl : '', [active.download.id, mediaInfo]);
   const currentTrack = mediaInfo?.audioTracks.find(track => track.streamIndex === selectedAudio);
+  const browserMode = !!currentTrack && !!mediaInfo && (audioPlaybackRoute(currentTrack.codec) === 'decode' || (mediaInfo.audioTracks.length > 1 && !currentTrack.default));
+  const playbackURL = useMemo(() => {
+    if (!mediaInfo) return '';
+    if (browserMode) return browserPlaybackURL(active.download, selectedAudio, streamOffset);
+    return active.download.streamUrl;
+  }, [active.download.id, mediaInfo, browserMode, selectedAudio, streamOffset]);
   const subtitlePositions = useMemo(() => new Map(candidates.map((candidate, index) => [candidate, index + 1])), [candidates]);
   const subtitleGroups = useMemo(() => subtitleMenuGroups(candidates), [candidates]);
   const save = async () => {
     if (durationRef.current <= 0 || saveFailed.current) return;
     try {
-      await api.updatePlayback(active.download.id, logicalPlaybackPosition(0, video.current?.currentTime || 0, durationRef.current), durationRef.current);
+      await api.updatePlayback(active.download.id, logicalPlaybackPosition(offsetRef.current, video.current?.currentTime || 0, durationRef.current), durationRef.current);
       onStateChanged()
     } catch (error) {
       // Position persistence is best-effort: a missing source (404) or a permanent
@@ -142,7 +149,6 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
         const [saved, info] = await Promise.all([active.preferences ? Promise.resolve(active.preferences) : api.playbackPreferences(active.download.id).catch(() => defaults), api.mediaInfo(active.download.id)]);
         if (cancelled) return;
         preferenceRef.current = saved;
-        failedAudio.current = [];
         recoverAttempts.current = 0;
         saveFailed.current = false;
         durationRef.current = info.durationMs;
@@ -150,6 +156,10 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
         const initial = Math.min(Math.max(0, active.resumeMs), Math.max(0, info.durationMs - 1000));
         setMediaInfo(info);
         setPosition(initial);
+        const chosen = track;
+        const useBrowser = !!chosen && (audioPlaybackRoute(chosen.codec) === 'decode' || (info.audioTracks.length > 1 && !chosen.default));
+        offsetRef.current = useBrowser ? initial : 0;
+        setStreamOffset(offsetRef.current);
         setSelectedAudio(track?.streamIndex ?? -1);
         setMessage('Opening stream…');
       } catch (error) {
@@ -163,64 +173,29 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
   }, [active.download.id]);
 
   useEffect(() => () => { window.clearTimeout(retryTimer.current); void save() }, [active.download.id]);
-  // Audio decode path: only constructed when the selected track's codec is not
-  // natively decodable; it mutes the video element and feeds WebAudio instead.
-  useEffect(() => {
-    const track = mediaInfo?.audioTracks.find(item => item.streamIndex === selectedAudio);
-    const element = video.current;
-    if (!mediaInfo || !playbackURL || !element || !track) return; decodeFailed.current = false; const ordinal = Math.max(0, mediaInfo.audioTracks.findIndex(item => item.streamIndex === selectedAudio)); const route = audioPlaybackRoute(track.codec); const multiTrackSwitch = mediaInfo.audioTracks.length > 1 && !track.default; console.debug(`[audio] route=${route} reason=${route === 'decode' ? `codec "${track.codec}" is not natively decodable` : multiTrackSwitch ? 'selected track is a non-default track in a multi-track file' : `codec "${track.codec}" plays through the element`} (track ${ordinal})`); if (route !== 'decode' && !multiTrackSwitch) return;
-    decodeOwned.current = true;
-    let cancelled = false;
-    let instance: AudioDecodeController | null = null;
-    const startSec = Math.min(Math.max(0, active.resumeMs), Math.max(0, mediaInfo.durationMs - 1000)) / 1000;
-    void AudioDecodeController.create({
-      video: element, audioOrdinal: ordinal, url: api.streamURL(playbackURL), startSec, totalBytes: active.download.sizeBytes, durationSec: mediaInfo.durationMs / 1000, spanFetch: (startByte, lengthBytes) => api.audioAnchor(active.download.id, startByte, lengthBytes, track.streamIndex), onStatus: status => {
-        if (cancelled) return;
-        if (status.status !== 'error') { setMessage(status.message); return }
-        decodeFailed.current = true;
-        decoderRef.current = null;
-        decodeOwned.current = false;
-        setDecoder(null);
-        failedAudio.current = [...failedAudio.current, track.streamIndex];
-        const replacement = fallbackAudioTrack(mediaInfo.audioTracks, preferenceRef.current, failedAudio.current);
-        if (!replacement) { setMessage(status.message); return }
-        const replacementOrdinal = Math.max(0, mediaInfo.audioTracks.findIndex(item => item.streamIndex === replacement.streamIndex));
-        console.debug(`[audio] decode failed on track ${ordinal}; falling back to track ${replacementOrdinal} (${replacement.codec || 'unknown codec'})`);
-        setMessage('');
-        setSelectedAudio(replacement.streamIndex);
+  // Subtitle cues carry content-time timestamps; the compatibility stream's
+  // element clock starts at the requested offset, so shift cues to match.
+  function syncSubtitleOffset(offset: number) {
+    video.current?.querySelectorAll<HTMLTrackElement>('track[data-filelist]').forEach(element => {
+      for (const cue of Array.from(element.track?.cues || [])) {
+        let original = cueTimes.current.get(cue);
+        if (!original) { original = { start: cue.startTime, end: cue.endTime }; cueTimes.current.set(cue, original) }
+        cue.startTime = Math.max(0, original.start - offset / 1000);
+        cue.endTime = Math.max(cue.startTime + .01, original.end - offset / 1000);
       }
-    }).then(value => {
-      if (cancelled) { value.destroy(); return }
-      instance = value;
-      decoderRef.current = value;
-      setDecoder(value);
-      window.__audioDecode = {
-        driftSeconds: () => instance?.driftSeconds() ?? 0,
-        state: () => instance?.debugState() ?? null,
-        resume: () => instance?.resume(),
-      };
-    }).catch(error => { decodeOwned.current = false; setDecoder(null); if (!cancelled) setMessage(`Audio decode unavailable: ${(error as Error).message}`) });
-    // Autoplay policies start the AudioContext suspended until a gesture; the
-    // muted video then plays in silence while the session waits. Any input on
-    // the player is a gesture — resume the context on the first one.
-    const kickContext = () => { void instance?.resume() };
-    element.addEventListener('pointerdown', kickContext);
-    element.addEventListener('play', kickContext);
-    window.addEventListener('keydown', kickContext);
-    return () => { cancelled = true; decodeOwned.current = false; decoderRef.current = null; setDecoder(null); delete window.__audioDecode; element.removeEventListener('pointerdown', kickContext); element.removeEventListener('play', kickContext); window.removeEventListener('keydown', kickContext); instance?.destroy() };
-  }, [mediaInfo, selectedAudio, playbackURL]);
+    });
+  }
+
   // Loudness truth lives in persisted React state; this effect pushes it to
   // whichever output owns audio — the decoder gain during a decode session,
   // the element otherwise. The element's muted flag while decoding is the
   // controller's implementation detail and is never mirrored back into the
   // UI (that mirror used to show 0 while the decoder played at full gain).
   useEffect(() => {
-    if (decoder) { decoder.setVolume(volume); decoder.setMuted(muted); return }
-    if (decodeOwned.current) return;
     const element = video.current;
     if (!element) return;
     element.volume = volume; element.muted = muted;
-  }, [decoder, volume, muted]);
+  }, [volume, muted]);
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -265,7 +240,7 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
       const element = document.createElement('track');
       element.kind = 'subtitles'; element.label = candidate.title || candidate.language || 'Subtitle'; element.srclang = candidate.language || 'und'; element.src = api.streamURL(asset.url); element.default = true; element.dataset.filelist = 'true';
       video.current?.querySelectorAll('track[data-filelist]').forEach(track => track.remove()); video.current?.appendChild(element);
-      element.addEventListener('load', () => { if (element.track) element.track.mode = 'showing'; setSelectedSubtitle(`${candidate.provider}:${candidate.id}`); setMessage('') }, { once: true });
+      element.addEventListener('load', () => { if (element.track) { syncSubtitleOffset(offsetRef.current); element.track.mode = 'showing' } setSelectedSubtitle(`${candidate.provider}:${candidate.id}`); setMessage('') }, { once: true });
       element.addEventListener('error', () => setMessage('The subtitle is cached, but this browser could not load it.'), { once: true });
       setSubtitleOpen(false);
       if (persist) await savePreferences({ ...preferenceRef.current, subtitleLanguage: candidate.language || 'en', subtitleProvider: candidate.provider, subtitleCandidateId: candidate.id, subtitleMode: 'selected' });
@@ -277,14 +252,14 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
   // failures the loop stops and the viewer sees a terminal message instead of the
   // player reloading the stream every two seconds forever.
   async function recover() {
-    if (recovering.current) return;
+    if (recovering.current || reloading.current) return;
     recovering.current = true;
-    if (!decodeFailed.current) setMessage('Waiting for the next downloaded segment…');
+    setMessage('Waiting for the next downloaded segment…');
     retryTimer.current = window.setTimeout(async () => {
       try {
         const latest = (await api.downloads()).items.find(item => item.id === active.download.id);
         if (!latest) throw new Error('The download is no longer managed.');
-        if (!decodeFailed.current) setMessage(latest.playbackMode === 'progressive' ? `Streaming while downloading · ${Math.round(latest.progress * 100)}%` : 'Downloaded file ready · retrying playback…');
+        setMessage(latest.playbackMode === 'progressive' ? `Streaming while downloading · ${Math.round(latest.progress * 100)}%` : 'Downloaded file ready · retrying playback…');
         video.current?.load();
         await video.current?.play();
         recovering.current = false
@@ -301,10 +276,26 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
   function restartAt(value: number) {
     if (!mediaInfo || !video.current) return;
     const target = Math.min(Math.max(0, value), Math.max(0, mediaInfo.durationMs - 1000));
-    video.current.currentTime = target / 1000;
+    if (!browserMode) { video.current.currentTime = target / 1000; setPosition(target); return }
+    reloading.current = true;
+    offsetRef.current = target;
+    syncSubtitleOffset(target);
     setPosition(target);
+    setStreamOffset(target);
   }
-  async function chooseAudio(track: MediaAudioTrack) { failedAudio.current = []; setSelectedAudio(track.streamIndex); setAudioOpen(false); await savePreferences({ ...preferenceRef.current, audioTrackIndex: track.streamIndex, audioLanguage: track.language || 'en' }) }
+  async function chooseAudio(track: MediaAudioTrack) {
+    if (!mediaInfo) return;
+    const nextBrowser = audioPlaybackRoute(track.codec) === 'decode' || (mediaInfo.audioTracks.length > 1 && !track.default);
+    if (nextBrowser || browserMode) {
+      const target = logicalPlaybackPosition(offsetRef.current, video.current?.currentTime || 0, durationRef.current);
+      offsetRef.current = nextBrowser ? target : 0;
+      pendingSeekRef.current = nextBrowser ? -1 : target;
+      setStreamOffset(offsetRef.current);
+    }
+    setSelectedAudio(track.streamIndex);
+    setAudioOpen(false);
+    await savePreferences({ ...preferenceRef.current, audioTrackIndex: track.streamIndex, audioLanguage: track.language || 'en' });
+  }
   function togglePlayback() { const element = video.current; if (!element) return; if (element.paused) { shouldPlay.current = true; void element.play().catch(error => setMessage(`Playback could not start: ${error.message}`)) } else { shouldPlay.current = false; element.pause() } }
   function revealControls() { controls.reveal() }
   function hideControls() { controls.hide() }
@@ -315,7 +306,7 @@ export function BrowserPlayer({ active, onClose, onStateChanged, onAdvance }: { 
   function toggleMuted() { setMuted(!muted); savePlayerSettings(persistedStore(), { volume, muted: !muted }) }
   async function toggleFullscreen() { try { if (document.fullscreenElement) await document.exitFullscreen(); else await root.current?.requestFullscreen() } catch (error) { setMessage(`Fullscreen unavailable: ${(error as Error).message}`) } }
   return <div ref={root} class={`video ${controlsVisible ? 'controls-visible' : ''}`} role="dialog" aria-modal="true" aria-label={`Playing ${active.download.displayTitle || active.download.filePath}`}>
-    <video ref={video} src={playbackURL ? api.streamURL(playbackURL) : undefined} autoplay playsInline onLoadedMetadata={event => { if (active.resumeMs > 0) event.currentTarget.currentTime = active.resumeMs / 1000; if (shouldPlay.current) void event.currentTarget.play().catch(() => setMessage('Press Play to start playback.')) }} onWaiting={() => { if (!decodeFailed.current) setMessage(active.download.playbackMode === 'progressive' ? 'Buffering the next downloaded segment…' : 'Buffering…') }} onCanPlay={() => { recovering.current = false; recoverAttempts.current = 0; if (!decodeFailed.current) setMessage('') }} onPlaying={() => { decoderRef.current?.resume(); recovering.current = false; recoverAttempts.current = 0; setPlaying(true); if (!decodeFailed.current) setMessage('') }} onTimeUpdate={event => { const next = logicalPlaybackPosition(0, event.currentTarget.currentTime, durationRef.current); const now = Date.now(); if (now - lastRendered.current >= 250) { lastRendered.current = now; setPosition(next) } if (now - lastSaved.current > 10000) { lastSaved.current = now; void save() } }} onPause={() => { decoderRef.current?.suspend(); setPlaying(false); void save() }} onEnded={() => void save().then(() => onAdvance(preferenceRef.current))} onError={() => void recover()} onSeeking={event => decoderRef.current?.seek(event.currentTarget.currentTime)} />
+    <video ref={video} src={playbackURL ? api.streamURL(playbackURL) : undefined} autoplay playsInline onLoadedMetadata={event => { reloading.current = false; const pending = pendingSeekRef.current >= 0 ? pendingSeekRef.current : (!browserMode && active.resumeMs > 0 ? active.resumeMs : -1); pendingSeekRef.current = -1; if (pending > 0) event.currentTarget.currentTime = pending / 1000; if (shouldPlay.current) void event.currentTarget.play().catch(() => setMessage('Press Play to start playback.')) }} onWaiting={() => { if (!reloading.current) setMessage(active.download.playbackMode === 'progressive' ? 'Buffering the next downloaded segment…' : 'Buffering…') }} onCanPlay={() => { recovering.current = false; recoverAttempts.current = 0; if (!reloading.current) setMessage('') }} onPlaying={() => { recovering.current = false; recoverAttempts.current = 0; setPlaying(true); if (!reloading.current) setMessage('') }} onTimeUpdate={event => { const next = logicalPlaybackPosition(offsetRef.current, event.currentTarget.currentTime, durationRef.current); const now = Date.now(); if (now - lastRendered.current >= 250) { lastRendered.current = now; setPosition(next) } if (now - lastSaved.current > 10000) { lastSaved.current = now; void save() } }} onPause={() => { setPlaying(false); void save() }} onEnded={() => void save().then(() => onAdvance(preferenceRef.current))} onError={() => void recover()} />
     <div class="player-chrome">
       <div class="player-heading"><strong>{active.download.displayTitle || active.download.filePath}</strong><span>{active.download.playbackMode === 'progressive' ? 'Streaming while downloading' : 'Downloaded file'}</span></div>
       <div class="player-scrubber"><input aria-label="Playback position" type="range" min="0" max={mediaInfo?.durationMs || 1} step="1000" value={Math.min(position, mediaInfo?.durationMs || 1)} disabled={!mediaInfo} onInput={event => setPosition(Number(event.currentTarget.value))} onChange={event => restartAt(Number(event.currentTarget.value))} /><div><time>{formatPlaybackTime(position)}</time><time>{mediaInfo ? formatPlaybackTime(mediaInfo.durationMs) : 'Preparing…'}</time></div></div>

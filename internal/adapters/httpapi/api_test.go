@@ -20,41 +20,34 @@ import (
 	"github.com/mihaiflorentin88/filelist-streaming-service/internal/platform/config"
 )
 
-func TestBrowserTranscodeRouteIsRemoved(t *testing.T) {
-	dir := t.TempDir()
-	b, err := json.Marshal(map[string]any{
-		"databasePath": filepath.Join(dir, "test.db"),
-		"downloadRoot": filepath.Join(dir, "downloads"),
-		"trustedCidrs": []string{"127.0.0.0/8", "::1/128", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "192.0.2.0/24"},
+func TestBrowserTranscodeRouteIsRegistered(t *testing.T) {
+	handler := newStreamHTTPTest(t, &streamEngine{status: domain.DownloadStatus{
+		State: "downloading", Progress: 0.05, Sequential: true, FirstLastPriority: true,
+		TempPathEnabled: true, TempPath: t.TempDir(), SavePath: t.TempDir(), PieceSize: 1 << 20,
+	}}, domain.Download{
+		ID: "source", ReleaseID: "release", EngineID: "qb:abc", FileIndex: 0,
+		FilePath: "movie.mkv", State: "downloading", Progress: 0.05, SizeBytes: 200 << 20,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(dir, "settings.json")
-	if err := os.WriteFile(path, b, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv(config.EnvironmentPrefix+"SETTINGS_PATH", path)
-	store, err := config.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	handler := New(nil, store, slog.New(slog.NewTextHandler(io.Discard, nil)), "test")
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/streams/abc/browser", nil))
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("GET /api/v1/streams/abc/browser status = %d, want 404", rec.Code)
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/streams/unknown/browser", nil))
+	// An unknown source is refused by the media-info service (503, retryable),
+	// not by routing (404): the compatibility route exists.
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("GET /api/v1/streams/unknown/browser status = %d, want 503", rec.Code)
+	}
+	if rec.Header().Get("Retry-After") == "" {
+		t.Fatal("compatibility route lost the Retry-After hint for in-flight sources")
 	}
 }
 
-func TestDownloadDTOExposesOnlyProgressiveStream(t *testing.T) {
+func TestDownloadDTOExposesCompatibilityStream(t *testing.T) {
 	b, err := json.Marshal(downloadDTO(domain.Download{ID: "abc", State: "downloading"}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(b)
-	if strings.Contains(text, "browserStreamUrl") {
-		t.Fatal("download DTO still advertises the removed browser compatibility stream")
+	if !strings.Contains(text, `"browserStreamUrl":"/api/v1/streams/abc/browser"`) {
+		t.Fatal("download DTO lost the browser compatibility stream URL")
 	}
 	if !strings.Contains(text, `"streamUrl":"/api/v1/streams/abc"`) {
 		t.Fatal("download DTO lost the progressive playback stream URL")
