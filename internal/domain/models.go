@@ -2,10 +2,28 @@ package domain
 
 import (
 	"errors"
+	"fmt"
 	"time"
 )
 
 var ErrTorrentNotFound = errors.New("qBittorrent torrent not found")
+
+// AllocationError rejects a download that cannot fit the Allocation even
+// after evicting every unprotected torrent — the starvation path of
+// ADR-0004. The HTTP layer maps it to a 409 problem; Error names the
+// exhausted Allocation and the space required so both clients can show an
+// actionable message.
+type AllocationError struct {
+	Release       string
+	RequiredBytes int64 // the incoming torrent's size
+	FreeBytes     int64 // room left under the Allocation once protected downloads are honored
+	CapacityBytes int64 // the configured Allocation, in bytes
+}
+
+func (e *AllocationError) Error() string {
+	gib := func(b int64) string { return fmt.Sprintf("%.1f GiB", float64(b)/(1<<30)) }
+	return fmt.Sprintf("the storage Allocation (%s) is exhausted: %q needs %s and only %s remains after protecting existing downloads — remove downloads or raise allocationGb", gib(e.CapacityBytes), e.Release, gib(e.RequiredBytes), gib(max(e.FreeBytes, 0)))
+}
 
 type TorrentRelease struct {
 	ID               string     `json:"id"`

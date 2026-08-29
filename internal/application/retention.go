@@ -128,6 +128,31 @@ func retentionDeficit(plan retentionPlan, settings config.Settings) (string, int
 	return "", 0, false
 }
 
+// evictOldest removes one unprotected torrent from the surveyed plan —
+// oldest completed first (ADR-0004) — through the same delete path as the
+// manual remove action, and announces it on the live feed. It reports false
+// when storage holds no evictable torrent. The retention job and the
+// download admission gate (starvation path) share this hook; the protection
+// predicate and ordering live only here.
+func (s *Service) evictOldest(ctx context.Context, plan retentionPlan, reason string) (retentionRoute, bool, error) {
+	candidates := make([]retentionRoute, 0, len(plan.routes))
+	for _, route := range plan.routes {
+		if !retentionProtected(route) {
+			candidates = append(candidates, route)
+		}
+	}
+	if len(candidates) == 0 {
+		return retentionRoute{}, false, nil
+	}
+	oldestCompletedFirst(candidates)
+	victim := candidates[0]
+	if err := s.removeTorrent(ctx, victim.engineID); err != nil {
+		return retentionRoute{}, false, err
+	}
+	s.publish("downloads.evicted", s.evictionEvent(ctx, victim, reason))
+	return victim, true, nil
+}
+
 // RunRetention enforces the Allocation cap and free-space Reserve (ADR-0004).
 // It evicts one torrent at a time — through the same delete path as the manual
 // remove action — re-evaluating after each until storage fits again or only
@@ -176,25 +201,17 @@ func (s *Service) runRetention(job domain.Job) {
 		if !tripped {
 			break
 		}
-		candidates := make([]retentionRoute, 0, len(plan.routes))
-		for _, route := range plan.routes {
-			if !retentionProtected(route) {
-				candidates = append(candidates, route)
-			}
-		}
-		if len(candidates) == 0 {
-			s.jobLog(job, "warn", retentionKind, "Storage remains over the limit; every candidate is protected", map[string]any{"reason": reason, "storedBytes": plan.storedBytes, "freeBytes": plan.freeBytes})
+		victim, removed, err := s.evictOldest(ctx, plan, reason)
+		if err != nil {
+			s.failOrWait(&job, err, retentionKind)
 			break
 		}
-		oldestCompletedFirst(candidates)
-		victim := candidates[0]
-		if err := s.removeTorrent(ctx, victim.engineID); err != nil {
-			s.failOrWait(&job, err, retentionKind)
+		if !removed {
+			s.jobLog(job, "warn", retentionKind, "Storage remains over the limit; every candidate is protected", map[string]any{"reason": reason, "storedBytes": plan.storedBytes, "freeBytes": plan.freeBytes})
 			break
 		}
 		evicted++
 		freedBytes += victim.status.TotalBytes
-		s.publish("downloads.evicted", s.evictionEvent(ctx, victim, reason))
 		job.UpdatedAt = time.Now().UTC()
 		_ = s.repo.SaveJob(ctx, job)
 		s.publish("job.updated", job)

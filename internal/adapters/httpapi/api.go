@@ -495,6 +495,13 @@ func (a *API) prepare(w http.ResponseWriter, r *http.Request) {
 	}
 	d, err := a.service.Prepare(r.Context(), r.PathValue("id"), body.FileIndex)
 	if err != nil {
+		var fit *domain.AllocationError
+		if errors.As(err, &fit) {
+			// The starvation path of ADR-0004: a conflict, not a gateway
+			// failure — the detail names the Allocation and the space required.
+			problem(w, http.StatusConflict, err)
+			return
+		}
 		problem(w, 502, err)
 		return
 	}
@@ -515,6 +522,11 @@ func (a *API) prepareSeason(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := a.service.PrepareSeason(r.Context(), r.PathValue("id"), body.Season)
 	if err != nil {
+		var fit *domain.AllocationError
+		if errors.As(err, &fit) {
+			problem(w, http.StatusConflict, err)
+			return
+		}
 		problem(w, http.StatusBadGateway, err)
 		return
 	}

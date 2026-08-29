@@ -809,6 +809,65 @@ func (s *Service) TestFileList(ctx context.Context) (int, error) {
 }
 func (s *Service) TestQB(ctx context.Context) (string, error) { return s.engine.Test(ctx) }
 
+// ensureAllocationRoom is the starvation path of ADR-0004: before a new
+// torrent is added, the Allocation must be able to hold it. Stored bytes come
+// from the same survey the retention job runs, and the fit check is
+// retentionDeficit itself — the incoming torrent is added to the surveyed
+// total, so the cap math exists in exactly one place. When the Allocation
+// would overflow, unprotected torrents are evicted one at a time (same hook
+// the retention job uses) and the survey re-run; only when nothing evictable
+// remains does the download fail with a visible Allocation problem. A zero
+// Allocation disables the whole check.
+func (s *Service) ensureAllocationRoom(ctx context.Context, release domain.TorrentRelease) error {
+	settings := s.settings.Get()
+	if settings.AllocationGB <= 0 {
+		return nil
+	}
+	incoming := s.incomingTorrentBytes(ctx, release)
+	plan, err := s.retentionSurvey(ctx)
+	if err != nil {
+		return err
+	}
+	plan.storedBytes += incoming
+	reason, _, tripped := retentionDeficit(plan, settings)
+	for tripped && reason == "cap" {
+		_, evicted, evictErr := s.evictOldest(ctx, plan, reason)
+		if evictErr != nil {
+			return evictErr
+		}
+		if !evicted {
+			return &domain.AllocationError{
+				Release:       release.Name,
+				RequiredBytes: incoming,
+				FreeBytes:     gigabytesToBytes(settings.AllocationGB) - (plan.storedBytes - incoming),
+				CapacityBytes: gigabytesToBytes(settings.AllocationGB),
+			}
+		}
+		if plan, err = s.retentionSurvey(ctx); err != nil {
+			return err
+		}
+		plan.storedBytes += incoming
+		reason, _, tripped = retentionDeficit(plan, settings)
+	}
+	return nil
+}
+
+// incomingTorrentBytes reports how much storage the Release's torrent will
+// claim: the parsed torrent manifest when it is (or can be) cached, falling
+// back to the tracker-reported Release size.
+func (s *Service) incomingTorrentBytes(ctx context.Context, release domain.TorrentRelease) int64 {
+	if manifest, err := s.torrentManifest(ctx, release); err == nil {
+		var total int64
+		for _, file := range manifest.Files {
+			total += file.SizeBytes
+		}
+		if total > 0 {
+			return total
+		}
+	}
+	return release.SizeBytes
+}
+
 func (s *Service) Prepare(ctx context.Context, releaseID string, fileIndex int) (domain.Download, error) {
 	key := releaseID + ":" + fmt.Sprint(fileIndex)
 	lockAny, _ := s.locks.LoadOrStore(key, &sync.Mutex{})
@@ -829,6 +888,9 @@ func (s *Service) Prepare(ctx context.Context, releaseID string, fileIndex int) 
 		return existing, nil
 	} else if !errors.Is(reuseErr, sql.ErrNoRows) {
 		return domain.Download{}, reuseErr
+	}
+	if err := s.ensureAllocationRoom(ctx, release); err != nil {
+		return domain.Download{}, err
 	}
 	torrent, err := s.catalog.OpenTorrent(ctx, release.ID)
 	if err != nil {
@@ -1051,6 +1113,9 @@ func (s *Service) PrepareSeason(ctx context.Context, releaseID string, season in
 	}
 	settings := s.settings.Get()
 	if hash == "" {
+		if fitErr := s.ensureAllocationRoom(ctx, release); fitErr != nil {
+			return nil, fitErr
+		}
 		torrent, openErr := s.catalog.OpenTorrent(ctx, release.ID)
 		if openErr != nil {
 			return nil, openErr
