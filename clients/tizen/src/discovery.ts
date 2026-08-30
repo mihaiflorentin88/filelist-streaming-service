@@ -1,3 +1,5 @@
+import { Capabilities, detectCapabilities } from './capability';
+
 export interface ServerInfo {
   name: string;
   instanceName?: string;
@@ -53,23 +55,46 @@ export function discoveryHosts(address: string, subnetMask: string): string[] {
   return hosts;
 }
 
-async function probe(url: string, timeoutMs: number): Promise<DiscoveredServer | null> {
-  const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+type ProbeTimer = ReturnType<typeof setTimeout>;
+
+async function probeWithoutAbortController(url: string, timeoutMs: number): Promise<DiscoveredServer | null> {
+  let timer: ProbeTimer | undefined;
   try {
-    const response = await fetch(`${url}/api/v1/system/info`, {signal: controller.signal, cache: 'no-store'});
-    if (!response.ok) return null;
+    const response = await Promise.race([
+      fetch(`${url}/api/v1/system/info`, { cache: 'no-store' }),
+      new Promise<null>(resolve => {
+        timer = setTimeout(() => resolve(null), timeoutMs);
+      }),
+    ]);
+    if (!response || !response.ok) return null;
     const info = await response.json() as ServerInfo;
     if (info.name !== 'FileList Streaming' || !info.version) return null;
-    return {url, info};
+    return { url, info };
   } catch {
     return null;
   } finally {
-    window.clearTimeout(timer);
+    clearTimeout(timer);
   }
 }
 
-export async function discoverServers(address: string, subnetMask: string, requestedPorts: number[] = [8097], onProgress?: (completed: number, total: number) => void): Promise<DiscoveredServer[]> {
+async function probe(url: string, timeoutMs: number, capabilities: Capabilities): Promise<DiscoveredServer | null> {
+  if (!capabilities.supportsAbortController) return probeWithoutAbortController(url, timeoutMs);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`${url}/api/v1/system/info`, { signal: controller.signal, cache: 'no-store' });
+    if (!response.ok) return null;
+    const info = await response.json() as ServerInfo;
+    if (info.name !== 'FileList Streaming' || !info.version) return null;
+    return { url, info };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function discoverServers(address: string, subnetMask: string, requestedPorts: number[] = [8097], onProgress?: (completed: number, total: number) => void, capabilities: Capabilities = detectCapabilities()): Promise<DiscoveredServer[]> {
   const hosts = discoveryHosts(address, subnetMask);
   const ports = Array.from(new Set(requestedPorts.filter(port => Number.isInteger(port) && port > 0 && port <= 65535)));
   const targets = hosts.flatMap(host => ports.map(port => `http://${host}:${port}`));
@@ -79,12 +104,11 @@ export async function discoverServers(address: string, subnetMask: string, reque
   const worker = async () => {
     while (cursor < targets.length) {
       const target = targets[cursor++];
-      const result = await probe(target, 900);
+      const result = await probe(target, 900, capabilities);
       completed++;
-      onProgress?.(completed, targets.length);
       if (result && !results.some(item => item.url === result.url)) results.push(result);
     }
   };
-  await Promise.all(Array.from({length: Math.min(32, targets.length)}, worker));
+  await Promise.all(Array.from({ length: Math.min(32, targets.length) }, worker));
   return results.sort((a, b) => (a.info.instanceName || a.info.name).localeCompare(b.info.instanceName || b.info.name) || a.url.localeCompare(b.url));
 }
