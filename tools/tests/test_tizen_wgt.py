@@ -126,6 +126,23 @@ class WGTTests(unittest.TestCase):
                 report = tizen_wgt.validate_archive(output, target)
                 self.assertIn(f"requires Tizen 5.0, target=Tizen {target}", report)
 
+    def test_rejects_gap_properties_in_inline_style_blocks(self):
+        html = VALID_HTML + b'<style>.row{display:flex;gap:8px}</style>'
+        output = self.make_archive(VALID_CONFIG, html)
+        for target in ("5.0", "7.0"):
+            with self.subTest(target=target):
+                with self.assertRaisesRegex(
+                    tizen_wgt.WGTError,
+                    r"'index\.html' uses flex/grid gap property 'gap'",
+                ):
+                    tizen_wgt.validate_archive(output, target)
+
+    def test_allows_gap_free_inline_style_blocks(self):
+        html = VALID_HTML + b'<style>#startup{box-shadow:inset 0 0 0 1px #000}.gapless{color:red}</style>'
+        output = self.make_archive(VALID_CONFIG, html)
+        report = tizen_wgt.validate_archive(output, "5.0")
+        self.assertIn("requires Tizen 5.0, target=Tizen 5.0", report)
+
     def test_rejects_generic_tv_profile(self):
         config = VALID_CONFIG.replace(b'name="tv-samsung"', b'name="tv"')
         output = self.make_archive(config, VALID_HTML)

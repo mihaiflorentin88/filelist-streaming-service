@@ -20,6 +20,7 @@ PACKAGE_ID = re.compile(r"^[A-Za-z0-9]{10}$")
 MODULE_SCRIPT = re.compile(rb"<script\b[^>]*\btype\s*=\s*[\"']module[\"']", re.I)
 MODULE_PRELOAD = re.compile(rb"<link\b[^>]*\brel\s*=\s*[\"']modulepreload[\"']", re.I)
 CSS_GAP_PROPERTY = re.compile(rb"(?:\A\s*|[{;]\s*)(column-gap|grid-gap|row-gap|gap)\s*:", re.I)
+STYLE_BLOCK = re.compile(rb"<style\b[^>]*>(.*?)</style>", re.I | re.S)
 
 
 class WGTError(ValueError):
@@ -209,14 +210,22 @@ def validate_avplay_lifecycle(html: bytes, files: dict[str, bytes]) -> None:
 
 def validate_css_layout_gaps(files: dict[str, bytes]) -> None:
     for name in sorted(files):
-        if not name.lower().endswith(".css"):
+        data = files[name]
+        lower = name.lower()
+        if lower.endswith(".css"):
+            chunks: tuple[bytes, ...] = (data,)
+        elif lower.endswith((".html", ".htm")):
+            # Inline <style> blocks ship real CSS rules (e.g. the startup screen) and are bound by the same ADR-0006 rule.
+            chunks = tuple(STYLE_BLOCK.findall(data))
+        else:
             continue
-        match = CSS_GAP_PROPERTY.search(files[name])
-        if match:
-            raise WGTError(
-                f"{name!r} uses flex/grid gap property {match.group(1).decode()!r}; "
-                "ADR-0006 requires margin-based spacing"
-            )
+        for chunk in chunks:
+            match = CSS_GAP_PROPERTY.search(chunk)
+            if match:
+                raise WGTError(
+                    f"{name!r} uses flex/grid gap property {match.group(1).decode()!r}; "
+                    "ADR-0006 requires margin-based spacing"
+                )
 
 
 def validate_tv_icon(name: str, data: bytes) -> None:
