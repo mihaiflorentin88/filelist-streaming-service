@@ -51,6 +51,8 @@ jobs:
         run: npm run build
       - name: Package and validate unsigned Apps2Samsung WGT
         run: make tizen-wgt validate-tizen-wgt
+      - name: Validate the same WGT against the Tizen 5.0 support floor
+        run: make validate-tizen-wgt TIZEN_TARGET=5.0
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: tizen-wgt-ci
