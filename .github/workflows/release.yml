@@ -3,7 +3,7 @@ name: Release build
 on:
   push:
     branches: [master]
-    tags: ["v*"]
+    tags: ['v*']
   workflow_dispatch:
 
 permissions:
@@ -71,18 +71,18 @@ jobs:
           - target: linux-amd64
             goos: linux
             goarch: amd64
-            suffix: ""
+            suffix: ''
             format: tar
           - target: linux-arm64
             goos: linux
             goarch: arm64
-            suffix: ""
+            suffix: ''
             format: tar
           - target: linux-armv7
             goos: linux
             goarch: arm
-            goarm: "7"
-            suffix: ""
+            goarm: '7'
+            suffix: ''
             format: tar
           - target: windows-amd64
             goos: windows
@@ -92,12 +92,12 @@ jobs:
           - target: darwin-amd64
             goos: darwin
             goarch: amd64
-            suffix: ""
+            suffix: ''
             format: tar
           - target: darwin-arm64
             goos: darwin
             goarch: arm64
-            suffix: ""
+            suffix: ''
             format: tar
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -116,7 +116,7 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           GOARM: ${{ matrix.goarm }}
-          CGO_ENABLED: "0"
+          CGO_ENABLED: '0'
           BINARY_SUFFIX: ${{ matrix.suffix }}
         run: |
           version="$(tr -d '[:space:]' < VERSION)"
