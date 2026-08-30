@@ -109,7 +109,7 @@ export function Settings({ value, fields, onSaved, onError, onDirtyChange }: { v
     return () => window.removeEventListener('hashchange', followHash);
   }, []);
   const descriptor = (key: string, label: string) => fields.find(field => field.key === key) || { key, label, help: `Controls ${label.toLowerCase()}.`, obtain: '', tvVisible: false, sensitive: false, restartRequired: false, readOnly: false };
-  async function save(e: Event) { console.log('SAVE fired, tab:', tab);
+  async function save(e: Event) {
     e.preventDefault();
     // One PUT carries the whole settings object, but only the active tab's
     // edits ride on top of the last-saved values — edits made on other tabs
@@ -121,7 +121,7 @@ export function Settings({ value, fields, onSaved, onError, onDirtyChange }: { v
     if (typeof out.trustedCidrs === 'string') out.trustedCidrs = out.trustedCidrs.split(',').map((x: string) => x.trim()).filter(Boolean);
     if (typeof out.evictionRules === 'string') out.evictionRules = (out.evictionRules as string).split(',').map((x: string) => x.trim().toLowerCase()).filter(Boolean);
     try {
-      console.log('SAVE putting'); await api.call('/settings', { method: 'PUT', body: JSON.stringify(out) });
+      await api.call('/settings', { method: 'PUT', body: JSON.stringify(out) });
       setMessage('Settings saved. Environment-managed values remain controlled by .env.docker.');
       onSaved(merged);
     } catch (e) { onError((e as Error).message) }
@@ -146,13 +146,25 @@ export function Settings({ value, fields, onSaved, onError, onDirtyChange }: { v
   }
   const renderField = ([label, key, type, step]: SettingsRow) => {
     const info = descriptor(key, label);
-    return <label><span>{label}{info.restartRequired && <small> restart required</small>}{info.readOnly && <small> environment managed</small>}<button type="button" class="help-button" aria-label={`Help for ${label}`} title={info.help} onClick={() => setHelp(info)}>?</button></span>{type === 'checkbox' ? <input disabled={info.readOnly} type="checkbox" checked={Boolean(current[key])} onInput={e => setCurrent({ ...current, [key]: e.currentTarget.checked })} /> : <input disabled={info.readOnly} type={type || 'text'} step={type === 'number' ? (step || undefined) : undefined} value={Array.isArray(current[key]) ? (current[key] as string[]).join(', ') : String(current[key] ?? '')} placeholder={type === 'password' && value[`${key}Configured`] ? 'Configured — leave blank to keep' : key === 'evictionRules' ? 'oldest-completed' : ''} onInput={e => setCurrent({ ...current, [key]: type === 'number' ? Number(e.currentTarget.value) : e.currentTarget.value })} />}</label>;
+    if (type === 'checkbox') {
+      // Protection flags render as switches: a real checkbox stays in the
+      // DOM (visually hidden, still focusable) for keyboard and assistive
+      // tech, with the track and knob as decoration.
+      return <label class="switch-field"><input disabled={info.readOnly} type="checkbox" checked={Boolean(current[key])} onInput={e => setCurrent({ ...current, [key]: e.currentTarget.checked })} /><span class="switch-track" aria-hidden="true"><span class="switch-knob" /></span><span class="switch-copy">{label}{info.help && <button type="button" class="help-button" aria-label={`Help for ${label}`} title={info.help} onClick={() => setHelp(info)}>?</button>}</span></label>;
+    }
+    return <label><span>{label}{info.restartRequired && <small> restart required</small>}{info.readOnly && <small> environment managed</small>}<button type="button" class="help-button" aria-label={`Help for ${label}`} title={info.help} onClick={() => setHelp(info)}>?</button></span><input disabled={info.readOnly} type={type || 'text'} step={type === 'number' ? (step || undefined) : undefined} value={Array.isArray(current[key]) ? (current[key] as string[]).join(', ') : String(current[key] ?? '')} placeholder={type === 'password' && value[`${key}Configured`] ? 'Configured — leave blank to keep' : key === 'evictionRules' ? 'oldest-completed' : ''} onInput={e => setCurrent({ ...current, [key]: type === 'number' ? Number(e.currentTarget.value) : e.currentTarget.value })} /></label>;
   };
   const diagnostics = (connections: typeof CONNECTIONS) => <section class="diagnostics"><h2>Connection checks</h2>{connections.map(connection => <div><button type="button" onClick={() => void test(connection.name)}>Test {connection.label}</button><span role="status">{tests[connection.name]}</span></div>)}</section>;
   const panelContent = () => {
     if (tab === 'maintenance') return <><CacheCoverage /><Events onError={onError} confirmRebuild /></>;
     if (tab === 'test') return diagnostics(CONNECTIONS);
-    return <>{TAB_GROUPS[tab].map(group => <fieldset><legend>{group.title}</legend><div class="fields">{group.fields.map(renderField)}</div></fieldset>)}{connectionsFor(tab).length > 0 && diagnostics(connectionsFor(tab))}</>;
+    return <>{TAB_GROUPS[tab].map(renderGroup)}{connectionsFor(tab).length > 0 && diagnostics(connectionsFor(tab))}</>;
+  };
+  const renderGroup = (group: { title: string; fields: SettingsRow[] }) => {
+    // Switches read best as their own full-width list under the value fields.
+    const inputs = group.fields.filter(field => field[2] !== 'checkbox');
+    const switches = group.fields.filter(field => field[2] === 'checkbox');
+    return <fieldset><legend>{group.title}</legend>{inputs.length > 0 && <div class="fields">{inputs.map(renderField)}</div>}{switches.length > 0 && <div class="switch-list">{switches.map(renderField)}</div>}</fieldset>;
   };
   return <>
     <form class="settings" onSubmit={save}>

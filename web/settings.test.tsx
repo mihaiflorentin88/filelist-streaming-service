@@ -330,6 +330,22 @@ describe('settings tabs', () => {
   expect(putCalls).toHaveLength(0);
  });
 
+
+ it('toggles protection switches into the dirty state and discard reverts them', async () => {
+  await openSettings();
+  await act(async () => { settingsTabs().find(button => button.textContent === 'Storage')!.click() });
+  await settle();
+  const protect = document.querySelector<HTMLInputElement>('.switch-field input')!;
+  expect(protect.checked).toBe(true);
+  await act(async () => { protect.click() });
+  await settle();
+  expect(protect.checked).toBe(false);
+  expect(settingsTabs().find(button => button.textContent === 'Storage')!.className).toContain('dirty');
+  await act(async () => { Array.from(document.querySelectorAll<HTMLButtonElement>('.settings-actions button')).find(button => button.textContent === 'Discard changes')!.click() });
+  await settle();
+  expect(document.querySelector<HTMLInputElement>('.switch-field input')!.checked).toBe(true);
+  expect(putCalls).toHaveLength(0);
+ });
  it('marks dirty tabs, counts unsaved changes, and disables actions when clean', async () => {
   await openSettings();
   expect(document.querySelector('.settings-actions button[type="submit"]')!.hasAttribute('disabled')).toBe(true);
