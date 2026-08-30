@@ -1,6 +1,6 @@
 # Development guide
 
-Latest 0.2.7 checkpoint: complete-season cards are safe disclosures in both clients, with explicit download/lifecycle actions and deterministic TV focus rows. Tizen can discover validated servers on the local subnet and persists either a successful discovered or manual address. The reproducible Docker stack builds the server and browser client from source, preserves and backs up qBittorrent configuration, configures progressive storage without speed limits, verifies cross-container authentication/shared storage, and prints browser URLs. The unsigned `FileListTV-0.2.7.wgt` SHA-256 is `41166a397d76530222013a1c0fd5c51db6d3a7462ffb992a88ba38bfa76081a3`; physical-TV validation remains pending and is tracked in [TIZEN.md](TIZEN.md).
+0.2.7 checkpoint: complete-season cards are safe disclosures in both clients, with explicit download/lifecycle actions and deterministic TV focus rows. Tizen can discover validated servers on the local subnet and persists either a successful discovered or manual address. The reproducible Docker stack builds the server and browser client from source, preserves and backs up qBittorrent configuration, configures progressive storage without speed limits, verifies cross-container authentication/shared storage, and prints browser URLs. The unsigned `FileListTV-0.2.7.wgt` SHA-256 is `41166a397d76530222013a1c0fd5c51db6d3a7462ffb992a88ba38bfa76081a3`; physical-TV validation remains pending and is tracked in [TIZEN.md](TIZEN.md).
 
 ## Local checks
 

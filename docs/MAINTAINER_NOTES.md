@@ -40,8 +40,8 @@ This file records constraints and invariants that must survive context resets an
 
 ## Next verification/implementation checkpoints
 
-1. Install the new `0.2.7` WGT and confirm persisted LAN discovery, safe complete-season disclosure/actions, progressive playback below 100%, unified deletion, data parity, and contained/embedded server WebVTT subtitles on the physical TV.
-2. Verify the complete 0.2.7 D-pad graph on the TV: discovery/manual setup, pack header → inner actions → episode rows, Downloads controls, player timeline/audio/subtitle menus, and focus restoration after dialogs and playback.
+1. Install the new `0.3.0` WGT and confirm persisted LAN discovery, safe complete-season disclosure/actions, progressive playback below 100%, unified deletion, data parity, and contained/embedded server WebVTT subtitles on the physical TV.
+2. Verify the complete 0.3.0 D-pad graph on the TV: discovery/manual setup, pack header → inner actions → episode rows, Downloads controls, player timeline/audio/subtitle menus, and focus restoration after dialogs and playback.
 3. On the TV Jobs detail page, D-pad to several log entries, press OK repeatedly to expand/collapse them, inspect long context, load older logs, and return without losing focus.
 4. Continue the remaining items in `KNOWN_ISSUES.md` and the implementation plan, preserving confirmed UX and data invariants above.
 

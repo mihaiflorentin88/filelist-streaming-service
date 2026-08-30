@@ -75,7 +75,7 @@ To use an existing external qBittorrent instead, keep the sidecar untouched and 
 
 | Variable | Meaning | Default | Format |
 | --- | --- | --- | --- |
-| `FILELIST_STREAMING_VERSION` | Version stamped into the built server image; normally the checked-out release | `0.2.7` | non-empty string |
+| `FILELIST_STREAMING_VERSION` | Version stamped into the built server image; normally the checked-out release | `0.3.0` | non-empty string |
 | `PUID` | UID the containers run as; use your own so the containers own the mounted paths (`id -u`) | `1000` | positive integer |
 | `PGID` | GID the containers run as (`id -g`) | `1000` | positive integer |
 | `PAGID` | Additional supplemental group IDs for the containers | empty | empty or comma-separated positive integers |
