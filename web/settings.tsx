@@ -109,7 +109,7 @@ export function Settings({ value, fields, onSaved, onError, onDirtyChange }: { v
     return () => window.removeEventListener('hashchange', followHash);
   }, []);
   const descriptor = (key: string, label: string) => fields.find(field => field.key === key) || { key, label, help: `Controls ${label.toLowerCase()}.`, obtain: '', tvVisible: false, sensitive: false, restartRequired: false, readOnly: false };
-  async function save(e: Event) {
+  async function save(e: Event) { console.log('SAVE fired, tab:', tab);
     e.preventDefault();
     // One PUT carries the whole settings object, but only the active tab's
     // edits ride on top of the last-saved values — edits made on other tabs
@@ -121,7 +121,7 @@ export function Settings({ value, fields, onSaved, onError, onDirtyChange }: { v
     if (typeof out.trustedCidrs === 'string') out.trustedCidrs = out.trustedCidrs.split(',').map((x: string) => x.trim()).filter(Boolean);
     if (typeof out.evictionRules === 'string') out.evictionRules = (out.evictionRules as string).split(',').map((x: string) => x.trim().toLowerCase()).filter(Boolean);
     try {
-      await api.call('/settings', { method: 'PUT', body: JSON.stringify(out) });
+      console.log('SAVE putting'); await api.call('/settings', { method: 'PUT', body: JSON.stringify(out) });
       setMessage('Settings saved. Environment-managed values remain controlled by .env.docker.');
       onSaved(merged);
     } catch (e) { onError((e as Error).message) }

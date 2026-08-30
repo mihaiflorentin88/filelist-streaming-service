@@ -282,6 +282,7 @@ describe('settings tabs', () => {
 
  it('never guards when everything is clean', async () => {
   await openSettings();
+
   await act(async () => { sidebarButton('Jobs').click() });
   await settle();
   expect(document.querySelector('.overlay[aria-label="Unsaved changes"]')).toBeNull();
@@ -349,5 +350,41 @@ describe('settings tabs', () => {
   await settle();
   expect(settingsTabs()[0].className).not.toContain('dirty');
   expect(putCalls[0].body.tmdbApiKey).toBe('tmdb-edited');
+ });
+ it('preserves the settings payload contract and field states', async () => {
+  await openSettings();
+  expect(fieldInput('FileList passkey').placeholder).toBe('Configured — leave blank to keep');
+  await act(async () => { settingsTabs().find(button => button.textContent === 'Storage')!.click() });
+  await settle();
+  await act(async () => { setFieldInput('Eviction rules (comma separated)', 'OLDEST-COMPLETED, oldest-unwatched') });
+  await act(async () => { document.querySelector<HTMLButtonElement>('.settings-actions button[type="submit"]')!.click() });
+  await settle();
+  expect(putCalls).toHaveLength(1);
+  expect(putCalls[0].body.evictionRules).toEqual(['oldest-completed', 'oldest-unwatched']);
+  await act(async () => { settingsTabs().find(button => button.textContent === 'Server')!.click() });
+  await settle();
+  expect(fieldInput('Listen address').disabled).toBe(true);
+  await act(async () => { setFieldInput('Trusted CIDRs (comma separated)', '10.0.0.0/8, 192.168.1.0/24') });
+  await act(async () => { document.querySelector('form.settings')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })) });
+  await settle();
+  expect(putCalls).toHaveLength(2);
+  const body = putCalls[1].body;
+  expect(body.settingsPath).toBeUndefined();
+  expect(Object.keys(body).some(key => key.endsWith('Configured'))).toBe(false);
+  expect(body.trustedCidrs).toEqual(['10.0.0.0/8', '192.168.1.0/24']);
+  expect(body.evictionRules).toEqual(['oldest-completed', 'oldest-unwatched']);
+  expect(body.fileListPasskey).toBe('');
+ });
+
+ it('shows the testing LED state while a connection check is in flight', async () => {
+  await openSettings();
+  const { promise, resolve } = Promise.withResolvers<{ message: string }>();
+  vi.spyOn(API.prototype, 'call').mockImplementationOnce(() => promise);
+  await act(async () => { Array.from(panel().querySelectorAll<HTMLButtonElement>('.diagnostics button')).find(button => button.textContent === 'Test FileList')!.click() });
+  await settle();
+  expect(settingsTabs()[0].querySelector('.led')!.className).toContain('testing');
+  await act(async () => { resolve({ message: 'filelist ok' }) });
+  await settle();
+  expect(settingsTabs()[0].querySelector('.led')!.className).toContain('pass');
  });
 });
