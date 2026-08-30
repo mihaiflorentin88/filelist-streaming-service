@@ -158,7 +158,7 @@ export function Settings({ value, fields, onSaved, onError, onDirtyChange }: { v
     <form class="settings" onSubmit={save}>
       <p class="supporting">Stored securely at {String(value.settingsPath || 'data/settings.json')}. Blank secrets keep their current value. Fields supplied by the process environment are shown read-only.</p>
       <div class="settings-tabs" role="tablist" aria-label="Settings sections">
-        {TABS.map(t => <button type="button" role="tab" class={[t.ops ? 'ops' : '', t.id === 'maintenance' ? 'ops-start' : '', tabEdits(t.id).length > 0 ? 'dirty' : ''].filter(Boolean).join(' ')} aria-selected={tab === t.id} onClick={() => requestTab(t.id)}>{connectionsFor(t.id).length > 0 && <span class={`led ${tabLed(t.id)}`} aria-hidden="true" />}{t.label}</button>)}
+        {TABS.map(t => <button type="button" role="tab" class={[t.id === 'maintenance' ? 'ops-start' : '', tabEdits(t.id).length > 0 ? 'dirty' : ''].filter(Boolean).join(' ')} aria-selected={tab === t.id} onClick={() => requestTab(t.id)}>{connectionsFor(t.id).length > 0 && <span class={`led ${tabLed(t.id)}`} aria-hidden="true" />}{t.label}</button>)}
       </div>
       <div class="settings-panel" role="tabpanel">{panelContent()}</div>
       {isConfigTab(tab) && <div class="settings-actions"><span class="dirty-count" role="status">{tabEdits(tab).length > 0 ? `${tabEdits(tab).length} unsaved ${tabEdits(tab).length === 1 ? 'change' : 'changes'}` : ''}</span><button type="button" disabled={tabEdits(tab).length === 0} onClick={discard}>Discard changes</button><button class="primary" type="submit" disabled={tabEdits(tab).length === 0}>Save changes</button>{message && <span role="status">{message}</span>}</div>}

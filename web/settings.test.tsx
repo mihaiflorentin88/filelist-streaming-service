@@ -93,7 +93,7 @@ function setFieldInput(label: string, value: string) {
 }
 
 function switchAnyway() {
- Array.from(document.querySelectorAll('.overlay[aria-label="Unsaved changes"] button')).find(button => button.textContent === 'Switch anyway')!.click();
+ Array.from(document.querySelectorAll<HTMLButtonElement>('.overlay[aria-label="Unsaved changes"] button')).find(button => button.textContent === 'Switch anyway')!.click();
 }
 
 beforeEach(() => {
@@ -188,7 +188,7 @@ describe('settings tabs', () => {
 
  it('places connection tests beside their fields and aggregates them on the Test tab', async () => {
   await openSettings();
-  const checkLabels = () => Array.from(panel().querySelectorAll('.diagnostics button')).map(button => button.textContent);
+  const checkLabels = () => Array.from(panel().querySelectorAll<HTMLButtonElement>('.diagnostics button')).map(button => button.textContent);
   expect(checkLabels()).toEqual(['Test FileList', 'Test TMDB']);
   await act(async () => { settingsTabs()[1].click() });
   await settle();
@@ -201,7 +201,7 @@ describe('settings tabs', () => {
   expect(checkLabels()).toEqual(['Test FileList', 'Test TMDB', 'Test qBittorrent', 'Test Storage', 'Test SubDL']);
   await act(async () => { settingsTabs()[4].click() });
   await settle();
-  expect(panel().querySelectorAll('.diagnostics button')).toHaveLength(0);
+  expect(panel().querySelectorAll<HTMLButtonElement>('.diagnostics button')).toHaveLength(0);
  });
 
  it('reflects session test results in the tab LED and inline text', async () => {
@@ -209,7 +209,7 @@ describe('settings tabs', () => {
   const trackerTab = settingsTabs()[0];
   const led = () => trackerTab.querySelector('.led')!;
   expect(led().className).not.toContain('pass');
-  await act(async () => { Array.from(panel().querySelectorAll('.diagnostics button')).find(button => button.textContent === 'Test FileList')!.click() });
+  await act(async () => { Array.from(panel().querySelectorAll<HTMLButtonElement>('.diagnostics button')).find(button => button.textContent === 'Test FileList')!.click() });
   await settle();
   expect(led().className).toContain('pass');
   expect(panel().textContent).toContain('/dependencies/filelist/test ok');
@@ -217,7 +217,7 @@ describe('settings tabs', () => {
    if (path === '/dependencies/tmdb/test') throw new Error('TMDB unreachable');
    return fakeCall(path, init);
   });
-  await act(async () => { Array.from(panel().querySelectorAll('.diagnostics button')).find(button => button.textContent === 'Test TMDB')!.click() });
+  await act(async () => { Array.from(panel().querySelectorAll<HTMLButtonElement>('.diagnostics button')).find(button => button.textContent === 'Test TMDB')!.click() });
   await settle();
   expect(led().className).toContain('fail');
   expect(panel().textContent).toContain('TMDB unreachable');
@@ -274,7 +274,7 @@ describe('settings tabs', () => {
   expect(document.querySelector('.topbar h1')!.textContent).toBe('Settings');
   await act(async () => { sidebarButton('Jobs').click() });
   await settle();
-  await act(async () => { Array.from(document.querySelectorAll('.overlay[aria-label="Unsaved changes"] button')).find(button => button.textContent === 'Discard and leave')!.click() });
+  await act(async () => { Array.from(document.querySelectorAll<HTMLButtonElement>('.overlay[aria-label="Unsaved changes"] button')).find(button => button.textContent === 'Discard and leave')!.click() });
   await settle();
   expect(document.querySelector('.topbar h1')!.textContent).toBe('Jobs');
   expect(document.querySelector('.overlay[aria-label="Unsaved changes"]')).toBeNull();
@@ -323,7 +323,7 @@ describe('settings tabs', () => {
   await openSettings();
   await act(async () => { setFieldInput('FileList URL', 'https://discarded.example') });
   await settle();
-  await act(async () => { Array.from(document.querySelectorAll('.settings-actions button')).find(button => button.textContent === 'Discard changes')!.click() });
+  await act(async () => { Array.from(document.querySelectorAll<HTMLButtonElement>('.settings-actions button')).find(button => button.textContent === 'Discard changes')!.click() });
   await settle();
   expect(fieldInput('FileList URL').value).toBe('https://filelist.io');
   expect(putCalls).toHaveLength(0);
