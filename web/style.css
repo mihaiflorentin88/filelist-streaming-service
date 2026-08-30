@@ -855,6 +855,12 @@ progress {
  box-shadow: 0 14px 30px #0009
 }
 
+.settings-status {
+ margin: 8px 0 0;
+ color: var(--muted);
+ font-size: 14px
+}
+
 .settings-tabs button.dirty::before {
  content: '';
  display: inline-block;

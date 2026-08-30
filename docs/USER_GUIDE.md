@@ -40,7 +40,7 @@ In the pending-TV-test 0.2.7 build, the player toolbar ends with a **Hide** butt
 - **Playback fails after download:** Tizen is direct play. The server transcodes browser-hostile audio to AAC stereo, but the video codec must still be supported by the browser; choose another video codec when necessary.
 - **No artwork:** configure TMDB; parsed names and generated placeholders remain usable without it.
 - **No results:** enter at least three characters and select **Search**. That explicit action queries FileList and stores every returned release. Zero-seeder releases remain cached but are hidden from discovery.
-- **Subtitle provider error:** open Settings → Playback, verify `https://api.subdl.com`, save a SubDL API key, then run **Test subdl** on the **Test** tab. The error includes the provider response without exposing the key. Archive payloads are rejected because this integration intentionally accepts only direct subtitle files.
+- **Subtitle provider error:** open Settings → Playback, verify `https://api.subdl.com`, save a SubDL API key, then run **Test SubDL** on the **Test** tab. The error includes the provider response without exposing the key. Archive payloads are rejected because this integration intentionally accepts only direct subtitle files.
 - **Failed background work:** open Jobs, search by title or job ID, and inspect Details for provider, phase, attempt, wait, and error context. Retry is available for any terminal job. Rate-limited jobs resume when the provider reset is due; other transient failures are retried hourly.
 - **TV cannot connect:** verify the TV and Pi are on the same LAN and the TV server address includes `http://` and the port.
 ## Canonical series and download markers

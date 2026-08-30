@@ -14,7 +14,7 @@ const settingsValue: Record<string, unknown> = {
  fileListUrl: 'https://filelist.io', fileListUsername: 'user', fileListPasskey: '', fileListPasskeyConfigured: true,
  tmdbApiKey: '', tmdbApiKeyConfigured: true, metadataLanguage: 'en', metadataFallbackLanguage: 'en',
  qbittorrentUrl: 'http://localhost:8080', qbittorrentUsername: 'admin', qbittorrentPassword: '', qbittorrentPasswordConfigured: true,
- downloadRoot: '/data', allocationGb: 100, reserveGb: 5, evictionRules: 'oldest-completed',
+ downloadRoot: '/data', allocationGb: 100, reserveGb: 5, evictionRules: ['oldest-completed'],
  protectIncomplete: true, protectLeased: false, protectFavorites: true, protectNeverWatched: false,
  artworkCachePath: 'data/artwork', artworkCacheMaxBytes: 1073741824,
  initialBufferBytes: 4194304, readAheadBytes: 8388608, pieceWaitTimeoutSeconds: 30,
@@ -23,7 +23,7 @@ const settingsValue: Record<string, unknown> = {
  watchedThresholdPercent: 90, subtitleCachePath: 'data/subtitles', subtitleCacheMaxBytes: 536870912,
  ffprobePath: 'ffprobe', ffmpegPath: 'ffmpeg',
  instanceName: 'filelist', listenAddress: ':8097', databasePath: 'data/filelist.db',
- catalogMaxAgeHours: 24, maxConcurrentJobs: 10, titleRefreshTimeoutMinutes: 30, trustedCidrs: '192.168.50.0/24',
+ catalogMaxAgeHours: 24, maxConcurrentJobs: 10, titleRefreshTimeoutMinutes: 30, trustedCidrs: ['192.168.50.0/24'],
 };
 
 const schemaFields = [
@@ -37,14 +37,18 @@ const syncJob = { id: 'job-1', kind: 'catalog_sync', state: 'queued', label: 'Fe
 
 const putCalls: Array<{ body: Record<string, unknown> }> = [];
 
+let storedSettings: Record<string, unknown> = settingsValue;
+
 async function fakeCall(path: string, init?: RequestInit): Promise<unknown> {
  const method = init?.method || 'GET';
- if (path === '/settings' && method === 'GET') return settingsValue;
+ if (path === '/settings' && method === 'GET') return storedSettings;
  if (path === '/settings/schema') return { items: schemaFields };
  if (path === '/catalog/status') return catalogStatus;
  if (path === '/settings' && method === 'PUT') {
-  putCalls.push({ body: JSON.parse(String(init?.body)) });
-  return settingsValue;
+  const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+  putCalls.push({ body });
+  storedSettings = { ...storedSettings, ...body };
+  return storedSettings;
  }
  if (path.startsWith('/dependencies/') && path.endsWith('/test')) return { message: `${path} ok` };
  throw new Error(`unexpected API call ${method} ${path}`);
@@ -93,7 +97,7 @@ function setFieldInput(label: string, value: string) {
 }
 
 function switchAnyway() {
- Array.from(document.querySelectorAll<HTMLButtonElement>('.overlay[aria-label="Unsaved changes"] button')).find(button => button.textContent === 'Switch anyway')!.click();
+ Array.from(document.querySelectorAll<HTMLButtonElement>('.overlay[aria-label="Unsaved tab changes"] button')).find(button => button.textContent === 'Switch anyway')!.click();
 }
 
 beforeEach(() => {
@@ -110,6 +114,7 @@ afterEach(() => {
  document.body.innerHTML = '';
  window.history.replaceState(null, '', '/');
  putCalls.length = 0;
+ storedSettings = settingsValue;
  vi.restoreAllMocks();
  vi.unstubAllGlobals();
 });
@@ -245,11 +250,11 @@ describe('settings tabs', () => {
   await act(async () => { settingsTabs()[1].click() });
   await settle();
   expect(location.hash).not.toBe('#storage');
-  const dialog = document.querySelector('.overlay[aria-label="Unsaved changes"]')!;
+  const dialog = document.querySelector('.overlay[aria-label="Unsaved tab changes"]')!;
   expect(dialog).not.toBeNull();
   await act(async () => { Array.from(dialog.querySelectorAll('button')).find(button => button.textContent === 'Keep editing')!.click() });
   await settle();
-  expect(document.querySelector('.overlay[aria-label="Unsaved changes"]')).toBeNull();
+  expect(document.querySelector('.overlay[aria-label="Unsaved tab changes"]')).toBeNull();
   expect(settingsTabs()[0].getAttribute('aria-selected')).toBe('true');
   expect(fieldInput('FileList URL').value).toBe('https://guarded.example');
   await act(async () => { settingsTabs()[1].click() });
@@ -259,6 +264,48 @@ describe('settings tabs', () => {
   expect(settingsTabs()[1].getAttribute('aria-selected')).toBe('true');
   expect(settingsTabs()[0].className).toContain('dirty');
   expect(putCalls).toHaveLength(0);
+ });
+
+ const changeHash = (hash: string) => { location.hash = hash; window.dispatchEvent(new HashChangeEvent('hashchange')) };
+
+ it('guards hash-driven tab switches while dirty and restores the hash on Keep editing', async () => {
+  await openSettings();
+  await act(async () => { setFieldInput('FileList URL', 'https://hash-guard.example') });
+  await act(async () => { changeHash('#storage') });
+  await settle();
+  const dialog = document.querySelector('.overlay[aria-label="Unsaved tab changes"]')!;
+  expect(dialog).not.toBeNull();
+  expect(settingsTabs()[0].getAttribute('aria-selected')).toBe('true');
+  expect(fieldInput('FileList URL').value).toBe('https://hash-guard.example');
+  await act(async () => { Array.from(dialog.querySelectorAll('button')).find(button => button.textContent === 'Keep editing')!.click() });
+  await settle();
+  expect(document.querySelector('.overlay[aria-label="Unsaved tab changes"]')).toBeNull();
+  expect(location.hash).toBe('#tracker');
+  expect(settingsTabs()[0].getAttribute('aria-selected')).toBe('true');
+  expect(settingsTabs()[0].className).toContain('dirty');
+  expect(fieldInput('FileList URL').value).toBe('https://hash-guard.example');
+ });
+
+ it('switches to the hashed tab after confirmation and lands on its hash', async () => {
+  await openSettings();
+  await act(async () => { setFieldInput('FileList URL', 'https://hash-switch.example') });
+  await act(async () => { changeHash('#storage') });
+  await settle();
+  await act(async () => { switchAnyway() });
+  await settle();
+  expect(settingsTabs()[1].getAttribute('aria-selected')).toBe('true');
+  expect(location.hash).toBe('#storage');
+  expect(settingsTabs()[0].className).toContain('dirty');
+  expect(putCalls).toHaveLength(0);
+ });
+
+ it('follows a clean hash change immediately without a dialog', async () => {
+  await openSettings();
+  await act(async () => { changeHash('#storage') });
+  await settle();
+  expect(document.querySelector('.overlay')).toBeNull();
+  expect(settingsTabs()[1].getAttribute('aria-selected')).toBe('true');
+  expect(location.hash).toBe('#storage');
  });
 
  it('guards sidebar navigation away from dirty settings', async () => {
@@ -278,6 +325,25 @@ describe('settings tabs', () => {
   await settle();
   expect(document.querySelector('.topbar h1')!.textContent).toBe('Jobs');
   expect(document.querySelector('.overlay[aria-label="Unsaved changes"]')).toBeNull();
+ });
+
+ it('guards history.back() away from dirty settings and replays the popped route on discard', async () => {
+  await openSettings();
+  await act(async () => { setFieldInput('FileList URL', 'https://pop-guard.example') });
+  await act(async () => { window.history.back() });
+  await settle();
+  expect(location.pathname).toBe('/settings');
+  expect(document.querySelector('.topbar h1')!.textContent).toBe('Settings');
+  const dialog = document.querySelector('.overlay[aria-label="Unsaved changes"]')!;
+  expect(dialog).not.toBeNull();
+  await act(async () => { Array.from(dialog.querySelectorAll('button')).find(button => button.textContent === 'Discard and leave')!.click() });
+  await settle();
+  expect(document.querySelector('.topbar h1')!.textContent).toBe('Home');
+  expect(location.pathname).toBe('/');
+  expect(document.querySelector('.overlay[aria-label="Unsaved changes"]')).toBeNull();
+  await act(async () => { sidebarButton('Settings').click() });
+  await settle();
+  expect(fieldInput('FileList URL').value).toBe('https://filelist.io');
  });
 
  it('never guards when everything is clean', async () => {
@@ -317,7 +383,11 @@ describe('settings tabs', () => {
   expect(putCalls).toHaveLength(1);
   expect(putCalls[0].body.downloadRoot).toBe('/srv/new');
   expect(putCalls[0].body.fileListUrl).toBe('https://filelist.io');
-  expect(document.querySelector('.settings-actions')!.textContent).toContain('Settings saved.');
+  expect(document.querySelector('.settings-actions')!.textContent).not.toContain('Settings saved.');
+  const status = document.querySelector('.settings-status')!;
+  expect(status.getAttribute('role')).toBe('status');
+  expect(status.textContent).toContain('Settings saved.');
+  expect(document.querySelector('.settings-actions')!.contains(status)).toBe(false);
  });
 
  it('discards the tab back to last-saved values and never sends them', async () => {
@@ -390,6 +460,42 @@ describe('settings tabs', () => {
   expect(body.trustedCidrs).toEqual(['10.0.0.0/8', '192.168.1.0/24']);
   expect(body.evictionRules).toEqual(['oldest-completed', 'oldest-unwatched']);
   expect(body.fileListPasskey).toBe('');
+ });
+
+ it('keeps list-backed tabs clean after save, leave, and return', async () => {
+  await openSettings();
+  await act(async () => { settingsTabs().find(button => button.textContent === 'Server')!.click() });
+  await settle();
+  await act(async () => { setFieldInput('Trusted CIDRs (comma separated)', '10.0.0.0/8') });
+  await settle();
+  expect(settingsTabs().find(button => button.textContent === 'Server')!.className).toContain('dirty');
+  await act(async () => { document.querySelector<HTMLButtonElement>('.settings-actions button[type="submit"]')!.click() });
+  await settle();
+  expect(putCalls[0].body.trustedCidrs).toEqual(['10.0.0.0/8']);
+  expect(settingsTabs().find(button => button.textContent === 'Server')!.className).not.toContain('dirty');
+  await act(async () => { sidebarButton('Jobs').click() });
+  await settle();
+  await act(async () => { sidebarButton('Settings').click() });
+  await settle();
+  expect(settingsTabs().every(button => !button.className.includes('dirty'))).toBe(true);
+  await act(async () => { settingsTabs()[1].click() });
+  await settle();
+  expect(document.querySelector('.overlay')).toBeNull();
+  expect(settingsTabs()[1].getAttribute('aria-selected')).toBe('true');
+ });
+
+ it('discards edits to list-backed fields back to clean canonical values', async () => {
+  await openSettings();
+  await act(async () => { settingsTabs().find(button => button.textContent === 'Server')!.click() });
+  await settle();
+  await act(async () => { setFieldInput('Trusted CIDRs (comma separated)', '10.0.0.0/8, 172.16.0.0/12') });
+  await settle();
+  expect(settingsTabs().find(button => button.textContent === 'Server')!.className).toContain('dirty');
+  await act(async () => { Array.from(document.querySelectorAll<HTMLButtonElement>('.settings-actions button')).find(button => button.textContent === 'Discard changes')!.click() });
+  await settle();
+  expect(fieldInput('Trusted CIDRs (comma separated)').value).toBe('192.168.50.0/24');
+  expect(settingsTabs().find(button => button.textContent === 'Server')!.className).not.toContain('dirty');
+  expect(putCalls).toHaveLength(0);
  });
 
  it('shows the testing LED state while a connection check is in flight', async () => {

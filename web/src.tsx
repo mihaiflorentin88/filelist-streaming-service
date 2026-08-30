@@ -509,11 +509,30 @@ export function App() {
   const navigate = (next: View) => { setDetail(null); setView(next); setJobDeepId(undefined); pushRoute({ view: next, query: next === 'search' ? query : '' }) };
   // Sidebar navigation away from a dirty Settings page asks first; Settings
   // reports dirtiness through the ref so the check stays synchronous.
-  const settingsDirty = useRef(false);
-  const [pendingLeave, setPendingLeave] = useState<View | null>(null);
+  const settingsDirty = useRef(false); const viewRef = useRef(view); viewRef.current = view;
+  const [pendingLeave, setPendingLeave] = useState<Route | null>(null);
   const guardedNavigate = (next: View) => {
-    if (view === 'settings' && next !== 'settings' && settingsDirty.current) { setPendingLeave(next); return }
+    if (view === 'settings' && next !== 'settings' && settingsDirty.current) { setPendingLeave({ view: next, query: next === 'search' ? query : '' }); return }
     navigate(next);
+  };
+  // Every history entry — popped, or replayed after a canceled pop — lands
+  // through this one applier.
+  const applyRoute = (route: Route) => {
+    if (route.view === 'watch') { if (route.id && playerRef.current?.download.id !== route.id) void startWatch(route.id, route.source, route.t); return }
+    setPlayer(null);
+    if (route.view === 'title') { if (route.id && detailRef.current?.title.id !== route.id) void loadDetail(route.id); return }
+    setDetail(null);
+    setJobDeepId(route.view === 'jobs' ? route.id : undefined);
+    setView(route.view);
+    if (route.view === 'search') { setDraftQuery(route.query || ''); setQuery(route.query || '') }
+  };
+  const confirmLeave = () => {
+    settingsDirty.current = false;
+    const target = pendingLeave;
+    setPendingLeave(null);
+    if (!target) return;
+    if (target.view === 'watch' || target.view === 'title') { applyRoute(target); return }
+    applyRoute(target); pushRoute(target);
   };
   // Closing an overlay goes back in history when the current entry is one the
   // app pushed, so Back never escapes the app; a cold-loaded overlay URL is
@@ -544,13 +563,11 @@ export function App() {
   useEffect(() => {
     const restore = () => {
       const route = parsePath(location.pathname, location.search);
-      if (route.view === 'watch') { if (route.id && playerRef.current?.download.id !== route.id) void startWatch(route.id, route.source, route.t); return }
-      setPlayer(null);
-      if (route.view === 'title') { if (route.id && detailRef.current?.title.id !== route.id) void loadDetail(route.id); return }
-      setDetail(null);
-      setJobDeepId(route.view === 'jobs' ? route.id : undefined);
-      setView(route.view);
-      if (route.view === 'search') { setDraftQuery(route.query || ''); setQuery(route.query || '') }
+      // Popping away from dirty Settings cancels the pop: the settings entry
+      // goes back on top (keeping the app's history marker) and the popped
+      // route is held for the leave confirm to replay.
+      if (viewRef.current === 'settings' && settingsDirty.current && route.view !== 'settings') { pushRoute({ view: 'settings', query: '' }); setPendingLeave(route); return }
+      applyRoute(route);
     };
     window.addEventListener('popstate', restore);
     return () => window.removeEventListener('popstate', restore);
@@ -613,7 +630,7 @@ export function App() {
     }
     {view === 'settings' && settings && <Settings value={settings} fields={settingsFields} onSaved={setSettings} onError={setError} onDirtyChange={value => { settingsDirty.current = value }} />
     }
-  </main>{detail && <Detail key={`${detail.title.id}:${detailTarget.season || 0}:${detailTarget.episode || 0}`} detail={detail} target={detailTarget} resume={resumeForTitle(household.continueWatching, detail.title.id)} favorite={household.favorites.some(item => item.titleId === detail.title.id || item.catalog?.id === detail.title.id)} onClose={closeDetail} onPlay={() => playDetail(detail)} onResume={playLegacy} onSource={s => void prepare(s)} onPackAction={manageSeasonPack} onFavorite={async value => { await api.titleFavorite(detail.title.id, value); await loadState(); }} />}{picker && <SourcePicker sources={picker} onClose={() => setPicker(null)} onChoose={s => void prepare(s)} />} {player && <BrowserPlayer key={player.download.id} active={player} onClose={closePlayer} onStateChanged={loadState} onAdvance={advanceEpisode} />}{ pendingLeave !== null && <div class="overlay" role="dialog" aria-modal="true" aria-label="Unsaved changes"><section class="help-modal"><h2>Leave with unsaved changes?</h2><p>Changes on the Settings page have not been saved yet.</p><div class="confirm-actions"><button type="button" onClick={() => setPendingLeave(null)}>Keep editing</button><button type="button" class="primary" onClick={() => { settingsDirty.current = false; const target = pendingLeave; setPendingLeave(null); navigate(target) }}>Discard and leave</button></div></section></div> }</div>;
+  </main>{detail && <Detail key={`${detail.title.id}:${detailTarget.season || 0}:${detailTarget.episode || 0}`} detail={detail} target={detailTarget} resume={resumeForTitle(household.continueWatching, detail.title.id)} favorite={household.favorites.some(item => item.titleId === detail.title.id || item.catalog?.id === detail.title.id)} onClose={closeDetail} onPlay={() => playDetail(detail)} onResume={playLegacy} onSource={s => void prepare(s)} onPackAction={manageSeasonPack} onFavorite={async value => { await api.titleFavorite(detail.title.id, value); await loadState(); }} />}{picker && <SourcePicker sources={picker} onClose={() => setPicker(null)} onChoose={s => void prepare(s)} />} {player && <BrowserPlayer key={player.download.id} active={player} onClose={closePlayer} onStateChanged={loadState} onAdvance={advanceEpisode} />}{pendingLeave !== null && <div class="overlay" role="dialog" aria-modal="true" aria-label="Unsaved changes"><section class="help-modal"><h2>Leave with unsaved changes?</h2><p>Changes on the Settings page have not been saved yet.</p><div class="confirm-actions"><button type="button" onClick={() => setPendingLeave(null)}>Keep editing</button><button type="button" class="primary" onClick={confirmLeave}>Discard and leave</button></div></section></div>}</div>;
 }
 
 function Hero({ title, onOpen }: { title: CatalogTitle | null; onOpen: (t: CatalogTitle) => void }) { if (!title) return <section class="hero empty-hero"><h2>Connect your catalog</h2><p>Configure FileList in Settings, then return here to browse.</p></section>; return <section class="hero"><div class="hero-art"><Artwork title={title} kind="backdrop" /></div><div class="hero-shade" /><div class="hero-copy"><h2>{title.title}</h2><p class="hero-meta">{[title.year, title.kind === 'series' ? `${title.seasonCount || 0} seasons` : 'Movie', title.resolutions[0], `${title.bestSeeders} seeds`].filter(Boolean).join(' · ')}</p><p>{title.overview || 'Metadata is being prepared. Source facts are available now.'}</p><button class="primary" onClick={() => onOpen(title)}><Icon name="play" /><span>View and play</span></button></div></section> }
