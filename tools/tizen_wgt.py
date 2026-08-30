@@ -19,6 +19,7 @@ SIGNATURE = re.compile(r"^(?:author-signature|signature[0-9]+)\.xml$")
 PACKAGE_ID = re.compile(r"^[A-Za-z0-9]{10}$")
 MODULE_SCRIPT = re.compile(rb"<script\b[^>]*\btype\s*=\s*[\"']module[\"']", re.I)
 MODULE_PRELOAD = re.compile(rb"<link\b[^>]*\brel\s*=\s*[\"']modulepreload[\"']", re.I)
+CSS_GAP_PROPERTY = re.compile(rb"(?:\A\s*|[{;]\s*)(column-gap|grid-gap|row-gap|gap)\s*:", re.I)
 
 
 class WGTError(ValueError):
@@ -206,6 +207,17 @@ def validate_avplay_lifecycle(html: bytes, files: dict[str, bytes]) -> None:
         if token not in app:
             raise WGTError(f"app.js is missing required AVPlay lifecycle token {token.decode()!r}")
 
+def validate_css_layout_gaps(files: dict[str, bytes]) -> None:
+    for name in sorted(files):
+        if not name.lower().endswith(".css"):
+            continue
+        match = CSS_GAP_PROPERTY.search(files[name])
+        if match:
+            raise WGTError(
+                f"{name!r} uses flex/grid gap property {match.group(1).decode()!r}; "
+                "ADR-0006 requires margin-based spacing"
+            )
+
 
 def validate_tv_icon(name: str, data: bytes) -> None:
     if name != "icon.png":
@@ -226,6 +238,7 @@ def validate_archive(file: Path, target: str) -> str:
     validate_html_references(files[content], files)
     validate_classic_tv_bootstrap(files[content], files)
     validate_avplay_lifecycle(files[content], files)
+    validate_css_layout_gaps(files)
     validate_tv_icon(icon, files[icon])
     signing = (
         "contains signatures; Apps2Samsung will re-sign this custom package"

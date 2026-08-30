@@ -11,7 +11,7 @@ import tizen_wgt
 
 VALID_CONFIG = b'''<?xml version="1.0" encoding="UTF-8"?>
 <widget xmlns="http://www.w3.org/ns/widgets" xmlns:tizen="http://tizen.org/ns/widgets" version="0.1.2">
-  <tizen:application id="FListTV001.FileListTV" package="FListTV001" required_version="7.0"/>
+  <tizen:application id="FListTV001.FileListTV" package="FListTV001" required_version="5.0"/>
   <content src="index.html"/>
   <icon src="icon.png"/>
   <tizen:profile name="tv-samsung"/>
@@ -20,6 +20,8 @@ VALID_CONFIG = b'''<?xml version="1.0" encoding="UTF-8"?>
   <tizen:privilege name="http://tizen.org/privilege/tv.inputdevice"/>
   <access origin="*" subdomains="true"/>
 </widget>'''
+
+NEWER_CONFIG = VALID_CONFIG.replace(b'required_version="5.0"', b'required_version="7.0"')
 
 VALID_HTML = b'''<link rel="stylesheet" href="app.css">
 <script type="text/javascript" src="$WEBAPIS/webapis/webapis.js"></script>
@@ -61,9 +63,16 @@ class WGTTests(unittest.TestCase):
             self.assertTrue(Path(str(output) + ".sha256").is_file())
 
     def test_rejects_newer_tizen_requirement(self):
-        output = self.make_archive(VALID_CONFIG, VALID_HTML)
+        output = self.make_archive(NEWER_CONFIG, VALID_HTML)
         with self.assertRaisesRegex(tizen_wgt.WGTError, "requires Tizen 7.0"):
-            tizen_wgt.validate_archive(output, "6.5")
+            tizen_wgt.validate_archive(output, "5.0")
+
+    def test_five_floor_package_validates_against_floor_and_ceiling(self):
+        output = self.make_archive(VALID_CONFIG, VALID_HTML)
+        for target in ("5.0", "7.0"):
+            with self.subTest(target=target):
+                report = tizen_wgt.validate_archive(output, target)
+                self.assertIn(f"requires Tizen 5.0, target=Tizen {target}", report)
 
     def test_rejects_missing_html_asset(self):
         output = self.make_archive(VALID_CONFIG, VALID_HTML + b'<script src="missing.js"></script>')
@@ -90,6 +99,32 @@ class WGTTests(unittest.TestCase):
         output = self.make_archive(VALID_CONFIG, html)
         with self.assertRaisesRegex(tizen_wgt.WGTError, "must not exist in startup HTML"):
             tizen_wgt.validate_archive(output, "7.0")
+
+    def test_rejects_css_gap_properties(self):
+        for prop in ("gap", "row-gap", "column-gap", "grid-gap"):
+            css = f".row{{display:flex;{prop}:8px}}".encode()
+            output = self.make_archive(VALID_CONFIG, VALID_HTML, {"app.css": css})
+            for target in ("5.0", "7.0"):
+                with self.subTest(property=prop, target=target):
+                    with self.assertRaisesRegex(
+                        tizen_wgt.WGTError,
+                        rf"'app\.css' uses flex/grid gap property '{prop}'",
+                    ):
+                        tizen_wgt.validate_archive(output, target)
+
+    def test_allows_gap_substrings_and_inset_values(self):
+        css = (
+            b".gapless{display:flex;box-shadow:inset 0 0 0 1px #000}"
+            b".gap:hover{color:red}"
+            b".hero{background:url(img/gap-row.png)}"
+            b"@media (min-width:100px){.list{color:#fff}}"
+        )
+        extra = {"app.css": css, "bundle.js": b"(function(){var gap=8;}());"}
+        output = self.make_archive(VALID_CONFIG, VALID_HTML, extra)
+        for target in ("5.0", "7.0"):
+            with self.subTest(target=target):
+                report = tizen_wgt.validate_archive(output, target)
+                self.assertIn(f"requires Tizen 5.0, target=Tizen {target}", report)
 
     def test_rejects_generic_tv_profile(self):
         config = VALID_CONFIG.replace(b'name="tv-samsung"', b'name="tv"')
