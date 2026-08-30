@@ -112,3 +112,13 @@ The configured cap on total bytes of the service's stored torrent content, incom
 
 **Eviction**:
 Automatic deletion of a torrent and its files — every Managed download sharing that Engine route — to bring stored content back within the Allocation. Catalog rows and Household state survive.
+
+### Devices
+
+**Support floor**:
+The oldest Tizen TV platform the single TV client is built to run on: 5.0. Declared in the manifest as `required_version` — a pure floor; one package serves every newer platform with no ceiling.
+_Avoid_: target version (what a validation run is aimed at)
+
+**Verified TV**:
+A physical TV recorded in the Tizen verification log, where behavior counts as confirmed only by direct observation; the household's 2019 premium set and 2023 S90C are the Verified TVs. Any other Tizen set at or above the Support floor is best-effort.
+_Avoid_: target TV, test device
