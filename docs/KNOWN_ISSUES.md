@@ -12,7 +12,11 @@ Browser video and Tizen AVPlay now retry incomplete streams as requested pieces 
 
 ## Direct-play compatibility
 
-The server transcodes browser-hostile audio to AAC stereo and always copies video (see `docs/adr/0003`, which revises `docs/adr/0001`). The web player plays that compatibility stream whenever the selected audio track is one the browser cannot decode (AC3/EAC3/DTS-class, or a non-default track in a multi-track file) and direct-plays the progressive stream otherwise; video is never re-encoded anywhere. Tizen remains direct-play through AVPlay, so unsupported TV video or audio formats require choosing another source.
+The server transcodes browser-hostile audio to AAC stereo and always copies video (see `docs/adr/0003`, which revises `docs/adr/0001`). The web player plays that compatibility stream whenever the selected audio track is one the browser cannot decode (AC3/EAC3/DTS-class, or a non-default track in a multi-track file) and direct-plays the progressive stream otherwise; video is never re-encoded anywhere. Tizen remains direct-play through AVPlay, so unsupported TV video or audio formats require choosing another source. Samsung TV sets since 2018 decode no DTS-class audio — both Verified TV generations included — and AV1 decoding needs a 2021-or-newer set, so a DTS-only or AV1 release on an older TV is avoided by choosing another release, never transcoded away (see `docs/adr/0006`).
+
+## Tizen 5.0 Support floor degradations
+
+One client spans Tizen 5.0 through the latest platform (see `docs/adr/0006`). On the oldest engine — Tizen 5.0's Chromium 63 — modern conveniences are authored around rather than required: flex/grid `gap` is off-limits in favor of margin-based spacing, `AbortController` is feature-detected where LAN discovery depends on it, and niceties such as native image lazy-loading fall back to eager loading. Visual polish may degrade on the oldest engine; behavior may not. Any such degradation counts as confirmed only on a Verified TV, and the 2019 premium generation's log in [TIZEN.md](TIZEN.md) is still empty.
 
 ## Catalog metadata coverage
 

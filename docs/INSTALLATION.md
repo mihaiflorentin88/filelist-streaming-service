@@ -336,7 +336,7 @@ make frontend
 make validate-tizen-wgt
 ```
 
-The local artifact is `clients/tizen/.build/artifacts/FileListTV-<version>.wgt`. Apps2Samsung signs it for the selected TV during installation. Follow [TIZEN.md](TIZEN.md) for Developer Mode, TV pairing, Apps2Samsung installation, target-version compatibility, and physical-device checks. The TV and server must be on the same private LAN. With no saved server, first launch scans at most the TV's local `/24` on port `8097` and any port already present in the manual field. Select a discovered server to verify and save it, or choose **Manual address** for a hostname, HTTPS endpoint, or custom port. A failed connection never replaces the last working saved address.
+The local artifact is `clients/tizen/.build/artifacts/FileListTV-<version>.wgt`. The TV client is one package for every Samsung Tizen platform from the Support floor, Tizen 5.0, through the latest; behavior is verified on the household's two Verified TVs — a 2019 premium Tizen 5.0 set and the 2023 S90C — and any other Tizen 5.0-or-newer set is best-effort. Apps2Samsung signs that same unsigned WGT for the selected TV during installation; per-TV signing is unchanged. Follow [TIZEN.md](TIZEN.md) for Developer Mode, TV pairing, Apps2Samsung installation, platform compatibility, and physical-device checks. The TV and server must be on the same private LAN. With no saved server, first launch scans at most the TV's local `/24` on port `8097` and any port already present in the manual field. Select a discovered server to verify and save it, or choose **Manual address** for a hostname, HTTPS endpoint, or custom port. A failed connection never replaces the last working saved address.
 
 ## Upgrade and rollback checklist
 

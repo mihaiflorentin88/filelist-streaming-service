@@ -10,9 +10,10 @@ No host dependency installation is required for normal work. Go uses the existin
 make check
 make frontend
 make validate-tizen-wgt
+make validate-tizen-wgt TIZEN_TARGET=5.0
 ```
 
-`make frontend` runs browser TypeScript/Vite, the Tizen unit tests and compiler, builds both clients, and packages the unsigned Apps2Samsung WGT. Packaging uses Python's standard library only.
+`make frontend` runs browser TypeScript/Vite, the Tizen unit tests and compiler, builds both clients, and packages the unsigned Apps2Samsung WGT. Packaging uses Python's standard library only. The offline validator defaults to `TIZEN_TARGET=7.0`; `make validate-tizen-wgt TIZEN_TARGET=5.0` re-validates the same WGT against the 5.0 Support floor, and CI runs both targets.
 
 ## Server builds and Raspberry Pi deployment
 
@@ -138,7 +139,7 @@ Remote focus is structural. Every TV control in a content collection has stable 
 
 ## Release checklist
 
-1. Run `make check`, `make frontend`, and `make validate-tizen-wgt`.
+1. Run `make check`, `make frontend`, `make validate-tizen-wgt`, and `make validate-tizen-wgt TIZEN_TARGET=5.0`.
 2. Run `git diff --check` and inspect changes for credentials, databases, logs, media, or certificate material.
 3. Test the browser against the Raspberry Pi server.
 4. Install the new WGT with Apps2Samsung and execute the physical-TV checklist.

@@ -1,6 +1,6 @@
 # Samsung Tizen client
 
-Release 1 targets the 2023 Samsung OLED S90C (`23TV_PREMIUM3`, Tizen 7.0). The app uses AVPlay, not HTML video or `ffmpeg.wasm`, so compatible 4K content stays on the TV hardware-decoding path. DTS-only sources must be treated as unsupported because 2023 models do not decode DTS.
+One Tizen client serves the whole supported span: a single WGT declares the Support floor `required_version="5.0"` — a pure floor with no ceiling — and the same package installs and runs on every Samsung platform from Tizen 5.0 through the latest (see `docs/adr/0006` for the decision). Behavior counts as confirmed only on the household's two Verified TVs, the 2019 premium Tizen 5.0 set and the 2023 S90C (Tizen 7.0); every other Tizen 5.0-or-newer set is best-effort. The app uses AVPlay, not HTML video or `ffmpeg.wasm`, so compatible 4K content stays on the TV hardware-decoding path. Samsung TV sets since 2018 decode no DTS-class audio, so DTS-only sources are unsupported, and AV1 decoding needs a 2021-or-newer set — on an older TV, choose another release.
 
 ## Build an Apps2Samsung WGT
 
@@ -13,8 +13,8 @@ make frontend
 The build uses the pinned Node 24 Docker image and an ephemeral container volume for `node_modules`, so Node and frontend dependencies do not need to be installed on the host. Packaging uses only Python 3 standard-library modules. It creates:
 
 ```text
-clients/tizen/.build/artifacts/FileListTV-0.2.7.wgt
-clients/tizen/.build/artifacts/FileListTV-0.2.7.wgt.sha256
+clients/tizen/.build/artifacts/FileListTV-0.3.0.wgt
+clients/tizen/.build/artifacts/FileListTV-0.3.0.wgt.sha256
 ```
 
 The WGT is deliberately unsigned. Apps2Samsung accepts a custom `.wgt`, obtains or reuses a Samsung certificate, and re-signs the package for the selected TV during installation. Signature files from an old build are excluded to prevent a mismatched certificate from leaking into the artifact. No certificate, password, or TV DUID is stored in this repository.
@@ -26,7 +26,7 @@ make tizen-wgt
 make validate-tizen-wgt
 ```
 
-The offline validator checks that the file is a safe ZIP/WGT, all manifest and HTML assets exist, the widget/application/package versions are valid, the Samsung `tv-samsung` profile is selected, the required network, download, and remote-control privileges are present, wildcard WARP access is enabled, the target TV meets `required_version`, and no known partner-only privilege prevents ordinary Apps2Samsung signing. It also rejects ES-module launchers, requires the Samsung WebAPIS and classic app boot scripts, verifies the playback-only AVPlay lifecycle, and checks that `icon.png` is exactly 117×117 pixels. The current manifest requires Tizen 7.0, which matches the 2023 S90C and intentionally rejects older Tizen versions.
+The offline validator checks that the file is a safe ZIP/WGT, all manifest and HTML assets exist, the widget/application/package versions are valid, the Samsung `tv-samsung` profile is selected, the required network, download, and remote-control privileges are present, wildcard WARP access is enabled, the selected target meets `required_version`, and no known partner-only privilege prevents ordinary Apps2Samsung signing. It also rejects ES-module launchers, requires the Samsung WebAPIS and classic app boot scripts, verifies the playback-only AVPlay lifecycle, and checks that `icon.png` is exactly 117×117 pixels. The manifest declares the Support floor `required_version="5.0"`; the validator checks the selected target against that floor, and CI validates the same WGT against both targets — the default `TIZEN_TARGET=7.0` and the floor `TIZEN_TARGET=5.0`.
 
 Offline validation cannot prove certificate/DUID acceptance or runtime behavior. Installation, launch, network access, remote keys, suspend/resume, and AVPlay must still be tested on the physical TV.
 
@@ -34,7 +34,7 @@ Offline validation cannot prove certificate/DUID acceptance or runtime behavior.
 
 1. Put the computer and TV on the same LAN. The TV must be reachable on its internal development port (26101); that port cannot be enabled independently.
 2. On the TV, open **Apps**, then **App Settings**, enter `12345`, enable **Developer mode**, enter the IP address of the computer running Apps2Samsung, and reboot the TV. If that computer's IP changes, update this setting.
-3. Start Apps2Samsung and select the TV. Choose the custom WGT option and select `clients/tizen/.build/artifacts/FileListTV-0.2.7.wgt` from disk.
+3. Start Apps2Samsung and select the TV. Choose the custom WGT option and select `clients/tizen/.build/artifacts/FileListTV-0.3.0.wgt` from disk.
 4. Install it. Apps2Samsung can request a Samsung account login the first time it needs to create signing material; later installs reuse the certificate. Do not copy that signing material into the repository.
 5. Launch **FileList TV**, select the discovered server or choose **Manual address**, and exercise the physical-TV checks above.
 
@@ -76,7 +76,9 @@ The latest 0.2.0 subtitle repair prefers the reliable server path: completed dow
 
 ## Physical-TV verification log
 
-This is the durable source of truth for device results. **Confirmed** means observed on the target 2023 S90C; a successful build or offline validation alone is recorded as **Pending TV test**.
+This is the durable source of truth for device results. **Confirmed** means observed on a Verified TV — the household's 2019 premium Tizen 5.0 set or the 2023 S90C; a successful build or offline validation alone is recorded as **Pending TV test**. Results are recorded per TV generation: a result on one Verified TV never transfers to the other until directly observed there.
+
+### 2023 S90C (Tizen 7.0)
 
 | Version | Behavior | Status | Evidence |
 | --- | --- | --- | --- |
@@ -112,7 +114,7 @@ This is the durable source of truth for device results. **Confirmed** means obse
 | 0.2.6 | Exact season-pack state, selectable alternatives, canonical dashboard grouping, and deterministic pack-row focus | Server confirmed; pending TV test | Pi reports 0.2.6; live Silo data marks the exact 1080p pack downloaded, another pack partial, and alternatives untouched; household sections contain no repeated title IDs. Browser/Tizen production builds, 26 Tizen tests, and WGT validation passed; unsigned SHA-256 `522322e24bc1350162fb03cb7a80af39f19fbbb21d9933e079f604f2c926a6e7` |
 | 0.2.7 | Safe season-pack disclosures, explicit lifecycle controls, environment-managed Settings, and persisted LAN discovery | Automated checks passed; pending Pi/TV confirmation | Browser/Tizen production builds, 29 Tizen tests, Docker integration verification, WGT packaging, and offline validation passed; unsigned SHA-256 `41166a397d76530222013a1c0fd5c51db6d3a7462ffb992a88ba38bfa76081a3` |
 
-After installing 0.2.7, verify in order:
+After installing 0.3.0, verify in order:
 
 1. Connect has an obvious green focus ring immediately after launch; OK connects using the prefilled address.
 2. Before connecting, focus the address without opening Samsung IME; press OK to enter edit mode, edit text, choose Done, and confirm D-pad navigation resumes.
@@ -129,9 +131,16 @@ After installing 0.2.7, verify in order:
 11. Confirm Home, My Library, Continue Watching, Favorites, Watched, and Tracker dashboards show one Silo card rather than one card per episode; selecting it opens the complete Silo hierarchy. Confirm Downloads still shows individual managed episode files.
 12. Update this table immediately with the tested WGT version, result, date, and any observed limitation.
 
+### 2019 premium (Tizen 5.0)
+
+Recorded generically until the exact model code is read from the TV's settings at first test. No build has been installed on this set yet.
+
+| Version | Behavior | Status | Evidence |
+| --- | --- | --- | --- |
+
 ## Optional manual Tizen CLI signing
 
-Apps2Samsung users do not need this path. If Tizen Studio and the Samsung TV extensions already exist, `clients/tizen/scripts/package.sh` accepts an existing certificate profile in `TIZEN_PROFILE` and creates `FileListTV-0.2.7-signed.wgt`. This separate filename prevents it from overwriting the unsigned Apps2Samsung artifact. The script never creates certificate material.
+Apps2Samsung users do not need this path. If Tizen Studio and the Samsung TV extensions already exist, `clients/tizen/scripts/package.sh` accepts an existing certificate profile in `TIZEN_PROFILE` and creates `FileListTV-0.3.0-signed.wgt`. This separate filename prevents it from overwriting the unsigned Apps2Samsung artifact. The script never creates certificate material.
 
 ## Device behavior
 
