@@ -92,6 +92,10 @@ function setFieldInput(label: string, value: string) {
  input.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
+function switchAnyway() {
+ Array.from(document.querySelectorAll('.overlay[aria-label="Unsaved changes"] button')).find(button => button.textContent === 'Switch anyway')!.click();
+}
+
 beforeEach(() => {
  vi.stubGlobal('EventSource', FakeEventSource);
  vi.spyOn(API.prototype, 'facets').mockResolvedValue({ categories: [], kinds: [], resolutions: [], hdr: [], qualities: [], codecs: [] });
@@ -217,6 +221,71 @@ describe('settings tabs', () => {
   await settle();
   expect(led().className).toContain('fail');
   expect(panel().textContent).toContain('TMDB unreachable');
+
+ });
+ it('fires beforeunload only while any tab is dirty and disarms after save', async () => {
+  await openSettings();
+  const fireBeforeUnload = () => {
+   const event = new Event('beforeunload', { cancelable: true });
+   window.dispatchEvent(event);
+   return event.defaultPrevented;
+  };
+  expect(fireBeforeUnload()).toBe(false);
+  await act(async () => { setFieldInput('FileList URL', 'https://unload-guard.example') });
+  await settle();
+  expect(fireBeforeUnload()).toBe(true);
+  await act(async () => { document.querySelector<HTMLButtonElement>('.settings-actions button[type="submit"]')!.click() });
+  await settle();
+  expect(fireBeforeUnload()).toBe(false);
+ });
+
+ it('asks before switching tabs with unsaved edits and can keep editing or switch anyway', async () => {
+  await openSettings();
+  await act(async () => { setFieldInput('FileList URL', 'https://guarded.example') });
+  await act(async () => { settingsTabs()[1].click() });
+  await settle();
+  expect(location.hash).not.toBe('#storage');
+  const dialog = document.querySelector('.overlay[aria-label="Unsaved changes"]')!;
+  expect(dialog).not.toBeNull();
+  await act(async () => { Array.from(dialog.querySelectorAll('button')).find(button => button.textContent === 'Keep editing')!.click() });
+  await settle();
+  expect(document.querySelector('.overlay[aria-label="Unsaved changes"]')).toBeNull();
+  expect(settingsTabs()[0].getAttribute('aria-selected')).toBe('true');
+  expect(fieldInput('FileList URL').value).toBe('https://guarded.example');
+  await act(async () => { settingsTabs()[1].click() });
+  await settle();
+  await act(async () => { switchAnyway() });
+  await settle();
+  expect(settingsTabs()[1].getAttribute('aria-selected')).toBe('true');
+  expect(settingsTabs()[0].className).toContain('dirty');
+  expect(putCalls).toHaveLength(0);
+ });
+
+ it('guards sidebar navigation away from dirty settings', async () => {
+  await openSettings();
+  await act(async () => { setFieldInput('FileList URL', 'https://nav-guard.example') });
+  await act(async () => { sidebarButton('Jobs').click() });
+  await settle();
+  const dialog = document.querySelector('.overlay[aria-label="Unsaved changes"]')!;
+  expect(dialog).not.toBeNull();
+  expect(document.querySelector('.topbar h1')!.textContent).toBe('Settings');
+  await act(async () => { Array.from(dialog.querySelectorAll('button')).find(button => button.textContent === 'Keep editing')!.click() });
+  await settle();
+  expect(document.querySelector('.topbar h1')!.textContent).toBe('Settings');
+  await act(async () => { sidebarButton('Jobs').click() });
+  await settle();
+  await act(async () => { Array.from(document.querySelectorAll('.overlay[aria-label="Unsaved changes"] button')).find(button => button.textContent === 'Discard and leave')!.click() });
+  await settle();
+  expect(document.querySelector('.topbar h1')!.textContent).toBe('Jobs');
+  expect(document.querySelector('.overlay[aria-label="Unsaved changes"]')).toBeNull();
+ });
+
+ it('never guards when everything is clean', async () => {
+  await openSettings();
+  await act(async () => { sidebarButton('Jobs').click() });
+  await settle();
+  expect(document.querySelector('.overlay[aria-label="Unsaved changes"]')).toBeNull();
+  expect(document.querySelector('.topbar h1')!.textContent).toBe('Jobs');
  });
 
  it('edits subtitle settings in exactly one place', async () => {
@@ -236,9 +305,11 @@ describe('settings tabs', () => {
   await settle();
   await act(async () => { setFieldInput('Download root', '/srv/new') });
   await act(async () => { settingsTabs()[0].click() });
+  await act(async () => { switchAnyway() });
   await settle();
   await act(async () => { setFieldInput('FileList URL', 'https://filelist-edited.example') });
   await act(async () => { settingsTabs()[1].click() });
+  await act(async () => { switchAnyway() });
   await settle();
   await act(async () => { document.querySelector<HTMLButtonElement>('.settings-actions button[type="submit"]')!.click() });
   await settle();
@@ -266,11 +337,13 @@ describe('settings tabs', () => {
   expect(document.querySelector('.settings-actions')!.textContent).toContain('1 unsaved change');
   expect(settingsTabs()[0].className).toContain('dirty');
   await act(async () => { settingsTabs()[3].click() });
+  await act(async () => { switchAnyway() });
   await settle();
   expect(document.querySelector('.settings-actions button[type="submit"]')!.hasAttribute('disabled')).toBe(true);
   expect(settingsTabs()[0].className).toContain('dirty');
   expect(settingsTabs()[3].className).not.toContain('dirty');
   await act(async () => { settingsTabs()[0].click() });
+  await act(async () => { switchAnyway() });
   await settle();
   await act(async () => { document.querySelector<HTMLButtonElement>('.settings-actions button[type="submit"]')!.click() });
   await settle();

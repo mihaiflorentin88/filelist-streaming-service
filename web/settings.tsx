@@ -67,7 +67,7 @@ function tabFromHash(): string {
 const tabFieldKeys = (id: string): string[] => (TAB_GROUPS[id] || []).flatMap(group => group.fields.map(field => field[1]));
 const isConfigTab = (id: string) => Boolean(TAB_GROUPS[id]);
 
-export function Settings({ value, fields, onSaved, onError }: { value: Record<string, unknown>; fields: SettingsField[]; onSaved: (v: Record<string, unknown>) => void; onError: (s: string) => void }) {
+export function Settings({ value, fields, onSaved, onError, onDirtyChange }: { value: Record<string, unknown>; fields: SettingsField[]; onSaved: (v: Record<string, unknown>) => void; onError: (s: string) => void; onDirtyChange?: (dirty: boolean) => void }) {
   const [current, setCurrent] = useState({ ...value });
   const [message, setMessage] = useState('');
   const [help, setHelp] = useState<SettingsField | null>(null);
@@ -76,6 +76,26 @@ export function Settings({ value, fields, onSaved, onError }: { value: Record<st
   const [tab, setTabState] = useState(tabFromHash);
   const setTab = (id: string) => { setTabState(id); history.replaceState(null, '', `#${id}`) };
   const tabEdits = (id: string) => tabFieldKeys(id).filter(key => current[key] !== value[key]);
+  const [pendingTab, setPendingTab] = useState<string | null>(null);
+  const anyDirty = () => TABS.some(entry => tabEdits(entry.id).length > 0);
+  // Tab switches ask first while anything on the page is dirty; the
+  // beforeunload prompt covers browser close and refresh.
+  const requestTab = (id: string) => {
+    if (id === tab || !anyDirty()) { setTab(id); return }
+    setPendingTab(id);
+  };
+  useEffect(() => {
+    onDirtyChange?.(anyDirty());
+  });
+  useEffect(() => {
+    const warn = (e: BeforeUnloadEvent) => {
+      if (!anyDirty()) return;
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  });
   const tabLed = (id: string) => {
     const states = connectionsFor(id).map(connection => connState[connection.name]);
     if (states.includes('fail')) return 'fail';
@@ -138,11 +158,12 @@ export function Settings({ value, fields, onSaved, onError }: { value: Record<st
     <form class="settings" onSubmit={save}>
       <p class="supporting">Stored securely at {String(value.settingsPath || 'data/settings.json')}. Blank secrets keep their current value. Fields supplied by the process environment are shown read-only.</p>
       <div class="settings-tabs" role="tablist" aria-label="Settings sections">
-        {TABS.map(t => <button type="button" role="tab" class={[t.ops ? 'ops' : '', t.id === 'maintenance' ? 'ops-start' : '', tabEdits(t.id).length > 0 ? 'dirty' : ''].filter(Boolean).join(' ')} aria-selected={tab === t.id} onClick={() => setTab(t.id)}>{connectionsFor(t.id).length > 0 && <span class={`led ${tabLed(t.id)}`} aria-hidden="true" />}{t.label}</button>)}
+        {TABS.map(t => <button type="button" role="tab" class={[t.ops ? 'ops' : '', t.id === 'maintenance' ? 'ops-start' : '', tabEdits(t.id).length > 0 ? 'dirty' : ''].filter(Boolean).join(' ')} aria-selected={tab === t.id} onClick={() => requestTab(t.id)}>{connectionsFor(t.id).length > 0 && <span class={`led ${tabLed(t.id)}`} aria-hidden="true" />}{t.label}</button>)}
       </div>
       <div class="settings-panel" role="tabpanel">{panelContent()}</div>
       {isConfigTab(tab) && <div class="settings-actions"><span class="dirty-count" role="status">{tabEdits(tab).length > 0 ? `${tabEdits(tab).length} unsaved ${tabEdits(tab).length === 1 ? 'change' : 'changes'}` : ''}</span><button type="button" disabled={tabEdits(tab).length === 0} onClick={discard}>Discard changes</button><button class="primary" type="submit" disabled={tabEdits(tab).length === 0}>Save changes</button>{message && <span role="status">{message}</span>}</div>}
     </form>
     {help && <div class="overlay" role="dialog" aria-modal="true" aria-label={`Help for ${help.label}`}><section class="help-modal"><button class="close" onClick={() => setHelp(null)}>Close</button><h2>{help.label}</h2><p>{help.help}</p>{help.readOnly && <p><strong>This setting is managed by the process environment and cannot be edited here.</strong></p>}{help.restartRequired && <p><strong>Restart required after changing this setting.</strong></p>}{help.obtain && <><h3>Where to get it</h3><p>{help.obtain}</p></>}<button onClick={() => void navigator.clipboard.writeText([help.help, help.obtain].filter(Boolean).join('\n\n')).then(() => setMessage('Help copied.'))}>Copy help</button></section></div>}
+    {pendingTab !== null && <div class="overlay" role="dialog" aria-modal="true" aria-label="Unsaved changes"><section class="help-modal"><h2>Tab has unsaved changes</h2><p>Unsaved changes on this tab stay pending — the tab label keeps its dot until you save or discard them.</p><div class="confirm-actions"><button type="button" onClick={() => setPendingTab(null)}>Keep editing</button><button type="button" class="primary" onClick={() => { const target = pendingTab; setPendingTab(null); setTab(target) }}>Switch anyway</button></div></section></div>}
   </>
 }
