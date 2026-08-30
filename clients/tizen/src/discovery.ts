@@ -58,20 +58,21 @@ export function discoveryHosts(address: string, subnetMask: string): string[] {
 type ProbeTimer = ReturnType<typeof setTimeout>;
 
 async function probeWithoutAbortController(url: string, timeoutMs: number): Promise<DiscoveredServer | null> {
+  // Executor form is deliberate: Promise.withResolvers does not exist on the Tizen 5.0 engine floor (ADR-0006).
   let timer: ProbeTimer | undefined;
   try {
-    const response = await Promise.race([
-      fetch(`${url}/api/v1/system/info`, { cache: 'no-store' }),
+    return await Promise.race([
+      (async () => {
+        const response = await fetch(`${url}/api/v1/system/info`, { cache: 'no-store' });
+        if (!response.ok) return null;
+        const info = await response.json() as ServerInfo;
+        if (info.name !== 'FileList Streaming' || !info.version) return null;
+        return { url, info };
+      })().catch(() => null),
       new Promise<null>(resolve => {
         timer = setTimeout(() => resolve(null), timeoutMs);
       }),
     ]);
-    if (!response || !response.ok) return null;
-    const info = await response.json() as ServerInfo;
-    if (info.name !== 'FileList Streaming' || !info.version) return null;
-    return { url, info };
-  } catch {
-    return null;
   } finally {
     clearTimeout(timer);
   }
@@ -106,6 +107,7 @@ export async function discoverServers(address: string, subnetMask: string, reque
       const target = targets[cursor++];
       const result = await probe(target, 900, capabilities);
       completed++;
+      onProgress?.(completed, targets.length);
       if (result && !results.some(item => item.url === result.url)) results.push(result);
     }
   };

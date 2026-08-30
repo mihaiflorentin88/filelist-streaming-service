@@ -65,6 +65,32 @@ describe('server discovery without AbortController', () => {
     expect(servers.map(server => server.url)).toEqual(['http://192.168.1.1:8097']);
     expect(vi.getTimerCount()).toBe(0);
   });
+
+  it('resolves to null within the budget when the body read stalls after headers', async () => {
+    vi.useFakeTimers();
+    // new Promise executor form: clients/tizen lib is ES2020 (engine floor, ADR-0006), so no Promise.withResolvers here
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: () => new Promise<never>(() => { }) })));
+    const pending = discoverServers('192.168.1.2', '255.255.255.252', [8097], undefined, { supportsAbortController: false });
+    await vi.advanceTimersByTimeAsync(899);
+    expect(await Promise.race([pending, Promise.resolve('pending')])).toBe('pending');
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await pending).toEqual([]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe('server discovery progress reporting', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('reports completed counts after each host probe', async () => {
+    const progress: Array<[number, number]> = [];
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ name: 'FileList Streaming', version: '0.1.0', configured: true }) })));
+    const servers = await discoverServers('192.168.1.2', '255.255.255.252', [8097, 8098], (completed, total) => progress.push([completed, total]), { supportsAbortController: true });
+    expect(progress).toEqual([[1, 2], [2, 2]]);
+    expect(servers).toHaveLength(2);
+  });
 });
 
 describe('server discovery with AbortController', () => {
