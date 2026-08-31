@@ -16,7 +16,11 @@ The server transcodes browser-hostile audio to AAC stereo and always copies vide
 
 ## Tizen 5.0 Support floor degradations
 
-One client spans Tizen 5.0 through the latest platform (see `docs/adr/0006`). On the oldest engine — Tizen 5.0's Chromium 63 — modern conveniences are authored around rather than required: flex/grid `gap` is off-limits in favor of margin-based spacing, `AbortController` is feature-detected where LAN discovery depends on it, and niceties such as native image lazy-loading fall back to eager loading. Visual polish may degrade on the oldest engine; behavior may not. Any such degradation counts as confirmed only on a Verified TV, and the 2019 premium generation's log in [TIZEN.md](TIZEN.md) is still empty.
+One client spans Tizen 5.0 through the latest platform (see `docs/adr/0006`). On the oldest engine — Tizen 5.0's Chromium 63 — modern conveniences are authored around rather than required: flex/grid `gap` is off-limits in favor of margin-based spacing, `AbortController` is feature-detected where LAN discovery depends on it, and niceties such as native image lazy-loading fall back to eager loading. Visual polish may degrade on the oldest engine; behavior may not. Any such degradation counts as confirmed only on a Verified TV, and the 2019 premium generation's log in [TIZEN.md](TIZEN.md) records the first observed floor failure.
+
+**Methods are not syntax.** The `es2017` build target downlevels *syntax* (optional chaining, nullish coalescing) but does nothing about *runtime methods*: `Array.prototype.flatMap` (ES2019, Chromium 69+) shipped inside the bundle and only crashed once the code actually ran on Chromium 63 — latent since the discovery feature landed, first executed on an old engine when 0.3.0 dropped the Support floor to 5.0, killing the discovery scan and the catalog render while the S90C (Chromium 94) never noticed. Nothing in CI caught it, because a modern-engine build and test run cannot exercise a missing method on a 2017 engine. Two guards now do: the WGT validator rejects bundle APIs outside the Support floor, and a headless old-engine smoke boots the real artifact in CI.
+
+**The Error panel is the answer to silent failure.** When the TV client hits an unhandled error, it shows the Error panel — a full-screen, readable, plain-language explanation — and reports the failure to the server's client-diagnostics channel. The client never fails silently; a dead screen is always diagnosable from the couch and from the server logs.
 
 ## Catalog metadata coverage
 

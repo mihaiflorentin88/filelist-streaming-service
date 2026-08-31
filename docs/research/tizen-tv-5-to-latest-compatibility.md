@@ -312,6 +312,16 @@ A Tizen WGT package is signed using XML Digital Signatures with two distinct cer
 
 ---
 
+## Addendum (2026-08-31): WARP does bypass CORS for packaged apps — device-observed
+
+**Correction to §9.1 ("Private-LAN `fetch()` & CORS / WARP Security Policy") and to the §10 PNA inference** ("standard CORS headers satisfy the runtime"). Both were written from documentation research only. On-device observation on the household's 2019 premium Tizen 5.0 set **contradicts** the earlier claim that the backend must return CORS headers: the server sends **no** CORS headers at all, yet the packaged WGT (origin `file://`) reaches the LAN server through WARP with no problems — manual connect via **Manual address** and all subsequent catalog fetches succeed on-device.
+
+The accurate statement: for a Tizen *packaged* application, WARP (`<access origin="*" subdomains="true"/>`) — not the HTTP CORS mechanism — governs outbound network access, and a WARP-authorized fetch to a plain-LAN HTTP endpoint is not subject to server-side CORS the way a browser-origin fetch is. The CORS guidance in the original sections remains true only for browser (web) clients of the same server, which do run with an HTTP origin.
+
+This report is a research snapshot; the original sections above are kept verbatim for the record. The TIZEN.md verification log is the durable source of truth for device behavior.
+
+---
+
 <!-- Citation References -->
 [ref-general-specs]: https://developer.samsung.com/smarttv/develop/specifications/general-specifications.html
 [ref-model-groups]: https://developer.samsung.com/smarttv/develop/specifications/tv-model-groups.html

@@ -133,10 +133,13 @@ After installing 0.3.0, verify in order:
 
 ### 2019 premium (Tizen 5.0)
 
-Recorded generically until the exact model code is read from the TV's settings at first test. No build has been installed on this set yet.
+The 2019 premium set is where the 0.3.0 Support-floor failure was first observed: after installing 0.3.0, the launch and catalog render died on the TV's old Chromium 63 engine while the S90C (Chromium 94) ran the same package without issue. The root cause and the fix are recorded below; the fix rows stay **Pending TV test** until re-observed on this set.
 
 | Version | Behavior | Status | Evidence |
 | --- | --- | --- | --- |
+| 0.3.0 | Launch into Connect and render the catalog after discovery | Failed (Confirmed) | Observed by the household after installing 0.3.0: discovery scan and catalog render both died with an unhandled error — the shipped code called `Array.prototype.flatMap` (ES2019, Chromium 69+), which the Tizen 5.0 engine (Chromium 63) lacks. Latent since the LAN discovery feature shipped; never executed on an old engine until 0.3.0 dropped the Support floor to 5.0. The S90C (Chromium 94) was unaffected |
+| 0.3.0 | Discovery scan and catalog render after replacing both `flatMap` call sites (discovery target construction and the catalog heading lookup) with ES5-safe equivalents | Pending TV test | Fix implemented and unit-verified; requires reinstall and observation on this 2019 set |
+| 0.3.0 | Error panel on unhandled errors: plain-language guidance instead of silence, with the failure reported to the server's client-diagnostics channel | Pending TV test | Implemented; requires observation on this 2019 set |
 
 ## Optional manual Tizen CLI signing
 
