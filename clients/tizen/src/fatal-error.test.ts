@@ -164,7 +164,8 @@ describe('fatal error panel (shipped ES5 bytes)', () => {
   pressBack();
   expect(exit).toHaveBeenCalledTimes(1);
   pressBack('Return', 13);
-  expect(exit).toHaveBeenCalledTimes(2);
+  // 'Return' is Select in the app's normalization; only Back exits.
+  expect(exit).toHaveBeenCalledTimes(1);
  });
 
  it('prefers the onExit escape hatch over the Tizen API', () => {

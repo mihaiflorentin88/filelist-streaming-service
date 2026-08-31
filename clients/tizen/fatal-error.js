@@ -116,8 +116,9 @@
 
  function isBackKey(event) {
   // Mirrors the app's remoteAction() normalization (navigation.ts):
-  // keycode 10009, 'Back'/'XF86Back'; 'Return' is the legacy Tizen back key.
-  return event.keyCode === 10009 || event.key === 'Back' || event.key === 'XF86Back' || event.key === 'Return';
+  // keycode 10009, 'Back'/'XF86Back'. 'Return' is Select in the app's
+  // normalization, so it must not exit the panel.
+  return event.keyCode === 10009 || event.key === 'Back' || event.key === 'XF86Back';
  }
 
  function exit() {

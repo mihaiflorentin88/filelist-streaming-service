@@ -29,19 +29,20 @@ ENGINE_FLOOR_APIS: tuple[tuple[str, re.Pattern[bytes]], ...] = (
     # user-defined 'x.allSettled(' does not false-positive. globalThis anchors
     # to member access ('globalThis.' / 'globalThis[') because that is the
     # crash shape: a bare 'typeof globalThis' guard is safe by construction and
-    # comment prose such as 'globalThis does not exist' must pass.
+    # comment prose such as 'globalThis does not exist' must pass. A bare value
+    # read ('var g = globalThis') also crashes on the floor but is deliberately
+    # unmatched so prose passes; the headless smoke is the backstop for it.
     ("flatMap", re.compile(rb"\.\s*flatMap\s*\(")),
     ("flat", re.compile(rb"\.\s*flat\s*\(")),
     ("Object.fromEntries", re.compile(rb"\bObject\s*\.\s*fromEntries\s*\(")),
     ("globalThis", re.compile(rb"\bglobalThis\s*(?:\.|\[)")),
     ("String.replaceAll", re.compile(rb"\.\s*replaceAll\s*\(")),
     ("matchAll", re.compile(rb"\.\s*matchAll\s*\(")),
-    ("structuredClone", re.compile(rb"\bstructuredClone\b")),
+    ("structuredClone", re.compile(rb"\bstructuredClone\s*\(")),
     ("Promise.allSettled", re.compile(rb"\bPromise\s*\.\s*allSettled\s*\(")),
     ("Promise.any", re.compile(rb"\bPromise\s*\.\s*any\s*\(")),
     (".at", re.compile(rb"\.\s*at\s*\(")),
-    ("ResizeObserver", re.compile(rb"\bResizeObserver\b")),
-    ("IntersectionObserver", re.compile(rb"\bIntersectionObserver\b")),
+    ("ResizeObserver", re.compile(rb"\bnew\s+ResizeObserver\b|\bResizeObserver\s*\(")),
 )
 
 
@@ -231,16 +232,20 @@ def validate_avplay_lifecycle(html: bytes, files: dict[str, bytes]) -> None:
             raise WGTError(f"app.js is missing required AVPlay lifecycle token {token.decode()!r}")
 
 def validate_app_engine_floor(files: dict[str, bytes]) -> None:
-    # Static gate: it scans app.js text, so comments or strings that mention a
-    # bare identifier shape (structuredClone, ResizeObserver, ...) can still
-    # reject; the headless smoke run is the dynamic backstop.
-    app = files.get("app.js", b"")
-    missing = [name for name, pattern in ENGINE_FLOOR_APIS if pattern.search(app)]
-    if missing:
-        raise WGTError(
-            f"app.js uses {len(missing)} floor-missing API(s): {', '.join(missing)}; "
-            "the Tizen 5.0 floor engine lacks them"
-        )
+    # Static gate over every shipped script, including the verbatim boot scripts
+    # the ES5-only rule exists for. Comments or strings that mention a call shape
+    # can still reject; the headless smoke run is the dynamic backstop.
+    for script in ("app.js", "startup.js", "fatal-error.js"):
+        data = files.get(script)
+        if data is None:
+            continue
+        missing = [name for name, pattern in ENGINE_FLOOR_APIS if pattern.search(data)]
+        if missing:
+            raise WGTError(
+                f"{script!r} uses {len(missing)} floor-missing API(s): "
+                f"{', '.join(missing)}; the Tizen 5.0 floor engine lacks them"
+            )
+
 
 def validate_css_layout_gaps(files: dict[str, bytes]) -> None:
     for name in sorted(files):

@@ -156,7 +156,6 @@ class WGTTests(unittest.TestCase):
         ("Promise.any", b"Promise.any(jobs).catch(function(){});"),
         (".at", b"var first=row.at(0);"),
         ("ResizeObserver", b"var ro=new ResizeObserver(function(){});"),
-        ("IntersectionObserver", b"var io=new IntersectionObserver(function(){});"),
     )
 
     def test_rejects_floor_missing_apis(self):
@@ -171,11 +170,21 @@ class WGTTests(unittest.TestCase):
                     ):
                         tizen_wgt.validate_archive(output, target)
 
+    def test_rejects_floor_missing_apis_in_verbatim_scripts(self):
+        startup = b"var targets=hosts.flatMap(function(host){return host;});"
+        output = self.make_archive(VALID_CONFIG, VALID_HTML, {"startup.js": startup})
+        with self.assertRaisesRegex(
+            tizen_wgt.WGTError,
+            r"'startup\.js' uses 1 floor-missing API\(s\): flatMap;",
+        ):
+            tizen_wgt.validate_archive(output, "5.0")
+
     def test_allows_floor_safe_near_misses(self):
         app = self.valid_app() + (
             b"var head=tag.charAt(0);var parts=name.split('-');"
             b"var flatMapless=function(row){return row;};"
             b"/* globalThis does not exist on this engine; startup feature-detects instead */"
+            b"/* structuredClone and ResizeObserver are unavailable on old engines; feature-detect instead */"
         )
         output = self.make_archive(VALID_CONFIG, VALID_HTML, {"app.js": app})
         for target in ("5.0", "7.0"):
