@@ -21,6 +21,28 @@ MODULE_SCRIPT = re.compile(rb"<script\b[^>]*\btype\s*=\s*[\"']module[\"']", re.I
 MODULE_PRELOAD = re.compile(rb"<link\b[^>]*\brel\s*=\s*[\"']modulepreload[\"']", re.I)
 CSS_GAP_PROPERTY = re.compile(rb"(?:\A\s*|[{;]\s*)(column-gap|grid-gap|row-gap|gap)\s*:", re.I)
 STYLE_BLOCK = re.compile(rb"<style\b[^>]*>(.*?)</style>", re.I | re.S)
+ENGINE_FLOOR_APIS: tuple[tuple[str, re.Pattern[bytes]], ...] = (
+    # Call shapes the Tizen 5.0 floor engine (Chromium 63) lacks. Method rules
+    # anchor to the calling dot so longer identifiers cannot match: '.charAt('
+    # and '.split(' never trip the '.at(' rule, 'flatMapless' never trips
+    # '.flatMap('. Owner-qualified rules (Object/Promise) pin the receiver so a
+    # user-defined 'x.allSettled(' does not false-positive. globalThis anchors
+    # to member access ('globalThis.' / 'globalThis[') because that is the
+    # crash shape: a bare 'typeof globalThis' guard is safe by construction and
+    # comment prose such as 'globalThis does not exist' must pass.
+    ("flatMap", re.compile(rb"\.\s*flatMap\s*\(")),
+    ("flat", re.compile(rb"\.\s*flat\s*\(")),
+    ("Object.fromEntries", re.compile(rb"\bObject\s*\.\s*fromEntries\s*\(")),
+    ("globalThis", re.compile(rb"\bglobalThis\s*(?:\.|\[)")),
+    ("String.replaceAll", re.compile(rb"\.\s*replaceAll\s*\(")),
+    ("matchAll", re.compile(rb"\.\s*matchAll\s*\(")),
+    ("structuredClone", re.compile(rb"\bstructuredClone\b")),
+    ("Promise.allSettled", re.compile(rb"\bPromise\s*\.\s*allSettled\s*\(")),
+    ("Promise.any", re.compile(rb"\bPromise\s*\.\s*any\s*\(")),
+    (".at", re.compile(rb"\.\s*at\s*\(")),
+    ("ResizeObserver", re.compile(rb"\bResizeObserver\b")),
+    ("IntersectionObserver", re.compile(rb"\bIntersectionObserver\b")),
+)
 
 
 class WGTError(ValueError):
@@ -208,6 +230,18 @@ def validate_avplay_lifecycle(html: bytes, files: dict[str, bytes]) -> None:
         if token not in app:
             raise WGTError(f"app.js is missing required AVPlay lifecycle token {token.decode()!r}")
 
+def validate_app_engine_floor(files: dict[str, bytes]) -> None:
+    # Static gate: it scans app.js text, so comments or strings that mention a
+    # bare identifier shape (structuredClone, ResizeObserver, ...) can still
+    # reject; the headless smoke run is the dynamic backstop.
+    app = files.get("app.js", b"")
+    missing = [name for name, pattern in ENGINE_FLOOR_APIS if pattern.search(app)]
+    if missing:
+        raise WGTError(
+            f"app.js uses {len(missing)} floor-missing API(s): {', '.join(missing)}; "
+            "the Tizen 5.0 floor engine lacks them"
+        )
+
 def validate_css_layout_gaps(files: dict[str, bytes]) -> None:
     for name in sorted(files):
         data = files[name]
@@ -247,6 +281,7 @@ def validate_archive(file: Path, target: str) -> str:
     validate_html_references(files[content], files)
     validate_classic_tv_bootstrap(files[content], files)
     validate_avplay_lifecycle(files[content], files)
+    validate_app_engine_floor(files)
     validate_css_layout_gaps(files)
     validate_tv_icon(icon, files[icon])
     signing = (

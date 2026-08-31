@@ -1,5 +1,6 @@
 import sys
 from pathlib import Path
+import re
 import struct
 import tempfile
 import unittest
@@ -142,6 +143,45 @@ class WGTTests(unittest.TestCase):
         output = self.make_archive(VALID_CONFIG, html)
         report = tizen_wgt.validate_archive(output, "5.0")
         self.assertIn("requires Tizen 5.0, target=Tizen 5.0", report)
+
+    FLOOR_API_SNIPPETS = (
+        ("flatMap", b"var rows=list.flatMap(function(row){return [row];});"),
+        ("flat", b"var one=list.flat(1);"),
+        ("Object.fromEntries", b"var map=Object.fromEntries(pairs);"),
+        ("globalThis", b"globalThis.FileListBoot=globalThis.FileListBoot||{};"),
+        ("String.replaceAll", b"var slug=name.replaceAll(' ','-');"),
+        ("matchAll", b"var all=[...text.matchAll(re)];"),
+        ("structuredClone", b"var copy=structuredClone(state);"),
+        ("Promise.allSettled", b"Promise.allSettled(jobs).then(function(){});"),
+        ("Promise.any", b"Promise.any(jobs).catch(function(){});"),
+        (".at", b"var first=row.at(0);"),
+        ("ResizeObserver", b"var ro=new ResizeObserver(function(){});"),
+        ("IntersectionObserver", b"var io=new IntersectionObserver(function(){});"),
+    )
+
+    def test_rejects_floor_missing_apis(self):
+        for api, snippet in self.FLOOR_API_SNIPPETS:
+            app = self.valid_app() + snippet
+            output = self.make_archive(VALID_CONFIG, VALID_HTML, {"app.js": app})
+            for target in ("5.0", "7.0"):
+                with self.subTest(api=api, target=target):
+                    with self.assertRaisesRegex(
+                        tizen_wgt.WGTError,
+                        rf"floor-missing API\(s\): {re.escape(api)};",
+                    ):
+                        tizen_wgt.validate_archive(output, target)
+
+    def test_allows_floor_safe_near_misses(self):
+        app = self.valid_app() + (
+            b"var head=tag.charAt(0);var parts=name.split('-');"
+            b"var flatMapless=function(row){return row;};"
+            b"/* globalThis does not exist on this engine; startup feature-detects instead */"
+        )
+        output = self.make_archive(VALID_CONFIG, VALID_HTML, {"app.js": app})
+        for target in ("5.0", "7.0"):
+            with self.subTest(target=target):
+                report = tizen_wgt.validate_archive(output, target)
+                self.assertIn(f"requires Tizen 5.0, target=Tizen {target}", report)
 
     def test_rejects_generic_tv_profile(self):
         config = VALID_CONFIG.replace(b'name="tv-samsung"', b'name="tv"')
