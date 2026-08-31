@@ -98,7 +98,7 @@ async function probe(url: string, timeoutMs: number, capabilities: Capabilities)
 export async function discoverServers(address: string, subnetMask: string, requestedPorts: number[] = [8097], onProgress?: (completed: number, total: number) => void, capabilities: Capabilities = detectCapabilities()): Promise<DiscoveredServer[]> {
   const hosts = discoveryHosts(address, subnetMask);
   const ports = Array.from(new Set(requestedPorts.filter(port => Number.isInteger(port) && port > 0 && port <= 65535)));
-  const targets = hosts.flatMap(host => ports.map(port => `http://${host}:${port}`));
+  const targets = hosts.reduce<string[]>((all, host) => all.concat(ports.map(port => `http://${host}:${port}`)), []);
   const results: DiscoveredServer[] = [];
   let cursor = 0;
   let completed = 0;

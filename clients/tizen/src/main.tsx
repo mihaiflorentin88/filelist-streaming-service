@@ -414,7 +414,7 @@ function Catalog({ api, status, titles, facets, household, downloads, jobs, rest
   let visible = remoteTitles;
   if (category) visible = visible.filter(title => title.categories.includes(category));
   if (sort === 'seeders') visible = [...visible].sort((a, b) => b.bestSeeders - a.bestSeeders); if (sort === 'title') visible = [...visible].sort((a, b) => a.title.localeCompare(b.title)); if (sort === 'rating') visible = [...visible].sort((a, b) => Number(Boolean(b.ratingVotes)) - Number(Boolean(a.ratingVotes)) || (b.rating || 0) - (a.rating || 0));
-  const heading = menuGroups.flatMap(group => group.items).find(item => item.id === route)?.label || 'Home';
+  const heading = menuGroups.reduce<Array<{ id: TVRoute; label: string; icon: string }>>((items, group) => items.concat(group.items), []).find(item => item.id === route)?.label || 'Home';
   const hero = visible[0] || titles[0];
   const rows: Array<{ key: string; title: string; items: CatalogTitle[] }> = route === 'home' ? [
     { key: 'new', title: 'Recently added', items: titles.slice(0, 12) },
