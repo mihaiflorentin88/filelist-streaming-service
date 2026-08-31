@@ -1,4 +1,4 @@
-.PHONY: check test build build-arm64 frontend tizen-wgt validate-tizen-wgt deploy-pi bootstrap-server-dry-run docker-configure docker-validate docker-import-pi docker-prepare docker-up docker-down docker-logs docker-check docker-urls docker-smoke-stream
+.PHONY: check test build build-arm64 frontend tizen-wgt validate-tizen-wgt smoke-tizen-engine deploy-pi bootstrap-server-dry-run docker-configure docker-validate docker-import-pi docker-prepare docker-up docker-down docker-logs docker-check docker-urls docker-smoke-stream
 
 VERSION ?= $(shell tr -d '[:space:]' < VERSION)
 PI_HOST ?=
@@ -42,6 +42,27 @@ validate-tizen-wgt:
 	python3 tools/tizen_wgt.py validate \
 		--file "$(TIZEN_WGT)" \
 		--target-tizen "$(TIZEN_TARGET)"
+
+# Headless old-engine boot smoke (ticket #84, parent #79): boots the real
+# clients/tizen/dist in the pinned oldest reliably obtainable old Chromium,
+# selenoid/chrome:63.0 = Google Chrome 63.0.3239.84 — the Tizen 5.0-era engine
+# floor ("Tizen 5.0-era Chromium 63", clients/tizen/vite.config.ts). Selenoid
+# (Aerokube) still publishes the tag on Docker Hub. The pin is the guarantee's
+# ceiling: nothing older than Chrome 63 is covered. Requires Docker and
+# Node >= 22 (CI provides Node 24); uses --network host, so no ports are
+# published. The third case intentionally runs a broken-bundle fixture and
+# must exit 3; any other outcome fails the target.
+smoke-tizen-engine:
+	@echo "smoke-tizen-engine: pinned engine selenoid/chrome:63.0 (Google Chrome 63.0.3239.84) — oldest reliably obtainable Chromium at the Tizen 5.0 floor; ceiling of this guarantee"
+	node tools/smoke_tizen_engine/smoke.mjs --cases clean,fatal
+	@status=0; node tools/smoke_tizen_engine/smoke.mjs --cases broken || status=$$?; \
+	if [ "$$status" -eq 3 ]; then \
+		echo "smoke-tizen-engine: broken-bundle fixture correctly rejected (case 3, exit 3)"; \
+	else \
+		echo "smoke-tizen-engine: FAIL — the broken-bundle case must exit 3 (harness detection proven); got $$status" >&2; \
+		exit 1; \
+	fi
+	@echo "smoke-tizen-engine: PASS — clean boot and injected-error panel verified on Google Chrome 63.0.3239.84; broken fixture rejected."
 
 deploy-pi: build-arm64
 	PI_HOST="$(PI_HOST)" sh deploy/pi-deploy.sh "$(CURDIR)/bin/filelist-streaming-linux-arm64" "$(CURDIR)/deploy/systemd/filelist-streaming.service" "$(CURDIR)/deploy/systemd/filelist-streaming.logrotate"

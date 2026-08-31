@@ -15,6 +15,14 @@ make validate-tizen-wgt TIZEN_TARGET=5.0
 
 `make frontend` runs browser TypeScript/Vite, the Tizen unit tests and compiler, builds both clients, and packages the unsigned Apps2Samsung WGT. Packaging uses Python's standard library only. The offline validator defaults to `TIZEN_TARGET=7.0`; `make validate-tizen-wgt TIZEN_TARGET=5.0` re-validates the same WGT against the 5.0 Support floor, and CI runs both targets.
 
+### Headless old-engine boot smoke (Tizen 5.0 floor)
+
+`make smoke-tizen-engine` boots the real built `clients/tizen/dist` in the pinned oldest reliably obtainable old Chromium: [`selenoid/chrome:63.0`](https://hub.docker.com/r/selenoid/chrome), which carries **Google Chrome 63.0.3239.84** — exactly the “Tizen 5.0-era Chromium 63” floor named in `clients/tizen/vite.config.ts`. Selenoid (Aerokube) is a reputable, widely used source of historical official-Chrome images, and the tag remains pullable; nothing older than Chrome 63 is covered, so the pin is the guarantee's ceiling. The smoke needs Docker and Node ≥ 22 (CI provides Node 24), uses no npm dependencies (raw CDP over native WebSocket), and binds everything to loopback via `--network host`. A tiny built-in server stands in for the TV-only `$WEBAPIS/webapis/webapis.js` and records client-diagnostics POSTs. It runs three cases and fails on any other outcome:
+
+1. **Clean boot** — zero uncaught page errors and zero console errors (warnings tolerated), and the startup handoff completes: `window.FileListBoot.ready()` removes `#startup` right after the app bundle's first successful render.
+2. **Injected error** — an uncaught error is thrown through CDP after boot; the `#fatal-error` panel must appear, be visible with `role="alert"`, and its diagnostics POST must reach the recorder.
+3. **Broken bundle** — a fixture copy of `dist` with a syntax error appended to `app.js` must make the smoke exit non-zero (exit 3); the target fails unless that detection is proven.
+
 ## Server builds and Raspberry Pi deployment
 
 ```sh
