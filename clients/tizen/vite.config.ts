@@ -10,7 +10,7 @@ function packageStaticFiles(): Plugin {
   return {
     name: 'package-tizen-static-files',
     generateBundle() {
-      for (const name of ['index.html', 'startup.js']) {
+      for (const name of ['index.html', 'startup.js', 'fatal-error.js']) {
         this.emitFile({ type: 'asset', fileName: name, source: readFileSync(resolve(root, name)) });
       }
     },

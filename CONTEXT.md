@@ -122,3 +122,7 @@ _Avoid_: target version (what a validation run is aimed at)
 **Verified TV**:
 A physical TV recorded in the Tizen verification log, where behavior counts as confirmed only by direct observation; the household's 2019 premium set and 2023 S90C are the Verified TVs. Any other Tizen set at or above the Support floor is best-effort.
 _Avoid_: target TV, test device
+
+**Error panel**:
+The full-screen, readable explanation the TV client shows when the application hits an unhandled error, reported to the server's client-diagnostics channel. The client never fails silently.
+_Avoid_: black screen (as a state name), crash overlay
