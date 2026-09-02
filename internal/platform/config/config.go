@@ -33,6 +33,9 @@ type Settings struct {
 	QBittorrentURL             string   `json:"qbittorrentUrl"`
 	QBittorrentUsername        string   `json:"qbittorrentUsername"`
 	QBittorrentPassword        string   `json:"qbittorrentPassword,omitempty"`
+	DownloadEngine             string   `json:"downloadEngine"`
+	TorrentPeerPort            int      `json:"torrentPeerPort"`
+	TorrentSessionDir          string   `json:"torrentSessionDir"`
 	InitialBufferBytes         int64    `json:"initialBufferBytes"`
 	ReadAheadBytes             int64    `json:"readAheadBytes"`
 	PieceWaitTimeoutSeconds    int      `json:"pieceWaitTimeoutSeconds"`
@@ -68,7 +71,7 @@ func Defaults() Settings {
 	return Settings{
 		InstanceName:  "FileList Streaming",
 		ListenAddress: ":8097", TrustedCIDRs: []string{"127.0.0.0/8", "::1/128", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"}, DatabasePath: "data/filelist.db",
-		DownloadRoot: "/srv/filelist-downloads", FileListURL: "https://filelist.io", QBittorrentURL: "http://127.0.0.1:8080",
+		DownloadRoot: "/srv/filelist-downloads", FileListURL: "https://filelist.io", QBittorrentURL: "http://127.0.0.1:8080", DownloadEngine: "native", TorrentPeerPort: 42069, TorrentSessionDir: "data/torrent-session",
 		InitialBufferBytes: 128 << 20, ReadAheadBytes: 256 << 20, PieceWaitTimeoutSeconds: 600, StreamStartBytes: 2 << 20, CatalogMaxAgeHours: 24,
 		AllocationGB: 15, ReserveGB: 8, EvictionRules: []string{"oldest-completed"}, ProtectIncomplete: true, ProtectLeased: true, PreferredSubtitleLanguage: "ro", FallbackSubtitleLanguage: "en", PreferredAudioLanguage: "en",
 		MetadataLanguage: "ro-RO", MetadataFallbackLanguage: "en-US", ArtworkCachePath: "data/artwork", ArtworkCacheMaxBytes: 512 << 20,
@@ -282,6 +285,17 @@ func (s *Store) validate(v Settings) error {
 		if _, err := netip.ParsePrefix(raw); err != nil {
 			return fmt.Errorf("invalid trusted CIDR %q", raw)
 		}
+	}
+	switch v.DownloadEngine {
+	case "native", "qbittorrent":
+	default:
+		return fmt.Errorf("downloadEngine must be native or qbittorrent")
+	}
+	if v.TorrentPeerPort < 0 || v.TorrentPeerPort > 65535 {
+		return fmt.Errorf("torrentPeerPort must be between 0 and 65535")
+	}
+	if strings.TrimSpace(v.TorrentSessionDir) == "" {
+		return fmt.Errorf("torrentSessionDir is required")
 	}
 	for _, rule := range v.EvictionRules {
 		if !ValidEvictionRule(rule) {

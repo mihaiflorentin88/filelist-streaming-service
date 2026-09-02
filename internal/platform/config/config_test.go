@@ -328,3 +328,27 @@ func TestNormalizeEvictionRulesFallsBackToOldestCompleted(t *testing.T) {
 		}
 	}
 }
+
+func TestDownloadEngineValidation(t *testing.T) {
+	base := Defaults()
+	base.DownloadEngine = "transmission"
+	if err := (&Store{}).validate(base); err == nil {
+		t.Fatal("unknown downloadEngine must fail validation")
+	}
+	for _, engine := range []string{"native", "qbittorrent"} {
+		base.DownloadEngine = engine
+		if err := (&Store{}).validate(base); err != nil {
+			t.Fatalf("downloadEngine %q must be valid: %v", engine, err)
+		}
+	}
+	base.DownloadEngine = "native"
+	base.TorrentPeerPort = 70000
+	if err := (&Store{}).validate(base); err == nil {
+		t.Fatal("torrentPeerPort above 65535 must fail validation")
+	}
+	base.TorrentPeerPort = 42069
+	base.TorrentSessionDir = "  "
+	if err := (&Store{}).validate(base); err == nil {
+		t.Fatal("blank torrentSessionDir must fail validation")
+	}
+}
