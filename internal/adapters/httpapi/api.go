@@ -1284,8 +1284,10 @@ func browserStreamArgs(input string, info domain.MediaInfo, requestedTrack, requ
 func downloadDTO(d domain.Download) map[string]any {
 	playbackMode := "progressive"
 	// Seeding means the selected payload finished downloading (deselected
-	// season-pack files skew progress below one). Legacy rows carry raw
-	// qBittorrent strings where every *UP state has the same meaning.
+	// season-pack files skew progress below one). Queued relies on progress
+	// alone: complete packs serve from disk, in-flight ones stream. Legacy
+	// rows carry raw qBittorrent strings where every *UP state has the same
+	// meaning.
 	state := strings.ToLower(d.State)
 	if d.Progress >= 1 || state == domain.StateSeeding || strings.HasSuffix(state, "up") || state == "completed" {
 		playbackMode = "local"

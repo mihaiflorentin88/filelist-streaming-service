@@ -70,6 +70,20 @@ func TestDownloadDTOSeedingStateKeepsLocalPlayback(t *testing.T) {
 	}
 }
 
+func TestDownloadDTOQueuedStatePlaybackMode(t *testing.T) {
+	// canonicalState folds queuedUP/queuedDL into StateQueued. A completed
+	// partially selected pack (progress >= 1) is served from disk; queued
+	// below one still streams progressively.
+	d := downloadDTO(domain.Download{ID: "pack", State: domain.StateQueued, Progress: 1})
+	if d["playbackMode"] != "local" {
+		t.Errorf("playbackMode for queued at progress 1 = %v, want local", d["playbackMode"])
+	}
+	d = downloadDTO(domain.Download{ID: "pack", State: domain.StateQueued, Progress: 0.5})
+	if d["playbackMode"] != "progressive" {
+		t.Errorf("playbackMode for queued at progress 0.5 = %v, want progressive", d["playbackMode"])
+	}
+}
+
 func TestParseRange(t *testing.T) {
 	tests := []struct {
 		header      string
