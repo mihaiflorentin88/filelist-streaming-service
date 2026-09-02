@@ -13,10 +13,10 @@ import (
 // household already runs qBittorrent 4.4.1, so the native engine presents the
 // same identity: an allowed client that this deployment genuinely mirrors.
 const (
-	peerIDPrefix   = "-qB4430-"
-	trackerUA      = "qBittorrent/4.4.1"
+	peerIDPrefix   = "-qB4410-"
 	peerIDShortLen = 12
 	peerIDCharset  = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	trackerUA      = "qBittorrent/4.4.1"
 )
 
 // trackerIdentity returns the peer ID (exactly 20 bytes) and HTTP user agent
