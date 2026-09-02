@@ -148,9 +148,10 @@ func newStubHandler(t *testing.T, downloadErr error) http.Handler {
 	t.Helper()
 	dir := t.TempDir()
 	b, err := json.Marshal(map[string]any{
-		"databasePath": filepath.Join(dir, "test.db"),
-		"downloadRoot": filepath.Join(dir, "downloads"),
-		"trustedCidrs": []string{"127.0.0.0/8", "::1/128", "192.0.2.0/24"},
+		"databasePath":      filepath.Join(dir, "test.db"),
+		"downloadRoot":      filepath.Join(dir, "downloads"),
+		"trustedCidrs":      []string{"127.0.0.0/8", "::1/128", "192.0.2.0/24"},
+		"torrentSessionDir": filepath.Join(dir, "torrent-session"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -471,5 +472,41 @@ func TestSettingsSchemaDescribesEvictionFieldsForBrowserOnly(t *testing.T) {
 	}
 	if !strings.Contains(help["protectNeverWatched"], "never") {
 		t.Errorf("protectNeverWatched help is missing its meaning: %s", help["protectNeverWatched"])
+	}
+}
+
+func TestPutSettingsRejectsUnwritableNativeSessionDir(t *testing.T) {
+	handler := newStubHandler(t, nil)
+	base := getSettingsBody(t, handler)
+	base["downloadEngine"] = "native"
+	blocker := filepath.Join(t.TempDir(), "not-a-dir.txt")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	base["torrentSessionDir"] = filepath.Join(blocker, "session")
+	rec := putSettingsBody(t, handler, base)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("unwritable session dir status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "not writable") && !strings.Contains(rec.Body.String(), "create") {
+		t.Fatalf("error must name the failing path operation, body = %s", rec.Body.String())
+	}
+	saved := getSettingsBody(t, handler)
+	if saved["torrentSessionDir"] == base["torrentSessionDir"] {
+		t.Fatal("rejected save must not persist the failing path")
+	}
+}
+
+func TestPutSettingsCreatesMissingNativeSessionDir(t *testing.T) {
+	handler := newStubHandler(t, nil)
+	base := getSettingsBody(t, handler)
+	created := filepath.Join(t.TempDir(), "made-on-save")
+	base["downloadEngine"] = "native"
+	base["torrentSessionDir"] = created
+	if rec := putSettingsBody(t, handler, base); rec.Code != http.StatusOK {
+		t.Fatalf("PUT /api/v1/settings status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if info, err := os.Stat(created); err != nil || !info.IsDir() {
+		t.Fatalf("session dir must be created on save: %v", err)
 	}
 }

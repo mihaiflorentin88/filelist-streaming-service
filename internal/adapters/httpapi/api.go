@@ -188,12 +188,16 @@ func (a *API) putSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	old := a.settings.Get()
+	if err := ensureNativePathsWritable(v.DownloadEngine, v.DownloadRoot, v.TorrentSessionDir); err != nil {
+		problem(w, 400, err)
+		return
+	}
 	if err := a.settings.Save(v); err != nil {
 		problem(w, 400, err)
 		return
 	}
 	current := a.settings.Get()
-	restart := old.ListenAddress != current.ListenAddress || old.DatabasePath != current.DatabasePath || old.MaxConcurrentJobs != current.MaxConcurrentJobs || old.TitleRefreshTimeoutMinutes != current.TitleRefreshTimeoutMinutes
+	restart := old.ListenAddress != current.ListenAddress || old.DatabasePath != current.DatabasePath || old.MaxConcurrentJobs != current.MaxConcurrentJobs || old.TitleRefreshTimeoutMinutes != current.TitleRefreshTimeoutMinutes || old.DownloadEngine != current.DownloadEngine || old.TorrentPeerPort != current.TorrentPeerPort || old.TorrentSessionDir != current.TorrentSessionDir
 	write(w, 200, map[string]any{"saved": true, "restartRequired": restart})
 }
 

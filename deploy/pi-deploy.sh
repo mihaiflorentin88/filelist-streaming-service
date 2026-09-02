@@ -25,10 +25,10 @@ prompt() {
 	REPLY=${answer:-$default}
 }
 valid_atom() {
-	case "$1" in ''|*[!A-Za-z0-9_./:@-]*) return 1;; *) return 0;; esac
+	case "$1" in '' | *[!A-Za-z0-9_./:@-]*) return 1 ;; *) return 0 ;; esac
 }
 valid_path() {
-	case "$1" in /*) valid_atom "$1";; *) return 1;; esac
+	case "$1" in /*) valid_atom "$1" ;; *) return 1 ;; esac
 }
 
 saved_host=$(configured PI_HOST || true)
@@ -53,14 +53,39 @@ saved_app_target=$(configured APP_TARGET || true)
 prompt "Application binary path" "${saved_app_target:-/usr/local/bin/filelist-streaming}"
 app_target=$REPLY
 
-valid_atom "$host" || { echo "SSH target contains unsupported characters" >&2; exit 2; }
-valid_atom "$qb_service" || { echo "qBittorrent service contains unsupported characters" >&2; exit 2; }
-[ "$qb_config" = auto ] || valid_path "$qb_config" || { echo "qBittorrent config must be 'auto' or an absolute path without spaces" >&2; exit 2; }
-valid_path "$download_root" || { echo "download root must be absolute and contain no spaces" >&2; exit 2; }
-valid_path "$qb_temp" || { echo "qBittorrent temp path must be absolute and contain no spaces" >&2; exit 2; }
-case "$qb_temp/" in "${download_root%/}/"*) ;; *) echo "qBittorrent temp path must be inside the application download root" >&2; exit 2;; esac
-valid_path "$qb_backup" || { echo "qBittorrent backup path must be absolute and contain no spaces" >&2; exit 2; }
-valid_path "$app_target" || { echo "application path must be absolute and contain no spaces" >&2; exit 2; }
+valid_atom "$host" || {
+	echo "SSH target contains unsupported characters" >&2
+	exit 2
+}
+valid_atom "$qb_service" || {
+	echo "qBittorrent service contains unsupported characters" >&2
+	exit 2
+}
+[ "$qb_config" = auto ] || valid_path "$qb_config" || {
+	echo "qBittorrent config must be 'auto' or an absolute path without spaces" >&2
+	exit 2
+}
+valid_path "$download_root" || {
+	echo "download root must be absolute and contain no spaces" >&2
+	exit 2
+}
+valid_path "$qb_temp" || {
+	echo "qBittorrent temp path must be absolute and contain no spaces" >&2
+	exit 2
+}
+case "$qb_temp/" in "${download_root%/}/"*) ;; *)
+	echo "qBittorrent temp path must be inside the application download root" >&2
+	exit 2
+	;;
+esac
+valid_path "$qb_backup" || {
+	echo "qBittorrent backup path must be absolute and contain no spaces" >&2
+	exit 2
+}
+valid_path "$app_target" || {
+	echo "application path must be absolute and contain no spaces" >&2
+	exit 2
+}
 
 profile_tmp=$profile.tmp.$$
 umask 077
@@ -77,7 +102,11 @@ mkdir -p "$(dirname "$profile")"
 mv "$profile_tmp" "$profile"
 
 stage="/tmp/filelist-streaming-deploy-$$"
-case "$stage" in /tmp/filelist-streaming-deploy-[0-9]*) ;; *) echo "unsafe staging path" >&2; exit 1;; esac
+case "$stage" in /tmp/filelist-streaming-deploy-[0-9]*) ;; *)
+	echo "unsafe staging path" >&2
+	exit 1
+	;;
+esac
 ssh "$host" "install -d -m 700 '$stage'"
 cleanup() { ssh "$host" "rm -rf -- '$stage'" >/dev/null 2>&1 || true; }
 trap cleanup EXIT INT TERM
@@ -170,6 +199,9 @@ if [ -f "$target" ]; then
 	had_binary=true
 fi
 install -m 0755 "$stage/filelist-streaming" "${target}.new"
+# The native engine writes media and session state under the download
+# root; ProtectSystem=strict must whitelist it inside the unit.
+sed -i "s|@DOWNLOAD_ROOT@|$download_root|" "$stage/filelist-streaming.service"
 mv -f "${target}.new" "$target"
 install -m 0644 "$stage/filelist-streaming.service" /etc/systemd/system/filelist-streaming.service
 install -m 0644 "$stage/filelist-streaming.logrotate" /etc/logrotate.d/filelist-streaming
