@@ -46,6 +46,8 @@ func (e *retentionEngine) Remove(_ context.Context, hash string, deleteFiles boo
 	return nil
 }
 
+func (e *retentionEngine) PrepareRange(context.Context, string, int, int64, int64) error { return nil }
+
 func (e *retentionEngine) freedSnapshot() int64 {
 	e.mu.Lock()
 	defer e.mu.Unlock()

@@ -380,6 +380,12 @@ func (c *Client) PrepareFiles(ctx context.Context, hash string, indices []int, s
 	return nil
 }
 
+// PrepareRange is a no-op: qBittorrent exposes no range-priority API and its
+// sequential download scheduler already reaches any requested range.
+func (c *Client) PrepareRange(context.Context, string, int, int64, int64) error {
+	return nil
+}
+
 func (c *Client) Pause(ctx context.Context, hash string) error {
 	return c.command(ctx, "pause", url.Values{"hashes": {hash}})
 }

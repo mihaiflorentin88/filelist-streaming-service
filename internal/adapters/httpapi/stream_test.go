@@ -48,6 +48,10 @@ func (e *streamEngine) PrepareFile(context.Context, string, int, []int) error { 
 func (e *streamEngine) PrepareFiles(context.Context, string, []int, []int) error {
 	return nil
 }
+
+func (e *streamEngine) PrepareRange(context.Context, string, int, int64, int64) error {
+	return nil
+}
 func (e *streamEngine) Pause(context.Context, string) error  { return nil }
 func (e *streamEngine) Resume(context.Context, string) error { return nil }
 func (e *streamEngine) Remove(context.Context, string, bool) error {

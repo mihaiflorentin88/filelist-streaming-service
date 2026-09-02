@@ -266,7 +266,7 @@ func (a *API) testDependency(w http.ResponseWriter, r *http.Request) {
 		}
 		write(w, 200, map[string]any{"success": true, "message": "Connected to FileList", "count": n})
 	case "qbittorrent":
-		v, err := a.service.TestQB(ctx)
+		v, err := a.service.TestEngine(ctx)
 		if err != nil {
 			problem(w, 502, err)
 			return

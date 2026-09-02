@@ -53,6 +53,10 @@ func (e *prepareGateEngine) Remove(_ context.Context, hash string, _ bool) error
 	return nil
 }
 
+func (e *prepareGateEngine) PrepareRange(context.Context, string, int, int64, int64) error {
+	return nil
+}
+
 func (c prepareGateCatalog) OpenTorrent(context.Context, string) (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader(c.torrent)), nil
 }

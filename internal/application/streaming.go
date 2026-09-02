@@ -15,8 +15,10 @@ type playbackStrategy interface {
 	waitReadablePath(context.Context, domain.Download, int64, int64) (string, error)
 }
 
-type localFileStrategy struct{ service *Service }
-type progressiveTorrentStrategy struct{ service *Service }
+type (
+	localFileStrategy          struct{ service *Service }
+	progressiveTorrentStrategy struct{ service *Service }
+)
 
 func (s *Service) playbackStrategy(d domain.Download) playbackStrategy {
 	if completedLocalFile(d) {
@@ -68,6 +70,9 @@ func (strategy progressiveTorrentStrategy) waitReadablePath(ctx context.Context,
 	}
 	path, err := safeQBContentPath(strategy.service.settings.Get().DownloadRoot, status, d.FilePath)
 	if err != nil {
+		return "", err
+	}
+	if err = strategy.service.engine.PrepareRange(ctx, hash, d.FileIndex, d.FileOffset+start, count); err != nil {
 		return "", err
 	}
 	if err = strategy.service.WaitRange(ctx, d, start, count); err != nil {

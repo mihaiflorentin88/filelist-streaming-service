@@ -53,6 +53,8 @@ func (e *capacityEngine) Status(_ context.Context, hash string) (domain.Download
 
 func (e *capacityEngine) PrepareFiles(context.Context, string, []int, []int) error { return nil }
 
+func (e *capacityEngine) PrepareRange(context.Context, string, int, int64, int64) error { return nil }
+
 func (e *capacityEngine) Remove(_ context.Context, hash string, _ bool) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()

@@ -22,6 +22,8 @@ func (pieceEngine) Pieces(context.Context, string) (domain.PieceMap, error) {
 	return domain.PieceMap{States: []int{2, 0}, PieceSize: 4}, nil
 }
 
+func (pieceEngine) PrepareRange(context.Context, string, int, int64, int64) error { return nil }
+
 func TestSafeJoinRejectsTraversal(t *testing.T) {
 	if _, err := safeJoin("/srv/downloads", "../../etc/passwd"); err == nil {
 		t.Fatal("expected traversal rejection")
@@ -179,6 +181,8 @@ func (e *retryEngine) PrepareFiles(_ context.Context, _ string, indices []int, _
 	e.prepared = append(e.prepared, indices)
 	return nil
 }
+
+func (e *retryEngine) PrepareRange(context.Context, string, int, int64, int64) error { return nil }
 
 func (e *retryEngine) Status(context.Context, string) (domain.DownloadStatus, error) {
 	return domain.DownloadStatus{Hash: "livehash", State: "downloading", TotalBytes: 4096}, nil

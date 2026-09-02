@@ -37,6 +37,12 @@ type TorrentEngine interface {
 	Pieces(context.Context, string) (domain.PieceMap, error)
 	PrepareFile(context.Context, string, int, []int) error
 	PrepareFiles(context.Context, string, []int, []int) error
+	// PrepareRange elevates download priority for the pieces covering a byte
+	// window of the torrent. start and count are torrent-global byte offsets
+	// (the download's file offset plus the requested media range). Engines
+	// without window scheduling implement this as a no-op; their sequential
+	// scheduler eventually covers any range.
+	PrepareRange(ctx context.Context, hash string, fileIndex int, start, count int64) error
 	Pause(context.Context, string) error
 	Resume(context.Context, string) error
 	Remove(context.Context, string, bool) error

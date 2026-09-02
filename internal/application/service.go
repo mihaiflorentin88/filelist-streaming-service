@@ -808,7 +808,7 @@ func (s *Service) TestFileList(ctx context.Context) (int, error) {
 	items, err := s.catalog.Latest(ctx)
 	return len(items), err
 }
-func (s *Service) TestQB(ctx context.Context) (string, error) { return s.engine.Test(ctx) }
+func (s *Service) TestEngine(ctx context.Context) (string, error) { return s.engine.Test(ctx) }
 
 // ensureAllocationRoom is the starvation path of ADR-0004: before a new
 // torrent is added, the Allocation must be able to hold it. Stored bytes come

@@ -35,17 +35,23 @@ func (e *streamingEngine) Status(context.Context, string) (domain.DownloadStatus
 	}
 	return domain.DownloadStatus{State: state, Progress: 0.25, PieceSize: 4, Sequential: true, FirstLastPriority: true, SavePath: "/srv/filelist-downloads", ContentPath: "/srv/filelist-downloads/.incomplete/movie.mkv"}, nil
 }
+
 func (e *streamingEngine) Files(context.Context, string) ([]domain.TorrentFile, error) {
 	return []domain.TorrentFile{{Index: 3, Path: "movie.mkv", Playable: true}}, nil
 }
+
 func (e *streamingEngine) PrepareFile(context.Context, string, int, []int) error {
 	e.prepared = true
 	return nil
 }
+
 func (e *streamingEngine) PrepareFiles(context.Context, string, []int, []int) error {
 	e.prepared = true
 	return nil
 }
+
+func (e *streamingEngine) PrepareRange(context.Context, string, int, int64, int64) error { return nil }
+
 func (e *streamingEngine) Resume(context.Context, string) error { e.resumed = true; return nil }
 
 type failingCatalog struct {
