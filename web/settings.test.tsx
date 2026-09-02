@@ -553,4 +553,16 @@ describe('download engine toggle', () => {
   const put = putCalls.at(-1)!;
   expect(put.body.downloadEngine).toBe('qbittorrent');
  });
+
+ it('keeps hidden engine settings in the PUT when only the toggle changes', async () => {
+  await storageTab();
+  await act(async () => { engineOption('qBittorrent').click() });
+  const form = document.querySelector('form.settings')!;
+  await act(async () => { form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })) });
+  await settle();
+  const put = putCalls.at(-1)!;
+  expect(put.body.downloadEngine).toBe('qbittorrent');
+  expect(put.body.torrentPeerPort).toBe(42069);
+  expect(put.body.torrentSessionDir).toBe('data/torrent-session');
+ });
 });
