@@ -50,6 +50,7 @@ type Client struct {
 	session *sessionStore
 	paused  map[string]bool
 	speeds  map[string]*speedMeter
+	windows map[string]*streamWindow
 }
 
 // New constructs the engine and reloads every persisted torrent from the
@@ -101,6 +102,7 @@ func New(cfg Config) (*Client, error) {
 		session: newSessionStore(cfg.SessionDir, pc),
 		paused:  make(map[string]bool),
 		speeds:  make(map[string]*speedMeter),
+		windows: make(map[string]*streamWindow),
 	}
 	if err := c.loadSession(); err != nil {
 		_ = cl.Close()
@@ -156,15 +158,16 @@ func (c *Client) Add(ctx context.Context, r io.Reader, _ string) (string, error)
 	if t := c.torrent(hash); t != nil {
 		return hash, nil
 	}
-	// Disable the library's initial hash pass: bolt persists piece completion
-	// across restarts, so a silent completion entry only means the torrent is
-	// brand new with an empty content dir. Add stays metadata-only, matching
-	// the "nothing downloads until PrepareFiles" contract.
+	// The library's initial piece check must run: pieces with unknown
+	// completion are never schedulable (effectivePriority stays None), so
+	// disabling it would deadlock the swarm. Bolt-persisted completion lets
+	// the check skip already-verified data on restart, and a fresh torrent's
+	// check only marks its missing pieces known-incomplete. Priorities stay
+	// None until PrepareFiles selects files, so Add still downloads nothing.
 	spec, err := torrent.TorrentSpecFromMetaInfoErr(mi)
 	if err != nil {
 		return "", fmt.Errorf("torrent spec: %w", err)
 	}
-	spec.DisableInitialPieceCheck = true
 	t, _, err := c.cl.AddTorrentSpec(spec)
 	if err != nil {
 		return "", fmt.Errorf("add torrent: %w", err)
@@ -325,4 +328,172 @@ func (c *Client) Pieces(_ context.Context, hash string) (domain.PieceMap, error)
 		pieceSize = info.PieceLength
 	}
 	return domain.PieceMap{States: states, PieceSize: pieceSize}, nil
+}
+
+// streamWindow is the per-torrent priority steer: the piece range currently
+// elevated above the per-file baselines so playback and probes download
+// their exact byte window first. It never serves bytes — the app reads the
+// files from disk. anacrolix v1.61.0 readers cannot steer without a
+// blocking Read (their readahead is suppressed until reading begins), so
+// the window is carried as explicit piece priorities.
+type streamWindow struct {
+	first, last int // inclusive piece range; empty when first > last
+}
+
+// PrepareFile prepares a single media file plus subtitle sidecars.
+func (c *Client) PrepareFile(ctx context.Context, hash string, index int, subtitleIndices []int) error {
+	return c.PrepareFiles(ctx, hash, []int{index}, subtitleIndices)
+}
+
+// PrepareFiles queues exactly the wanted files (baseline priority) and
+// un-queues everything else, then elevates the head window of the first
+// selected media file so playback starts on the first pieces, mirroring
+// qBittorrent's sequential + first/last-piece scheduling.
+func (c *Client) PrepareFiles(_ context.Context, hash string, indices []int, subtitleIndices []int) error {
+	t := c.torrent(hash)
+	if t == nil {
+		return domain.ErrTorrentNotFound
+	}
+	if t.Info() == nil {
+		return errors.New("native engine torrent metadata not ready")
+	}
+	if len(indices) == 0 {
+		return errors.New("no media files selected")
+	}
+	files := t.Files()
+	for _, i := range indices {
+		if i < 0 || i >= len(files) {
+			return fmt.Errorf("selected file %d unavailable in torrent", i)
+		}
+	}
+	want := map[int]bool{}
+	for _, i := range indices {
+		want[i] = true
+	}
+	for _, i := range subtitleIndices {
+		want[i] = true
+	}
+	for i, f := range files {
+		if want[i] {
+			f.SetPriority(torrent.PiecePriorityNormal)
+		} else {
+			f.SetPriority(torrent.PiecePriorityNone)
+		}
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.session.setSelection(hash, indices, subtitleIndices)
+	if _, ok := c.windows[hash]; !ok {
+		c.windows[hash] = &streamWindow{first: 0, last: -1}
+		c.steerLocked(t, files[indices[0]].Offset(), c.cfg.StartWindow)
+	}
+	return nil
+}
+
+// PrepareRange repositions the stream window onto the requested byte range.
+// Called from waitReadablePath on every progressive media read, this is what
+// makes deep seeks and tail probes (MKV cues, MP4 moov) arrive without
+// waiting for the whole file. start is a torrent-global byte offset per the
+// TorrentEngine port contract, so the file is implicit in it.
+func (c *Client) PrepareRange(_ context.Context, hash string, _ int, start, count int64) error {
+	if count <= 0 {
+		return nil
+	}
+	t := c.torrent(hash)
+	if t == nil {
+		return domain.ErrTorrentNotFound
+	}
+	if t.Info() == nil {
+		return errors.New("native engine torrent metadata not ready")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.windows[hash]; !ok {
+		c.windows[hash] = &streamWindow{first: 0, last: -1}
+	}
+	c.steerLocked(t, start, count)
+	return nil
+}
+
+// steerLocked moves the torrent's stream window onto [start, start+count)
+// in torrent-global byte offsets: the previous window's pieces drop back to
+// their per-file baselines and the new range is raised to Readahead so it
+// overtakes the Normal baseline. Caller holds c.mu.
+func (c *Client) steerLocked(t *torrent.Torrent, start, count int64) {
+	n := int(t.NumPieces())
+	pieceLen := t.Info().PieceLength
+	w := c.windows[t.InfoHash().HexString()]
+	for i := w.first; i <= w.last; i++ {
+		t.Piece(i).SetPriority(torrent.PiecePriorityNone)
+	}
+	first := max(start, 0) / pieceLen
+	last := min((start+count-1)/pieceLen, int64(n-1))
+	for i := int(first); i <= int(last); i++ {
+		t.Piece(i).SetPriority(torrent.PiecePriorityReadahead)
+	}
+	w.first, w.last = int(first), int(last)
+}
+
+// Pause suspends data transfer without removing the torrent or its files.
+func (c *Client) Pause(_ context.Context, hash string) error {
+	t := c.torrent(hash)
+	if t == nil {
+		return domain.ErrTorrentNotFound
+	}
+	t.DisallowDataDownload()
+	t.DisallowDataUpload()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.paused[hash] = true
+	c.session.setPaused(hash, true)
+	return nil
+}
+
+// Resume restores data transfer after Pause.
+func (c *Client) Resume(_ context.Context, hash string) error {
+	t := c.torrent(hash)
+	if t == nil {
+		return domain.ErrTorrentNotFound
+	}
+	t.AllowDataDownload()
+	t.AllowDataUpload()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.paused, hash)
+	c.session.setPaused(hash, false)
+	return nil
+}
+
+// Remove drops the torrent; with deleteFiles it also deletes the torrent's
+// data directory and clears its persisted piece-completion rows so a later
+// re-add never trusts stale completion bits for deleted bytes.
+func (c *Client) Remove(_ context.Context, hash string, deleteFiles bool) error {
+	t := c.torrent(hash)
+	c.mu.Lock()
+	delete(c.windows, hash)
+	paused := c.paused[hash]
+	delete(c.paused, hash)
+	delete(c.speeds, hash)
+	c.mu.Unlock()
+	if t != nil {
+		if deleteFiles {
+			c.clearPieceCompletion(hash, t)
+		}
+		t.Drop()
+	}
+	c.session.delete(hash, paused)
+	if deleteFiles {
+		if err := os.RemoveAll(filepath.Join(c.dataDir, hash)); err != nil {
+			return fmt.Errorf("delete torrent data: %w", err)
+		}
+	}
+	return nil
+}
+
+func (c *Client) clearPieceCompletion(hash string, t *torrent.Torrent) {
+	n := int(t.NumPieces())
+	ih := t.InfoHash()
+	for i := range n {
+		_ = c.session.pc.Set(metainfo.PieceKey{InfoHash: ih, Index: i}, false)
+	}
 }

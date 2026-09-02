@@ -7,7 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/anacrolix/torrent"
 	"github.com/anacrolix/torrent/bencode"
 	"github.com/anacrolix/torrent/metainfo"
 
@@ -171,19 +173,169 @@ func TestStatusAndPiecesWithoutActivity(t *testing.T) {
 	if st.TempPathEnabled || !st.Sequential || !st.FirstLastPriority {
 		t.Fatalf("native engine reports in-place paths and always-on scheduling: %+v", st)
 	}
+	// The enabled initial piece check transiently reports pieces as
+	// queued-for-hash; wait for the marking pass to settle before asserting
+	// a fresh torrent is all-missing.
+	settle := time.Now().Add(10 * time.Second)
+	for {
+		pm, err := c.Pieces(t.Context(), hash)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pm.PieceSize <= 0 || len(pm.States) == 0 {
+			t.Fatalf("expected piece map, got %+v", pm)
+		}
+		missing := true
+		for _, s := range pm.States {
+			if s != 0 {
+				missing = false
+				break
+			}
+		}
+		if missing {
+			break
+		}
+		if time.Now().After(settle) {
+			t.Fatalf("fresh torrent must have all pieces missing, got %v", pm.States)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := c.Status(t.Context(), "ffffffffffffffffffffffffffffffffffffffff"); !errors.Is(err, domain.ErrTorrentNotFound) {
+		t.Fatalf("unknown hash must map to ErrTorrentNotFound, got %v", err)
+	}
+}
+
+func waitForPieceStates(t *testing.T, c *Client, hash string, first, last int, want int, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		pm, err := c.Pieces(t.Context(), hash)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if last < len(pm.States) {
+			ok := true
+			for i := first; i <= last; i++ {
+				if pm.States[i] != want {
+					ok = false
+					break
+				}
+			}
+			if ok {
+				return
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("pieces %d-%d never reached state %d", first, last, want)
+}
+
+func TestProgressiveSwarmDownloadsOnlySelectedFiles(t *testing.T) {
+	root := seedContent(t)
+	mi, raw := buildTestMetainfo(t, root)
+
+	seedCfg := torrent.TestingConfig(t)
+	seedCfg.DataDir = filepath.Dir(root)
+	seedCfg.Seed = true
+	// TestingConfig caps per-connection request allocation at 5 bytes; the
+	// seeder must accept at least one request chunk.
+	seedCfg.MaxAllocPeerRequestDataPerConn = 1 << 20
+	seedCl, err := torrent.NewClient(seedCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer seedCl.Close()
+	st, err := seedCl.AddTorrent(&mi)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.VerifyData(); err != nil {
+		t.Fatal(err)
+	}
+
+	c := newTestClient(t)
+	hash, err := c.Add(t.Context(), bytes.NewReader(raw), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Let the initial piece-check marking pass settle so the deselected-file
+	// assertion below observes scheduling decisions, not the transient hash
+	// queue that Add runs on every piece.
+	all, err := c.Pieces(t.Context(), hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForPieceStates(t, c, hash, 0, len(all.States)-1, 0, 30*time.Second)
+	files, err := c.Files(t.Context(), hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e01, e02 := -1, -1
+	for _, f := range files {
+		switch filepath.Base(f.Path) {
+		case "Pack.S01E01.mkv":
+			e01 = f.Index
+		case "Pack.S01E02.mkv":
+			e02 = f.Index
+		}
+	}
+	if e01 < 0 || e02 < 0 {
+		t.Fatalf("expected both episodes in %+v", files)
+	}
+
+	if err := c.PrepareFiles(t.Context(), hash, []int{e01}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.PrepareRange(t.Context(), hash, e01, files[e01].Offset, 1<<20); err != nil {
+		t.Fatal(err)
+	}
+	// Wire the swarm directly: no tracker involved.
+	nt := c.torrent(hash)
+	if nt == nil {
+		t.Fatal("torrent missing from native client")
+	}
+	if n := nt.AddClientPeer(seedCl); n == 0 {
+		t.Fatal("peer not added")
+	}
+
+	e01Len := files[e01].SizeBytes
+	pieceSize := func() int64 { pm, _ := c.Pieces(t.Context(), hash); return pm.PieceSize }()
+	first := files[e01].Offset / pieceSize
+	last := (files[e01].Offset + e01Len - 1) / pieceSize
+	waitForPieceStates(t, c, hash, int(first), int(last), 2, 60*time.Second)
+
+	// The deselected episode must never have been requested.
 	pm, err := c.Pieces(t.Context(), hash)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pm.PieceSize <= 0 || len(pm.States) == 0 {
-		t.Fatalf("expected piece map, got %+v", pm)
-	}
-	for _, s := range pm.States {
-		if s != 0 {
-			t.Fatalf("fresh torrent must have all pieces missing, got %v", pm.States)
+	e02First := files[e02].Offset / pm.PieceSize
+	e02Last := (files[e02].Offset + files[e02].SizeBytes - 1) / pm.PieceSize
+	for i := int(e02First); i <= int(e02Last); i++ {
+		if pm.States[i] != 0 {
+			t.Fatalf("deselected episode piece %d has state %d, want 0", i, pm.States[i])
 		}
 	}
-	if _, err := c.Status(t.Context(), "ffffffffffffffffffffffffffffffffffffffff"); !errors.Is(err, domain.ErrTorrentNotFound) {
-		t.Fatalf("unknown hash must map to ErrTorrentNotFound, got %v", err)
+
+	// Pause suspends transfers; Resume restores them.
+	if err := c.Pause(t.Context(), hash); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := c.Status(t.Context(), hash); !domain.IsPaused(st.State) {
+		t.Fatalf("paused status = %q, want paused", st.State)
+	}
+	if err := c.Resume(t.Context(), hash); err != nil {
+		t.Fatal(err)
+	}
+
+	// Eviction deletes the torrent's data dir.
+	if err := c.Remove(t.Context(), hash, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(c.dataDir, hash)); !os.IsNotExist(err) {
+		t.Fatalf("data dir must be deleted, got %v", err)
+	}
+	if _, err := c.Status(t.Context(), hash); !errors.Is(err, domain.ErrTorrentNotFound) {
+		t.Fatalf("removed torrent must be gone, got %v", err)
 	}
 }
