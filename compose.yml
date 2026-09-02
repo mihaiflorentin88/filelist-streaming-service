@@ -8,6 +8,7 @@ services:
       args:
         QBITTORRENT_IMAGE: ${QBITTORRENT_IMAGE:-qbittorrentofficial/qbittorrent-nox:5.2.3-1}
     restart: unless-stopped
+    profiles: ["qbittorrent"]
     stop_grace_period: 30m
     environment:
       QBT_LEGAL_NOTICE: ${QBT_LEGAL_NOTICE:-confirm}
@@ -40,6 +41,7 @@ services:
     depends_on:
       qbittorrent:
         condition: service_healthy
+        required: false
     environment:
       TZ: ${TZ:-Europe/Bucharest}
       FILELIST_STREAMING_SETTINGS_PATH: /var/lib/filelist-streaming/data/settings.json
@@ -75,10 +77,17 @@ services:
       FILELIST_STREAMING_WATCHED_THRESHOLD_PERCENT: ${WATCHED_THRESHOLD_PERCENT:-90}
       FILELIST_STREAMING_MAX_CONCURRENT_JOBS: ${MAX_CONCURRENT_JOBS:-10}
       FILELIST_STREAMING_TITLE_REFRESH_TIMEOUT_MINUTES: ${TITLE_REFRESH_TIMEOUT_MINUTES:-30}
+      FILELIST_STREAMING_DOWNLOAD_ENGINE: ${DOWNLOAD_ENGINE:-native}
+      FILELIST_STREAMING_TORRENT_SESSION_DIR: /var/lib/filelist-streaming/data/torrent-session
+      FILELIST_STREAMING_TORRENT_PEER_PORT: ${TORRENT_PEER_PORT:-42069}
     ports:
       - "${SERVER_BIND_IP:-0.0.0.0}:${SERVER_HOST_PORT:-8097}:8097/tcp"
+      - "${TORRENT_BIND_IP:-0.0.0.0}:${TORRENT_PEER_PORT:-42069}:${TORRENT_PEER_PORT:-42069}/tcp"
+      - "${TORRENT_BIND_IP:-0.0.0.0}:${TORRENT_PEER_PORT:-42069}:${TORRENT_PEER_PORT:-42069}/udp"
     volumes:
       - ${APP_DATA_DIR:?set APP_DATA_DIR in .env.docker}:/var/lib/filelist-streaming/data
-      - ${DOWNLOADS_DIR:?set DOWNLOADS_DIR in .env.docker}:/downloads:ro
+      # The native engine writes media in-process, so this mount must be
+      # writable; qbittorrent-engine deployments merely don't use the write side.
+      - ${DOWNLOADS_DIR:?set DOWNLOADS_DIR in .env.docker}:/downloads
     tmpfs:
       - /tmp

@@ -1,4 +1,4 @@
-.PHONY: check test build build-arm64 frontend tizen-wgt validate-tizen-wgt smoke-tizen-engine deploy-pi bootstrap-server-dry-run docker-configure docker-validate docker-import-pi docker-prepare docker-up docker-down docker-logs docker-check docker-urls docker-smoke-stream
+.PHONY: check test build build-arm64 build-all frontend tizen-wgt validate-tizen-wgt smoke-tizen-engine deploy-pi bootstrap-server-dry-run docker-configure docker-validate docker-import-pi docker-prepare docker-up docker-down docker-logs docker-check docker-urls docker-smoke-stream
 
 VERSION ?= $(shell tr -d '[:space:]' < VERSION)
 PI_HOST ?=
@@ -24,6 +24,16 @@ build:
 
 build-arm64:
 	GOCACHE="$(GO_CACHE)" CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="$(GO_LDFLAGS)" -o bin/filelist-streaming-linux-arm64 ./cmd/server
+
+# Six-platform release binaries (windows/linux/darwin x amd64/arm64). The
+# binary is cgo-free everywhere; the free-space probe carries per-OS builds.
+build-all:
+	GOCACHE="$(GO_CACHE)" CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -trimpath -ldflags="$(GO_LDFLAGS)" -o bin/filelist-streaming-linux-amd64 ./cmd/server
+	GOCACHE="$(GO_CACHE)" CGO_ENABLED=0 GOOS=linux   GOARCH=arm64 go build -trimpath -ldflags="$(GO_LDFLAGS)" -o bin/filelist-streaming-linux-arm64 ./cmd/server
+	GOCACHE="$(GO_CACHE)" CGO_ENABLED=0 GOOS=darwin  GOARCH=amd64 go build -trimpath -ldflags="$(GO_LDFLAGS)" -o bin/filelist-streaming-darwin-amd64 ./cmd/server
+	GOCACHE="$(GO_CACHE)" CGO_ENABLED=0 GOOS=darwin  GOARCH=arm64 go build -trimpath -ldflags="$(GO_LDFLAGS)" -o bin/filelist-streaming-darwin-arm64 ./cmd/server
+	GOCACHE="$(GO_CACHE)" CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="$(GO_LDFLAGS)" -o bin/filelist-streaming-windows-amd64.exe ./cmd/server
+	GOCACHE="$(GO_CACHE)" CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -trimpath -ldflags="$(GO_LDFLAGS)" -o bin/filelist-streaming-windows-arm64.exe ./cmd/server
 
 frontend:
 	docker build -f deploy/docker/Dockerfile.frontend -t filelist-frontend-build .
