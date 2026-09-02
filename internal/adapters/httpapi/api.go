@@ -1283,8 +1283,11 @@ func browserStreamArgs(input string, info domain.MediaInfo, requestedTrack, requ
 
 func downloadDTO(d domain.Download) map[string]any {
 	playbackMode := "progressive"
+	// Seeding means the selected payload finished downloading (deselected
+	// season-pack files skew progress below one). Legacy rows carry raw
+	// qBittorrent strings where every *UP state has the same meaning.
 	state := strings.ToLower(d.State)
-	if d.Progress >= 1 || strings.HasSuffix(state, "up") || state == "completed" {
+	if d.Progress >= 1 || state == domain.StateSeeding || strings.HasSuffix(state, "up") || state == "completed" {
 		playbackMode = "local"
 	}
 	return map[string]any{"id": d.ID, "releaseId": d.ReleaseID, "titleId": d.TitleID, "displayTitle": d.DisplayTitle, "releaseName": d.ReleaseName, "category": d.Category, "releaseSizeBytes": d.ReleaseSizeBytes, "trackerSeeders": d.TrackerSeeders, "rating": d.Rating, "ratingVotes": d.RatingVotes, "ratingProvider": d.RatingProvider, "parsed": d.Parsed, "engineId": d.EngineID, "fileIndex": d.FileIndex, "filePath": d.FilePath, "mimeType": contentType(d.FilePath), "sizeBytes": d.SizeBytes, "state": d.State, "progress": d.Progress, "playbackMode": playbackMode, "downloadedBytes": d.DownloadedBytes, "speedBytesPerSecond": d.SpeedBytesPerSecond, "etaSeconds": d.ETASeconds, "peers": d.Peers, "seeds": d.Seeds, "bufferedBytes": d.BufferedBytes, "leased": d.Leased, "error": d.Error, "createdAt": d.CreatedAt, "updatedAt": d.UpdatedAt, "streamUrl": "/api/v1/streams/" + d.ID, "browserStreamUrl": "/api/v1/streams/" + d.ID + "/browser"}

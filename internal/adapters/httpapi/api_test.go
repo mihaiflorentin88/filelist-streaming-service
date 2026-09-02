@@ -54,6 +54,22 @@ func TestDownloadDTOExposesCompatibilityStream(t *testing.T) {
 	}
 }
 
+func TestDownloadDTOSeedingStateKeepsLocalPlayback(t *testing.T) {
+	// A partially selected season pack surfaces seeding with progress below
+	// one: the selected episodes finished, deselected files skew progress.
+	// Legacy rows keep raw qBittorrent strings with the same meaning.
+	for _, state := range []string{domain.StateSeeding, "stalledUP"} {
+		d := downloadDTO(domain.Download{ID: "pack", State: state, Progress: 0.42})
+		if d["playbackMode"] != "local" {
+			t.Errorf("playbackMode for state %q = %v, want local", state, d["playbackMode"])
+		}
+	}
+	d := downloadDTO(domain.Download{ID: "pack", State: domain.StateDownloading, Progress: 0.42})
+	if d["playbackMode"] != "progressive" {
+		t.Errorf("playbackMode for downloading = %v, want progressive", d["playbackMode"])
+	}
+}
+
 func TestParseRange(t *testing.T) {
 	tests := []struct {
 		header      string
