@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-var ErrTorrentNotFound = errors.New("qBittorrent torrent not found")
+var ErrTorrentNotFound = errors.New("torrent not found in the active engine")
 
 // AllocationError rejects a download that cannot fit the Allocation even
 // after evicting every unprotected torrent — the starvation path of
@@ -76,6 +76,7 @@ type DownloadStatus struct {
 	SavePath, ContentPath, TempPath                              string
 	TempPathEnabled                                              bool
 	Trackers                                                     []TrackerStatus
+	TrackerError                                                 string
 }
 type Download struct {
 	ID, ReleaseID, EngineID, FilePath, AbsolutePath, State                                                              string

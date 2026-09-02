@@ -1981,6 +1981,9 @@ func subtitle(p string) bool {
 }
 
 func trackerError(s domain.DownloadStatus) string {
+	if s.TrackerError != "" {
+		return s.TrackerError
+	}
 	for _, t := range s.Trackers {
 		if t.Status == 4 && t.Message != "" {
 			return t.Message

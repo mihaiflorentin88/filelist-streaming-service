@@ -1878,7 +1878,28 @@ progress {
 }
 
 .download-error.visible {
- color: var(--danger)
+ color: var(--danger);
+ font-weight: 600
+}
+
+.engine-tag {
+ padding: 1px 7px;
+ border: 1px solid var(--line, #2a3140);
+ border-radius: 999px;
+ font-size: 11px;
+ font-weight: 600;
+ letter-spacing: .03em;
+ text-transform: uppercase;
+ font-variant-numeric: tabular-nums
+}
+
+.engine-tag.native {
+ color: var(--accent, #7ee0b8);
+ border-color: var(--accent, #7ee0b8)
+}
+
+.engine-tag.qbittorrent {
+ color: var(--muted, #93a0b4)
 }
 
 .download-actions {

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -45,6 +46,8 @@ type Client struct {
 	cfg     Config
 	// stop closes to end the speed sampler's loop.
 	stop chan struct{}
+
+	announce *announceCapture
 
 	mu      sync.Mutex
 	session *sessionStore
@@ -118,6 +121,11 @@ func New(cfg Config) (*Client, error) {
 	tcfg.NoDefaultPortForwarding = true // household appliance; never poke the router
 	tcfg.Seed = true                    // seed until eviction
 	tcfg.ListenPort = cfg.PeerPort
+	// Private trackers allowlist client identities; presenting the household's
+	// established qBittorrent identity keeps announces acceptable.
+	tcfg.PeerID, tcfg.HTTPUserAgent = newTrackerIdentity()
+	capture := newAnnounceCapture()
+	tcfg.Slogger = slog.New(capture.Handler())
 	cl, err := torrent.NewClient(tcfg)
 	if err != nil {
 		_ = pc.Close()
@@ -126,6 +134,7 @@ func New(cfg Config) (*Client, error) {
 	c := &Client{
 		cl:            cl,
 		dataDir:       cfg.DataDir,
+		announce:      capture,
 		cfg:           cfg,
 		stop:          make(chan struct{}),
 		session:       newSessionStore(cfg.SessionDir, pc),
@@ -383,6 +392,7 @@ func (c *Client) Status(_ context.Context, hash string) (domain.DownloadStatus, 
 		PieceSize:           pieceSize,
 		Sequential:          true,
 		FirstLastPriority:   true,
+		TrackerError:        c.announce.Error(hash),
 		SavePath:            c.dataDir,
 		ContentPath:         filepath.Join(c.dataDir, hash),
 		TempPathEnabled:     false,
@@ -593,6 +603,7 @@ func (c *Client) Remove(_ context.Context, hash string, deleteFiles bool) error 
 	delete(c.selected, hash)
 	delete(c.writeErrs, hash)
 	delete(c.writeErrHooks, hash)
+	c.announce.clear(hash)
 	paused := c.paused[hash]
 	delete(c.paused, hash)
 	delete(c.speeds, hash)
