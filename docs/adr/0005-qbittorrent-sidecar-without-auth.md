@@ -4,6 +4,10 @@
 status: accepted
 ---
 
+Scope note (0007): this ADR governs deployments whose active download engine is
+qBittorrent — the compose `qbittorrent` profile and external-qBittorrent setups.
+The native engine default needs neither the sidecar nor its no-auth WebUI.
+
 A from-scratch Docker start must require zero qBittorrent knowledge — no port to discover, no credentials to create. The compose stack therefore owns a qBittorrent sidecar whose WebUI authentication is removed and whose port is published to the household LAN, extending the existing trust model: the server itself has no login and gates only on trusted CIDRs, and the stack is never port-forwarded. Connecting to an existing external qBittorrent instance remains supported for the bare-metal Pi deployment.
 
 ## Considered options

@@ -47,11 +47,11 @@ New adapter `internal/adapters/nativetorrent` wrapping `*torrent.Client` (anacro
 ## Data flow (native engine)
 
 - **Add:** `.torrent` bytes parse synchronously — info-hash and file list are available immediately, no `GotInfo` wait; the service's poll-until-files loop is naturally compatible. Default piece priority is zero: nothing downloads until `PrepareFiles`.
-- **PrepareFiles(indices, subtitleIndices):** wanted files get descending piece priorities by offset (sequential-within-file), with the first and last piece of each selected file bumped above the sequential tail — the same scheduling semantics as qBittorrent's sequential + first/last-piece flags that the buffering knobs (`StreamStartBytes`, `InitialBufferBytes`, `ReadAheadBytes`) were tuned against. Unwanted files are never requested.
+- **PrepareFiles(indices, subtitleIndices):** wanted files get a baseline download priority (whole file queued, unwanted files never requested); per-torrent explicit piece-priority windows — public-API `DownloadPieces`/`CancelPieces` ranges — elevate the exact byte window above the baseline: head window at prepare, seek/probe windows on every `PrepareRange`. This delivers the same sequential-within-file and early head/tail scheduling semantics that qBittorrent's sequential + first/last-piece flags provide, which the buffering knobs (`StreamStartBytes`, `InitialBufferBytes`, `ReadAheadBytes`) were tuned against. (v1.61.0 exposes no public per-piece priority setter and reader-based steering is inert — readahead zeroes while not reading — so windows are range-based.)
 - **Playback: unchanged.** `Pieces()` poll, `WaitRange`, then serve file ranges from disk. The compatibility stream, subtitles, and mediaprobe keep reading files; nothing downstream touches the engine.
 - **Seeding:** completed torrents seed until eviction.
 - **Eviction:** `Remove(hash, deleteFiles=true)` drops the torrent from the client and deletes `<DownloadRoot>/<hash>`.
-- **Pause/Resume:** maps to torrent stop/start; the existing resume-on-playback logic applies.
+- **Pause/Resume:** maps to suspending/resuming data transfer (`DisallowDataDownload/Upload` and their allow counterparts — v1.61.0 has no per-torrent start/stop); the existing resume-on-playback logic applies.
 
 ## Error handling
 

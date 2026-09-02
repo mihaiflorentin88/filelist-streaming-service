@@ -43,6 +43,10 @@ A download this server created and tracks. Only Managed downloads are visible or
 **Engine route**:
 A persistent pointer to where a torrent lives in the download engine, stable across restarts.
 
+**Download engine**:
+The torrent client the server drives for Managed downloads: the embedded native engine or an external qBittorrent. One engine is active per deployment; a download belongs to the engine that created it, through its Engine route.
+_Avoid_: torrent client (unqualified), backend
+
 **Prepare**:
 Resolve or create the Managed download behind a Source and return its stream URL; the step before any playback.
 
