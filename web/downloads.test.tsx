@@ -99,3 +99,20 @@ describe('downloads page cards', () => {
   expect(text).toContain('5.2 MB/s');
  });
 });
+
+describe('error modal layering', () => {
+ it('surfaces errors as a topmost dialog while other modals are open', async () => {
+  vi.spyOn(API.prototype, 'call').mockRejectedValue(new Error('the tracker refused this release'));
+  await openDownloads();
+  const cards = document.querySelectorAll('.download-list article');
+  await act(async () => {
+   Array.from(cards[0].querySelectorAll('button')).find(b => b.textContent === 'Retry download')?.click();
+  });
+  await settle();
+  const dialog = document.querySelector('[role="alertdialog"]');
+  expect(dialog).not.toBeNull();
+  expect(dialog!.textContent).toContain('the tracker refused this release');
+  const overlays = Array.from(document.querySelectorAll('.overlay'));
+  expect(overlays[overlays.length - 1]).toBe(dialog!.closest('.overlay'));
+ });
+});

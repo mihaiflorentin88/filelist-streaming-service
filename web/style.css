@@ -2454,3 +2454,32 @@ progress {
  display: inline-flex;
  align-items: center
 }
+
+.error-overlay {
+ z-index: 150
+}
+
+.error-modal {
+ max-width: 480px;
+ width: min(480px, 90vw);
+ background: var(--panel, #0d1520);
+ border: 1px solid var(--line, #2a3140);
+ border-radius: 14px;
+ padding: 22px 24px;
+ box-shadow: 0 24px 70px #00000090
+}
+
+.error-modal h2 {
+ margin: 0 0 10px;
+ color: var(--danger)
+}
+
+.error-modal p {
+ margin: 0 0 18px;
+ word-break: break-word
+}
+
+.error-modal .confirm-actions {
+ display: flex;
+ justify-content: flex-end
+}

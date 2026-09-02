@@ -1,6 +1,7 @@
 package filelist
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -32,15 +33,19 @@ func (c *Client) ID() string { return "filelist" }
 func (c *Client) Capabilities() application.TrackerCapabilities {
 	return application.TrackerCapabilities{IMDbSearch: true, SeasonFilter: true, EpisodeFilter: true, Categories: true}
 }
+
 func (c *Client) Latest(ctx context.Context) ([]domain.TorrentRelease, error) {
 	return c.list(ctx, "/api.php?action=latest-torrents&limit=100")
 }
+
 func (c *Client) Category(ctx context.Context, id int) ([]domain.TorrentRelease, error) {
 	return c.list(ctx, "/api.php?action=latest-torrents&category="+strconv.Itoa(id)+"&limit=100")
 }
+
 func (c *Client) Search(ctx context.Context, q string) ([]domain.TorrentRelease, error) {
 	return c.list(ctx, "/api.php?action=search-torrents&type=name&query="+url.QueryEscape(q))
 }
+
 func (c *Client) list(ctx context.Context, path string) ([]domain.TorrentRelease, error) {
 	r, err := c.request(ctx, path)
 	if err != nil {
@@ -83,18 +88,34 @@ func (c *Client) list(ctx context.Context, path string) ([]domain.TorrentRelease
 	}
 	return out, nil
 }
+
+// OpenTorrent fetches the .torrent for a catalogued release. FileList serves
+// its error pages with HTTP 200, so the body is inspected before handing it
+// to the torrent engine: a removed release would otherwise surface as an
+// opaque bencode syntax error.
 func (c *Client) OpenTorrent(ctx context.Context, id string) (io.ReadCloser, error) {
 	_, _, pass := c.settings()
 	r, err := c.request(ctx, "/download.php?id="+url.QueryEscape(id)+"&passkey="+url.QueryEscape(pass))
 	if err != nil {
 		return nil, err
 	}
+	defer r.Body.Close()
 	if r.StatusCode/100 != 2 {
-		r.Body.Close()
 		return nil, fmt.Errorf("torrent download returned HTTP %d", r.StatusCode)
 	}
-	return r.Body, nil
+	raw, err := io.ReadAll(io.LimitReader(r.Body, 16<<20))
+	if err != nil {
+		return nil, fmt.Errorf("read torrent download: %w", err)
+	}
+	if len(raw) == 0 || raw[0] != 'd' {
+		if bytes.Contains(raw, []byte("Nu pot gasi fisierul .torrent")) {
+			return nil, fmt.Errorf("%w: FileList no longer hosts the .torrent for this release", domain.ErrTorrentRemoved)
+		}
+		return nil, fmt.Errorf("FileList returned a non-torrent response (HTTP %d) for this release", r.StatusCode)
+	}
+	return io.NopCloser(bytes.NewReader(raw)), nil
 }
+
 func (c *Client) request(ctx context.Context, path string) (*http.Response, error) {
 	base, user, pass := c.settings()
 	base = strings.TrimRight(base, "/")
@@ -140,6 +161,7 @@ func (c *Client) request(ctx context.Context, path string) (*http.Response, erro
 		return req, nil
 	}, outbound.Policy{Provider: "FileList", Attempts: 3, MaxInlineDelay: 15 * time.Second})
 }
+
 func str(m map[string]any, keys ...string) string {
 	for _, k := range keys {
 		if v, ok := m[k]; ok {
@@ -157,6 +179,7 @@ func str(m map[string]any, keys ...string) string {
 	}
 	return ""
 }
+
 func i64(m map[string]any, k ...string) int64 {
 	v, _ := strconv.ParseInt(str(m, k...), 10, 64)
 	return v
@@ -166,6 +189,7 @@ func b(m map[string]any, k ...string) bool {
 	v := strings.ToLower(str(m, k...))
 	return v == "1" || v == "true"
 }
+
 func imdb(v string) string {
 	if v == "" {
 		return ""

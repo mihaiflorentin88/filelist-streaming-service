@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -326,5 +327,31 @@ func TestDownloadsMarksForeignEngineRouteUnavailable(t *testing.T) {
 	}
 	if items[0].State != "unavailable" || items[0].Error == "" {
 		t.Fatalf("a foreign qb: row must surface unavailable under native routing, got state=%q error=%q", items[0].State, items[0].Error)
+	}
+}
+
+type deadCatalog struct{ TrackerCatalog }
+
+func (deadCatalog) OpenTorrent(context.Context, string) (io.ReadCloser, error) {
+	return nil, fmt.Errorf("%w: FileList no longer hosts the .torrent for this release", domain.ErrTorrentRemoved)
+}
+
+func TestPrepareRemovesReleaseDeletedFromTracker(t *testing.T) {
+	repo, settings := retryHarness(t)
+	movie := domain.TorrentRelease{ID: "release", Name: "Minions.and.Monsters.2026.1080p.AMZN.WEB-DL.DD+5.1.H.264-playWEB", Category: "Movies"}
+	if err := repo.UpsertReleases(context.Background(), []domain.TorrentRelease{movie}); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(deadCatalog{}, &retryEngine{}, repo, settings)
+	_, err := service.Prepare(context.Background(), "release", 0)
+	if err == nil || !strings.Contains(err.Error(), "no longer available on FileList") {
+		t.Fatalf("prepare must explain the removal to the user, got %v", err)
+	}
+	if _, getErr := repo.GetRelease(context.Background(), "release"); !errors.Is(getErr, sql.ErrNoRows) {
+		t.Fatalf("dead release must be removed from the catalog, got %v", getErr)
+	}
+	events, evErr := repo.ListEvents(context.Background(), 0, 10)
+	if evErr != nil || len(events) == 0 || events[0].Kind != "release_removed" {
+		t.Fatalf("removal must be journalled for the events page, got %v %v", events, evErr)
 	}
 }

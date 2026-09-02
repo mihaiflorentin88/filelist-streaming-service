@@ -105,6 +105,7 @@ type Repository interface {
 	SaveTorrentManifest(context.Context, domain.TorrentManifest) error
 	GetTorrentManifest(context.Context, string) (domain.TorrentManifest, error)
 	CatalogCounts(context.Context) (int, int, error)
+	RemoveRelease(context.Context, string) error
 	AppendEvent(context.Context, string, string) (domain.Event, error)
 	ListEvents(context.Context, int64, int) ([]domain.Event, error)
 	SavePlayback(context.Context, domain.PlaybackState) error

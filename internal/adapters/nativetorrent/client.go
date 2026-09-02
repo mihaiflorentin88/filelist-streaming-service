@@ -49,11 +49,12 @@ type Client struct {
 
 	announce *announceCapture
 
-	mu      sync.Mutex
-	session *sessionStore
-	paused  map[string]bool
-	speeds  map[string]*speedMeter
-	windows map[string]*streamWindow
+	mu           sync.Mutex
+	session      *sessionStore
+	paused       map[string]bool
+	speeds       map[string]*speedMeter
+	uploadSpeeds map[string]*speedMeter
+	windows      map[string]*streamWindow
 	// selected mirrors the active file selection per hash so Status can
 	// report qBittorrent-compatible selected-set completion.
 	selected map[string][]int
@@ -140,6 +141,7 @@ func New(cfg Config) (*Client, error) {
 		session:       newSessionStore(cfg.SessionDir, pc),
 		paused:        make(map[string]bool),
 		speeds:        make(map[string]*speedMeter),
+		uploadSpeeds:  make(map[string]*speedMeter),
 		windows:       make(map[string]*streamWindow),
 		selected:      make(map[string][]int),
 		writeErrs:     make(map[string]writeErrRec),
@@ -386,6 +388,7 @@ func (c *Client) Status(_ context.Context, hash string) (domain.DownloadStatus, 
 		DownloadedBytes:     done,
 		TotalBytes:          total,
 		SpeedBytesPerSecond: speed,
+		UploadSpeedBytesPerSecond: c.currentUploadSpeed(hash),
 		ETASeconds:          eta,
 		Peers:               st.TotalPeers,
 		Seeds:               st.ConnectedSeeders,
@@ -607,6 +610,7 @@ func (c *Client) Remove(_ context.Context, hash string, deleteFiles bool) error 
 	paused := c.paused[hash]
 	delete(c.paused, hash)
 	delete(c.speeds, hash)
+	delete(c.uploadSpeeds, hash)
 	c.mu.Unlock()
 	// Bookkeeping and data cleanup both run to completion even when the other
 	// fails; the first error wins, joined when both fail.

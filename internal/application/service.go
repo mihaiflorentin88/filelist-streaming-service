@@ -902,6 +902,9 @@ func (s *Service) Prepare(ctx context.Context, releaseID string, fileIndex int) 
 	}
 	torrent, err := s.catalog.OpenTorrent(ctx, release.ID)
 	if err != nil {
+		if errors.Is(err, domain.ErrTorrentRemoved) {
+			return domain.Download{}, s.removeDeadRelease(ctx, release)
+		}
 		return domain.Download{}, err
 	}
 	defer torrent.Close()
@@ -1126,6 +1129,9 @@ func (s *Service) PrepareSeason(ctx context.Context, releaseID string, season in
 		}
 		torrent, openErr := s.catalog.OpenTorrent(ctx, release.ID)
 		if openErr != nil {
+			if errors.Is(openErr, domain.ErrTorrentRemoved) {
+				return nil, s.removeDeadRelease(ctx, release)
+			}
 			return nil, openErr
 		}
 		defer torrent.Close()
@@ -1375,6 +1381,7 @@ func applyDownloadStatus(download *domain.Download, status domain.DownloadStatus
 	download.State = status.State
 	download.PieceSize = status.PieceSize
 	download.SpeedBytesPerSecond = status.SpeedBytesPerSecond
+	download.UploadSpeedBytesPerSecond = status.UploadSpeedBytesPerSecond
 	download.ETASeconds = status.ETASeconds
 	download.Peers = status.Peers
 	download.Seeds = status.Seeds
@@ -1978,6 +1985,19 @@ func subtitle(p string) bool {
 		return true
 	}
 	return false
+}
+
+// removeDeadRelease handles a release whose torrent the tracker no longer
+// hosts: it drops the release from the catalog, journals the removal, and
+// returns the error the user should see. The release cannot come back — the
+// tracker deleted the torrent — so keeping it would only offer a dead button.
+func (s *Service) removeDeadRelease(ctx context.Context, release domain.TorrentRelease) error {
+	if err := s.repo.RemoveRelease(ctx, release.ID); err != nil {
+		s.jobLog(domain.Job{}, "error", "prepare", "Could not remove a release deleted from FileList", map[string]any{"releaseId": release.ID, "error": err.Error()})
+		return fmt.Errorf("this release is no longer available on FileList, but removing it from the catalog failed: %w", err)
+	}
+	_, _ = s.repo.AppendEvent(ctx, "release_removed", fmt.Sprintf(`{"releaseId":%q,"release":%q}`, release.ID, release.Name))
+	return fmt.Errorf("this release is no longer available on FileList and was removed from your catalog; pick another version")
 }
 
 func trackerError(s domain.DownloadStatus) string {

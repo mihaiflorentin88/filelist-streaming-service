@@ -8,6 +8,11 @@ import (
 
 var ErrTorrentNotFound = errors.New("torrent not found in the active engine")
 
+// ErrTorrentRemoved reports that the tracker no longer hosts a catalogued
+// release: FileList answers its download endpoint with an HTML error page
+// saying it cannot find the .torrent file.
+var ErrTorrentRemoved = errors.New("release removed from FileList")
+
 // AllocationError rejects a download that cannot fit the Allocation even
 // after evicting every unprotected torrent — the starvation path of
 // ADR-0004. The HTTP layer maps it to a 409 problem; Error names the
@@ -71,6 +76,7 @@ type DownloadStatus struct {
 	Progress                                                     float64 `json:"progress"`
 	DownloadedBytes, TotalBytes, SpeedBytesPerSecond, ETASeconds int64
 	Peers, Seeds                                                 int
+	UploadSpeedBytesPerSecond                                    int64
 	PieceSize                                                    int64
 	Sequential, FirstLastPriority                                bool
 	SavePath, ContentPath, TempPath                              string
@@ -85,6 +91,7 @@ type Download struct {
 	FileIndex                                                                                                           int
 	SizeBytes, ReleaseSizeBytes, FileOffset, PieceSize, BufferedBytes, DownloadedBytes, SpeedBytesPerSecond, ETASeconds int64
 	Peers, Seeds, TrackerSeeders                                                                                        int
+	UploadSpeedBytesPerSecond                                                                                           int64
 	Rating                                                                                                              float64
 	RatingVotes                                                                                                         int
 	RatingProvider                                                                                                      string

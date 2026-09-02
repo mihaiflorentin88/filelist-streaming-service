@@ -40,6 +40,12 @@ func (c *Client) speedLoop() {
 				}
 				stats := t.Stats()
 				m.sample(stats.BytesReadData.Int64())
+				up := c.uploadSpeeds[hash]
+				if up == nil {
+					up = &speedMeter{}
+					c.uploadSpeeds[hash] = up
+				}
+				up.sample(stats.BytesWrittenData.Int64())
 			}
 			c.mu.Unlock()
 		}
@@ -58,6 +64,13 @@ func (c *Client) stopSpeedLoop() {
 
 func (c *Client) currentSpeed(hash string) int64 {
 	if m := c.speeds[hash]; m != nil {
+		return int64(m.ema)
+	}
+	return 0
+}
+
+func (c *Client) currentUploadSpeed(hash string) int64 {
+	if m := c.uploadSpeeds[hash]; m != nil {
 		return int64(m.ema)
 	}
 	return 0

@@ -240,7 +240,7 @@ func (c *Client) Status(ctx context.Context, hash string) (domain.DownloadStatus
 	if pieceSize <= 0 {
 		pieceSize = l(x, "piece_size")
 	}
-	d := domain.DownloadStatus{Hash: hash, State: canonicalState(s(x, "state")), Progress: f(x, "progress"), TotalBytes: total, DownloadedBytes: total - l(x, "amount_left"), SpeedBytesPerSecond: l(x, "dlspeed"), ETASeconds: l(x, "eta"), Peers: int(l(x, "num_leechs")), Seeds: int(l(x, "num_seeds")), PieceSize: pieceSize, Sequential: bo(x, "seq_dl"), FirstLastPriority: bo(x, "f_l_piece_prio"), SavePath: s(x, "save_path"), ContentPath: s(x, "content_path")}
+	d := domain.DownloadStatus{Hash: hash, State: canonicalState(s(x, "state")), Progress: f(x, "progress"), TotalBytes: total, DownloadedBytes: total - l(x, "amount_left"), SpeedBytesPerSecond: l(x, "dlspeed"), UploadSpeedBytesPerSecond: l(x, "upspeed"), ETASeconds: l(x, "eta"), Peers: int(l(x, "num_leechs")), Seeds: int(l(x, "num_seeds")), PieceSize: pieceSize, Sequential: bo(x, "seq_dl"), FirstLastPriority: bo(x, "f_l_piece_prio"), SavePath: s(x, "save_path"), ContentPath: s(x, "content_path")}
 	if d.Progress < 1 {
 		var preferences map[string]any
 		if c.getJSON(ctx, "api/v2/app/preferences", &preferences) == nil {

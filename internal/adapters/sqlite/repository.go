@@ -518,6 +518,21 @@ func (r *Repository) DeleteDownload(ctx context.Context, id string) error {
 	return nil
 }
 
+// RemoveRelease drops a release whose torrent the tracker no longer hosts.
+// catalog_releases rows cascade with it, so the dead version disappears from
+// every title that offered it; download history keeps its release_id.
+func (r *Repository) RemoveRelease(ctx context.Context, id string) error {
+	res, err := r.db.ExecContext(ctx, "DELETE FROM releases WHERE id=?", id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 func (r *Repository) GetDownload(ctx context.Context, id string) (domain.Download, error) {
 	return scanDownload(r.db.QueryRowContext(ctx, `SELECT id,release_id,engine_id,file_index,file_path,absolute_path,size_bytes,file_offset,piece_size,state,progress,downloaded_bytes,speed_bytes_per_second,eta_seconds,peers,seeds,buffered_bytes,leased,error,created_at,updated_at FROM downloads WHERE id=?`, id))
 }
