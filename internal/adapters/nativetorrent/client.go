@@ -124,6 +124,42 @@ func (c *Client) Close() error {
 	return errors.Join(errs...)
 }
 
+// loadSession re-adds every persisted torrent and re-applies its selection
+// and paused flag. Piece completion comes from the bolt db, so nothing is
+// re-verified from disk.
+func (c *Client) loadSession() error {
+	for hash, entry := range c.session.entries {
+		if len(entry.Metainfo) == 0 {
+			continue
+		}
+		mi, err := metainfo.Load(bytes.NewReader(entry.Metainfo))
+		if err != nil {
+			return err
+		}
+		if c.torrent(hash) != nil {
+			continue
+		}
+		t, err := c.cl.AddTorrent(mi)
+		if err != nil {
+			return err
+		}
+		if err := waitInfo(context.Background(), t); err != nil {
+			return err
+		}
+		if len(entry.MediaIndices) > 0 {
+			if err := c.PrepareFiles(context.Background(), hash, entry.MediaIndices, entry.SubtitleIndices); err != nil {
+				return err
+			}
+		}
+		if entry.Paused {
+			if err := c.Pause(context.Background(), hash); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // torrent returns the live torrent for an infohash hex string, or nil.
 func (c *Client) torrent(hash string) *torrent.Torrent {
 	var ih metainfo.Hash

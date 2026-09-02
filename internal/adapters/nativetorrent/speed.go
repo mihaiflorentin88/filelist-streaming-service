@@ -46,7 +46,15 @@ func (c *Client) speedLoop() {
 	}
 }
 
-func (c *Client) stopSpeedLoop() { close(c.stop) }
+func (c *Client) stopSpeedLoop() {
+	// Close is called explicitly and again via test cleanup; closing an
+	// already-closed stop channel would panic.
+	select {
+	case <-c.stop:
+	default:
+		close(c.stop)
+	}
+}
 
 func (c *Client) currentSpeed(hash string) int64 {
 	if m := c.speeds[hash]; m != nil {

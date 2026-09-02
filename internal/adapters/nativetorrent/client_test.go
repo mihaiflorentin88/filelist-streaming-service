@@ -39,11 +39,11 @@ func buildTestMetainfo(t *testing.T, root string) (mi metainfo.MetaInfo, raw []b
 	return mi, raw
 }
 
-func newTestClient(t *testing.T) *Client {
+func newTestClientAt(t *testing.T, dir string) *Client {
 	t.Helper()
 	c, err := New(Config{
-		DataDir:     t.TempDir(),
-		SessionDir:  t.TempDir(),
+		DataDir:     filepath.Join(dir, "data"),
+		SessionDir:  filepath.Join(dir, "session"),
 		PeerPort:    0,
 		Readahead:   1 << 20,
 		StartWindow: 1 << 20,
@@ -53,6 +53,10 @@ func newTestClient(t *testing.T) *Client {
 	}
 	t.Cleanup(func() { _ = c.Close() })
 	return c
+}
+
+func newTestClient(t *testing.T) *Client {
+	return newTestClientAt(t, t.TempDir())
 }
 
 func seedContent(t *testing.T) string {
