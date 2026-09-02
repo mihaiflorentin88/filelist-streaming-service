@@ -176,7 +176,7 @@ func (s *Service) retentionSurvey(ctx context.Context) (retentionPlan, error) {
 	byRoute := map[string][]domain.Download{}
 	order := []string{}
 	for _, row := range managed {
-		if _, ok := engineHash(row.EngineID); !ok {
+		if _, ok := s.route(row.EngineID); !ok {
 			continue
 		}
 		if _, seen := byRoute[row.EngineID]; !seen {
@@ -190,7 +190,7 @@ func (s *Service) retentionSurvey(ctx context.Context) (retentionPlan, error) {
 	}
 	plan := retentionPlan{}
 	for _, engineID := range order {
-		hash, _ := engineHash(engineID)
+		hash, _ := s.route(engineID)
 		status, statusErr := s.engine.Status(ctx, hash)
 		if statusErr != nil {
 			continue

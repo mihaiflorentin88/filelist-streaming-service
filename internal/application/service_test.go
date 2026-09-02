@@ -284,3 +284,17 @@ func TestRetrySurfacesErrorWhenReleaseGone(t *testing.T) {
 		t.Fatalf("missing release was silently re-added: adds=%d", engine.adds)
 	}
 }
+
+func TestEngineRoutePrefix(t *testing.T) {
+	s := &Service{}
+	if hash, ok := s.route("qb:abc123"); !ok || hash != "abc123" {
+		t.Fatalf("default prefix must resolve qb: routes, got %q %v", hash, ok)
+	}
+	s.SetEngineRoutePrefix("native:")
+	if hash, ok := s.route("native:deadbeef"); !ok || hash != "deadbeef" {
+		t.Fatalf("native prefix must resolve, got %q %v", hash, ok)
+	}
+	if _, ok := s.route("qb:abc123"); ok {
+		t.Fatal("a foreign engine route must not resolve")
+	}
+}

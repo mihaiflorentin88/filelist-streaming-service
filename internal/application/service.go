@@ -22,27 +22,28 @@ import (
 )
 
 type Service struct {
-	catalog          TrackerCatalog
-	engine           TorrentEngine
-	repo             Repository
-	settings         *config.Store
-	subtitles        []SubtitleProvider
-	locks            sync.Map
-	metadata         MetadataProvider
-	mediaProbe       MediaProbe
-	freeSpace        func(string) (int64, error)
-	metaQueue        chan metadataRequest
-	eventMu          sync.Mutex
-	eventSubscribers map[chan domain.Event]struct{}
-	syncMu           sync.Mutex
-	refreshQueue     chan titleRefreshRequest
-	searchQueue      chan trackerSearchRequest
-	jobSlots         chan struct{}
-	trackerSlots     chan struct{}
-	pendingMu        sync.Mutex
-	pendingMetadata  map[string]bool
-	mediaInfoMu      sync.Mutex
-	mediaInfoCache   map[string]cachedMediaInfo
+	catalog           TrackerCatalog
+	engine            TorrentEngine
+	engineRoutePrefix string
+	repo              Repository
+	settings          *config.Store
+	subtitles         []SubtitleProvider
+	locks             sync.Map
+	metadata          MetadataProvider
+	mediaProbe        MediaProbe
+	freeSpace         func(string) (int64, error)
+	metaQueue         chan metadataRequest
+	eventMu           sync.Mutex
+	eventSubscribers  map[chan domain.Event]struct{}
+	syncMu            sync.Mutex
+	refreshQueue      chan titleRefreshRequest
+	searchQueue       chan trackerSearchRequest
+	jobSlots          chan struct{}
+	trackerSlots      chan struct{}
+	pendingMu         sync.Mutex
+	pendingMetadata   map[string]bool
+	mediaInfoMu       sync.Mutex
+	mediaInfoCache    map[string]cachedMediaInfo
 }
 
 type cachedMediaInfo struct {
@@ -942,7 +943,7 @@ func (s *Service) Prepare(ctx context.Context, releaseID string, fileIndex int) 
 		return domain.Download{}, fmt.Errorf("selected file is not playable")
 	}
 	fileIndex = selected.Index
-	indices := s.managedTorrentIndices(ctx, "qb:"+hash, files, fileIndex)
+	indices := s.managedTorrentIndices(ctx, s.enginePrefix()+hash, files, fileIndex)
 	if err = s.engine.PrepareFiles(ctx, hash, indices, subs); err != nil {
 		return domain.Download{}, err
 	}
@@ -956,7 +957,7 @@ func (s *Service) Prepare(ctx context.Context, releaseID string, fileIndex int) 
 	}
 	id := sourceID(releaseID, selected.Path)
 	now := time.Now().UTC()
-	d := domain.Download{ID: id, ReleaseID: releaseID, EngineID: "qb:" + hash, FileIndex: fileIndex, FilePath: selected.Path, AbsolutePath: abs, SizeBytes: selected.SizeBytes, FileOffset: selected.Offset, CreatedAt: now, UpdatedAt: now}
+	d := domain.Download{ID: id, ReleaseID: releaseID, EngineID: s.enginePrefix() + hash, FileIndex: fileIndex, FilePath: selected.Path, AbsolutePath: abs, SizeBytes: selected.SizeBytes, FileOffset: selected.Offset, CreatedAt: now, UpdatedAt: now}
 	applyDownloadStatus(&d, status, selected)
 	if old, e := s.repo.GetDownload(ctx, id); e == nil {
 		d.CreatedAt = old.CreatedAt
@@ -977,7 +978,7 @@ func (s *Service) prepareExistingTorrentFile(ctx context.Context, release domain
 		if managed.ReleaseID != release.ID {
 			continue
 		}
-		hash, ok := engineHash(managed.EngineID)
+		hash, ok := s.route(managed.EngineID)
 		if !ok {
 			continue
 		}
@@ -1111,7 +1112,7 @@ func (s *Service) PrepareSeason(ctx context.Context, releaseID string, season in
 	if managed, listErr := s.repo.ListDownloads(ctx); listErr == nil {
 		for _, download := range managed {
 			if download.ReleaseID == releaseID {
-				if existingHash, ok := engineHash(download.EngineID); ok {
+				if existingHash, ok := s.route(download.EngineID); ok {
 					engineID, hash = download.EngineID, existingHash
 					break
 				}
@@ -1132,7 +1133,7 @@ func (s *Service) PrepareSeason(ctx context.Context, releaseID string, season in
 		if err != nil {
 			return nil, err
 		}
-		engineID = "qb:" + hash
+		engineID = s.enginePrefix() + hash
 	}
 
 	var files []domain.TorrentFile
@@ -1245,7 +1246,7 @@ func (s *Service) prepareManagedDownload(ctx context.Context, d domain.Download)
 	if completedLocalFile(d) {
 		return d, nil
 	}
-	hash, ok := engineHash(d.EngineID)
+	hash, ok := s.route(d.EngineID)
 	if !ok {
 		return d, fmt.Errorf("unsupported engine route")
 	}
@@ -1314,7 +1315,7 @@ func (s *Service) Downloads(ctx context.Context) ([]domain.Download, error) {
 		if release, releaseErr := s.repo.GetRelease(ctx, items[i].ReleaseID); releaseErr == nil {
 			s.enrichDownload(ctx, &items[i], release)
 		}
-		hash, ok := engineHash(items[i].EngineID)
+		hash, ok := s.route(items[i].EngineID)
 		if !ok {
 			continue
 		}
@@ -1423,7 +1424,7 @@ func (s *Service) Manage(ctx context.Context, id, action string, _ bool) error {
 	if err != nil {
 		return err
 	}
-	hash, ok := engineHash(d.EngineID)
+	hash, ok := s.route(d.EngineID)
 	if !ok {
 		return fmt.Errorf("unsupported engine route")
 	}
@@ -1480,7 +1481,7 @@ func (s *Service) Manage(ctx context.Context, id, action string, _ bool) error {
 // and forgets every Managed download row pinned to that route. The manual
 // remove action and retention eviction share this exact path (ADR-0004).
 func (s *Service) removeTorrent(ctx context.Context, engineID string) error {
-	hash, ok := engineHash(engineID)
+	hash, ok := s.route(engineID)
 	if !ok {
 		return fmt.Errorf("unsupported engine route")
 	}
@@ -1821,7 +1822,7 @@ func (s *Service) Release(id string) {
 }
 
 func (s *Service) WaitRange(ctx context.Context, d domain.Download, start, count int64) error {
-	hash, ok := engineHash(d.EngineID)
+	hash, ok := s.route(d.EngineID)
 	if !ok {
 		return fmt.Errorf("unsupported engine route")
 	}
@@ -1908,7 +1909,28 @@ func sourceID(release, path string) string {
 	sum := sha256.Sum256([]byte(release + "\x00" + path))
 	return base64.RawURLEncoding.EncodeToString(sum[:18])
 }
-func engineHash(id string) (string, bool) { v, ok := strings.CutPrefix(id, "qb:"); return v, ok }
+
+// SetEngineRoutePrefix selects the Engine route prefix the active engine
+// issues ("qb:" or "native:"). Composition calls it at startup; the empty
+// default keeps the historical qBittorrent routing.
+func (s *Service) SetEngineRoutePrefix(prefix string) {
+	s.engineRoutePrefix = prefix
+}
+
+func (s *Service) enginePrefix() string {
+	if s.engineRoutePrefix == "" {
+		return "qb:"
+	}
+	return s.engineRoutePrefix
+}
+
+// route splits an Engine route into its engine hash. Routes issued by another
+// engine fail the prefix check and surface as unavailable downloads — the
+// behavior that already exists when an engine torrent goes missing.
+func (s *Service) route(engineID string) (string, bool) {
+	return strings.CutPrefix(engineID, s.enginePrefix())
+}
+
 func safeJoin(root, name string) (string, error) {
 	r, err := filepath.Abs(root)
 	if err != nil {

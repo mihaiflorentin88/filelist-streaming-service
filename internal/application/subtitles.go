@@ -58,7 +58,7 @@ func (s *Service) SearchSubtitles(ctx context.Context, downloadID, language stri
 		fallbackLanguage = settings.FallbackSubtitleLanguage
 	}
 	if scope != SubtitleScopeRemote {
-		hash, ok := engineHash(d.EngineID)
+		hash, ok := s.route(d.EngineID)
 		if !ok {
 			return nil, nil, fmt.Errorf("unsupported engine route")
 		}
@@ -174,7 +174,7 @@ func (s *Service) PrepareSubtitle(ctx context.Context, downloadID, providerName,
 		if parseErr != nil {
 			return domain.SubtitleAsset{}, fmt.Errorf("invalid contained subtitle id")
 		}
-		hash, ok := engineHash(d.EngineID)
+		hash, ok := s.route(d.EngineID)
 		if !ok {
 			return domain.SubtitleAsset{}, fmt.Errorf("unsupported engine route")
 		}

@@ -58,7 +58,7 @@ func (strategy progressiveTorrentStrategy) waitReadablePath(ctx context.Context,
 	if count <= 0 || start < 0 || start+count > d.SizeBytes {
 		return "", fmt.Errorf("requested media range is outside the selected file")
 	}
-	hash, ok := engineHash(d.EngineID)
+	hash, ok := strategy.service.route(d.EngineID)
 	if !ok {
 		return "", fmt.Errorf("unsupported engine route")
 	}

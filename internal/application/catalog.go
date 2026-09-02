@@ -478,7 +478,7 @@ func (s *Service) catalogTorrentManifest(ctx context.Context, releaseID string) 
 		if download.ReleaseID != releaseID {
 			continue
 		}
-		hash, ok := engineHash(download.EngineID)
+		hash, ok := s.route(download.EngineID)
 		if !ok {
 			continue
 		}
