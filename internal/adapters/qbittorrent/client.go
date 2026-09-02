@@ -462,6 +462,9 @@ func num(v any) float64 {
 	return 0
 }
 func bo(m map[string]any, k string) bool { v, _ := m[k].(bool); return v }
+
+// playable is shared-by-copy with the native torrent adapter's
+// media-extension test: the two copies must move together.
 func playable(p string) bool {
 	switch strings.ToLower(filepath.Ext(p)) {
 	case ".mkv", ".mp4", ".avi", ".mov", ".webm", ".m4v", ".ts", ".m2ts":

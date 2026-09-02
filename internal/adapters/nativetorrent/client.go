@@ -51,6 +51,35 @@ type Client struct {
 	paused  map[string]bool
 	speeds  map[string]*speedMeter
 	windows map[string]*streamWindow
+	// selected mirrors the active file selection per hash so Status can
+	// report qBittorrent-compatible selected-set completion.
+	selected map[string][]int
+	// writeErrs records the latest storage write failure per hash — the
+	// pinned library's only surfaceable per-torrent fault; writeErrHooks
+	// keeps the registered callback reachable so tests can fire it.
+	writeErrs     map[string]writeErrRec
+	writeErrHooks map[string]func(error)
+}
+
+// writeErrRec is a recorded storage write failure and when it happened.
+type writeErrRec struct {
+	err error
+	at  time.Time
+}
+
+// armWriteChunkErrorLocked arms the torrent's write-chunk callback — the
+// pinned library's only public fault surface — recording failures under the
+// hash so Status can report the canonical error state; Resume and Remove
+// clear them. Invoked wherever a torrent enters the client.
+// Caller holds c.mu.
+func (c *Client) armWriteChunkErrorLocked(hash string, t *torrent.Torrent) {
+	hook := func(err error) {
+		c.mu.Lock()
+		c.writeErrs[hash] = writeErrRec{err: err, at: time.Now()}
+		c.mu.Unlock()
+	}
+	c.writeErrHooks[hash] = hook
+	t.SetOnWriteChunkError(hook)
 }
 
 // New constructs the engine and reloads every persisted torrent from the
@@ -95,14 +124,17 @@ func New(cfg Config) (*Client, error) {
 		return nil, fmt.Errorf("native torrent client: %w", err)
 	}
 	c := &Client{
-		cl:      cl,
-		dataDir: cfg.DataDir,
-		cfg:     cfg,
-		stop:    make(chan struct{}),
-		session: newSessionStore(cfg.SessionDir, pc),
-		paused:  make(map[string]bool),
-		speeds:  make(map[string]*speedMeter),
-		windows: make(map[string]*streamWindow),
+		cl:            cl,
+		dataDir:       cfg.DataDir,
+		cfg:           cfg,
+		stop:          make(chan struct{}),
+		session:       newSessionStore(cfg.SessionDir, pc),
+		paused:        make(map[string]bool),
+		speeds:        make(map[string]*speedMeter),
+		windows:       make(map[string]*streamWindow),
+		selected:      make(map[string][]int),
+		writeErrs:     make(map[string]writeErrRec),
+		writeErrHooks: make(map[string]func(error)),
 	}
 	if err := c.loadSession(); err != nil {
 		_ = cl.Close()
@@ -146,6 +178,9 @@ func (c *Client) loadSession() error {
 		if err := waitInfo(context.Background(), t); err != nil {
 			return err
 		}
+		c.mu.Lock()
+		c.armWriteChunkErrorLocked(hash, t)
+		c.mu.Unlock()
 		if len(entry.MediaIndices) > 0 {
 			if err := c.PrepareFiles(context.Background(), hash, entry.MediaIndices, entry.SubtitleIndices); err != nil {
 				return err
@@ -213,6 +248,7 @@ func (c *Client) Add(ctx context.Context, r io.Reader, _ string) (string, error)
 	if err := waitInfo(ctx, t); err != nil {
 		return "", err
 	}
+	c.armWriteChunkErrorLocked(hash, t)
 	if err := c.session.putMeta(hash, raw); err != nil {
 		return "", fmt.Errorf("persist torrent session: %w", err)
 	}
@@ -268,21 +304,21 @@ func (c *Client) Test(_ context.Context) (string, error) {
 	n := len(c.cl.Torrents())
 	if addrs := c.cl.ListenAddrs(); len(addrs) > 0 {
 		if tcp, ok := addrs[0].(*net.TCPAddr); ok {
-			return fmt.Sprintf("native torrent engine: %d torrents, peer port %d", n, tcp.Port), nil
+			// The HTTP layer prefixes the settings-configured engine name.
+			return fmt.Sprintf("%d torrents, peer port %d", n, tcp.Port), nil
 		}
 	}
-	return fmt.Sprintf("native torrent engine: %d torrents", n), nil
+	return fmt.Sprintf("%d torrents", n), nil
 }
 
-// playable mirrors the qbit adapter's media-extension test; the adapters stay
-// deliberately independent.
+// playable is shared-by-copy with the qBittorrent adapter's media-extension
+// test: the two copies must move together.
 func playable(path string) bool {
 	switch strings.ToLower(filepath.Ext(path)) {
-	case ".mp4", ".mkv", ".avi", ".webm", ".mov", ".m4v", ".ts", ".mpg", ".mpeg":
+	case ".mkv", ".mp4", ".avi", ".mov", ".webm", ".m4v", ".ts", ".m2ts":
 		return true
-	default:
-		return false
 	}
+	return false
 }
 
 // Status reports the engine-level DTO. Tracker seeder/leecher counts are not
@@ -305,9 +341,19 @@ func (c *Client) Status(_ context.Context, hash string) (domain.DownloadStatus, 
 		progress = float64(done) / float64(total)
 	}
 	c.mu.Lock()
+	_, failed := c.writeErrs[hash]
 	paused := c.paused[hash]
 	speed := c.currentSpeed(hash)
+	sel := c.selected[hash]
 	c.mu.Unlock()
+	// qBittorrent's progress and seeding state describe the selected download
+	// set, not the whole metainfo; mirror that so a completed selection inside
+	// a season pack ever reaches the completed path.
+	if len(sel) > 0 {
+		if p, ok := selectedProgress(t, sel); ok {
+			progress = p
+		}
+	}
 	st := t.Stats()
 	eta := int64(0)
 	if speed > 0 && total > done {
@@ -315,6 +361,8 @@ func (c *Client) Status(_ context.Context, hash string) (domain.DownloadStatus, 
 	}
 	state := domain.StateDownloading
 	switch {
+	case failed:
+		state = domain.StateError
 	case paused && progress >= 1:
 		state = domain.StatePausedUP
 	case paused:
@@ -339,6 +387,25 @@ func (c *Client) Status(_ context.Context, hash string) (domain.DownloadStatus, 
 		ContentPath:         filepath.Join(c.dataDir, hash),
 		TempPathEnabled:     false,
 	}, nil
+}
+
+// selectedProgress computes progress over the selected files' bytes only,
+// mirroring qBittorrent whose progress and uploading state describe the
+// selected download set. ok is false when the selection covers no bytes.
+func selectedProgress(t *torrent.Torrent, indices []int) (progress float64, ok bool) {
+	files := t.Files()
+	var total, done int64
+	for _, i := range indices {
+		if i < 0 || i >= len(files) {
+			continue
+		}
+		total += files[i].Length()
+		done += files[i].BytesCompleted()
+	}
+	if total <= 0 {
+		return 0, false
+	}
+	return float64(done) / float64(total), true
 }
 
 // Pieces maps piece state to the qbit-compatible integer convention the
@@ -418,11 +485,18 @@ func (c *Client) PrepareFiles(_ context.Context, hash string, indices []int, sub
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.session.setSelection(hash, indices, subtitleIndices)
+	if err := c.session.setSelection(hash, indices, subtitleIndices); err != nil {
+		return fmt.Errorf("persist session: %w", err)
+	}
 	if _, ok := c.windows[hash]; !ok {
 		c.windows[hash] = &streamWindow{first: 0, last: -1}
 		c.steerLocked(t, files[indices[0]].Offset(), c.cfg.StartWindow)
 	}
+	sel := make([]int, 0, len(want))
+	for i := range want {
+		sel = append(sel, i)
+	}
+	c.selected[hash] = sel
 	return nil
 }
 
@@ -432,15 +506,17 @@ func (c *Client) PrepareFiles(_ context.Context, hash string, indices []int, sub
 // waiting for the whole file. start is a torrent-global byte offset per the
 // TorrentEngine port contract, so the file is implicit in it.
 func (c *Client) PrepareRange(_ context.Context, hash string, _ int, start, count int64) error {
-	if count <= 0 {
-		return nil
-	}
 	t := c.torrent(hash)
 	if t == nil {
 		return domain.ErrTorrentNotFound
 	}
 	if t.Info() == nil {
 		return errors.New("native engine torrent metadata not ready")
+	}
+	if count <= 0 {
+		// A non-positive window is a legitimate no-op, but only once the
+		// torrent and its metadata are known to exist.
+		return nil
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -481,7 +557,9 @@ func (c *Client) Pause(_ context.Context, hash string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.paused[hash] = true
-	c.session.setPaused(hash, true)
+	if err := c.session.setPaused(hash, true); err != nil {
+		return fmt.Errorf("persist session: %w", err)
+	}
 	return nil
 }
 
@@ -496,7 +574,12 @@ func (c *Client) Resume(_ context.Context, hash string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	delete(c.paused, hash)
-	c.session.setPaused(hash, false)
+	// Resuming is a user-initiated fresh start: a recorded storage failure no
+	// longer pins the torrent in the error state.
+	delete(c.writeErrs, hash)
+	if err := c.session.setPaused(hash, false); err != nil {
+		return fmt.Errorf("persist session: %w", err)
+	}
 	return nil
 }
 
@@ -507,23 +590,31 @@ func (c *Client) Remove(_ context.Context, hash string, deleteFiles bool) error 
 	t := c.torrent(hash)
 	c.mu.Lock()
 	delete(c.windows, hash)
+	delete(c.selected, hash)
+	delete(c.writeErrs, hash)
+	delete(c.writeErrHooks, hash)
 	paused := c.paused[hash]
 	delete(c.paused, hash)
 	delete(c.speeds, hash)
 	c.mu.Unlock()
+	// Bookkeeping and data cleanup both run to completion even when the other
+	// fails; the first error wins, joined when both fail.
+	var err error
 	if t != nil {
 		if deleteFiles {
 			c.clearPieceCompletion(hash, t)
 		}
 		t.Drop()
 	}
-	c.session.delete(hash, paused)
+	if serr := c.session.delete(hash, paused); serr != nil {
+		err = fmt.Errorf("persist session: %w", serr)
+	}
 	if deleteFiles {
-		if err := os.RemoveAll(filepath.Join(c.dataDir, hash)); err != nil {
-			return fmt.Errorf("delete torrent data: %w", err)
+		if rerr := os.RemoveAll(filepath.Join(c.dataDir, hash)); rerr != nil {
+			err = errors.Join(err, fmt.Errorf("delete torrent data: %w", rerr))
 		}
 	}
-	return nil
+	return err
 }
 
 func (c *Client) clearPieceCompletion(hash string, t *torrent.Torrent) {

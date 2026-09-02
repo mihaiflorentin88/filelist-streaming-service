@@ -321,12 +321,22 @@ func TestProgressiveSwarmDownloadsOnlySelectedFiles(t *testing.T) {
 		}
 	}
 
-	// Pause suspends transfers; Resume restores them.
+	// Completed path: the waited-for E01 range is fully downloaded, so the
+	// selected set is done and the torrent is seeding even though the
+	// deselected episode never arrived; pausing parks it in pausedUP.
+	for i := int(first); i <= int(last); i++ {
+		if pm.States[i] != 2 {
+			t.Fatalf("E01 piece %d has state %d, want 2", i, pm.States[i])
+		}
+	}
+	if st, err := c.Status(t.Context(), hash); err != nil || st.State != domain.StateSeeding {
+		t.Fatalf("completed-selection status = %+v %v, want state %q", st, err, domain.StateSeeding)
+	}
 	if err := c.Pause(t.Context(), hash); err != nil {
 		t.Fatal(err)
 	}
-	if st, _ := c.Status(t.Context(), hash); !domain.IsPaused(st.State) {
-		t.Fatalf("paused status = %q, want paused", st.State)
+	if st, err := c.Status(t.Context(), hash); err != nil || st.State != domain.StatePausedUP || !domain.IsPaused(st.State) {
+		t.Fatalf("paused completed status = %+v %v, want state %q", st, err, domain.StatePausedUP)
 	}
 	if err := c.Resume(t.Context(), hash); err != nil {
 		t.Fatal(err)
@@ -341,5 +351,52 @@ func TestProgressiveSwarmDownloadsOnlySelectedFiles(t *testing.T) {
 	}
 	if _, err := c.Status(t.Context(), hash); !errors.Is(err, domain.ErrTorrentNotFound) {
 		t.Fatalf("removed torrent must be gone, got %v", err)
+	}
+}
+
+func TestWriteChunkErrorSurfacesAndClears(t *testing.T) {
+	root := seedContent(t)
+	_, raw := buildTestMetainfo(t, root)
+	c := newTestClient(t)
+	hash, err := c.Add(t.Context(), bytes.NewReader(raw), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st, err := c.Status(t.Context(), hash); err != nil || st.State != domain.StateDownloading {
+		t.Fatalf("status = %+v %v, want %q", st, err, domain.StateDownloading)
+	}
+	// The engine arms a write-chunk callback on every torrent entering the
+	// client; fire the stored hook to simulate the library reporting a
+	// storage failure.
+	c.mu.Lock()
+	hook := c.writeErrHooks[hash]
+	c.mu.Unlock()
+	if hook == nil {
+		t.Fatal("write-chunk hook must be armed at add")
+	}
+	hook(errors.New("disk full"))
+	if st, err := c.Status(t.Context(), hash); err != nil || st.State != domain.StateError {
+		t.Fatalf("status after write-chunk failure = %+v %v, want %q", st, err, domain.StateError)
+	}
+	// Resume is a user-initiated fresh start and clears the error state.
+	if err := c.Resume(t.Context(), hash); err != nil {
+		t.Fatal(err)
+	}
+	if st, err := c.Status(t.Context(), hash); err != nil || st.State != domain.StateDownloading {
+		t.Fatalf("status after resume = %+v %v, want %q", st, err, domain.StateDownloading)
+	}
+	// Remove clears the bookkeeping along with the torrent.
+	hook(errors.New("disk full again"))
+	if err := c.Remove(t.Context(), hash, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Status(t.Context(), hash); !errors.Is(err, domain.ErrTorrentNotFound) {
+		t.Fatalf("removed torrent must be gone, got %v", err)
+	}
+	c.mu.Lock()
+	errs, hooks := len(c.writeErrs), len(c.writeErrHooks)
+	c.mu.Unlock()
+	if errs != 0 || hooks != 0 {
+		t.Fatalf("Remove must clear error bookkeeping: %d errors, %d hooks", errs, hooks)
 	}
 }

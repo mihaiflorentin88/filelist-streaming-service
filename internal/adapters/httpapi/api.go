@@ -274,7 +274,11 @@ func (a *API) testDependency(w http.ResponseWriter, r *http.Request) {
 			problem(w, 502, err)
 			return
 		}
-		write(w, 200, map[string]any{"success": true, "message": "Connected to qBittorrent " + v})
+		engine := a.settings.Get().DownloadEngine
+		if engine == "" {
+			engine = "native"
+		}
+		write(w, 200, map[string]any{"success": true, "message": "Connected to " + engine + " torrent engine: " + v})
 	case "storage":
 		message, err := a.service.TestStorage()
 		if err != nil {

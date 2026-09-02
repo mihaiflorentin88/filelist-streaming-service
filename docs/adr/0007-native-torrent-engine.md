@@ -14,10 +14,11 @@ unavailable. The native engine writes pieces in place under
 `<DownloadRoot>/<infohash>/`, seeds until eviction, keeps its session (metainfo,
 file selection, piece-completion bolt db) under `data/torrent-session`, and
 elevates exactly the byte window a seek or probe needs (`PrepareRange`), which
-qBittorrent cannot do and no-ops. Seek and probe windows are elevated with
-explicit piece-priority ranges over the public API (DownloadPieces/CancelPieces);
-reader-based steering is inert in the pinned version because reader readahead
-zeroes while not reading.
+qBittorrent cannot do and no-ops. Seek and probe windows are elevated as
+explicit piece-priority ranges set through the public per-piece setter
+(`Piece.SetPriority`), with the per-file baseline reasserting behind
+piece-level overrides (priorities Raise); reader-based steering is inert in
+the pinned version because reader readahead zeroes while not reading.
 
 ## Evidence
 
@@ -46,3 +47,7 @@ zeroes while not reading.
 - Per-tracker seeder counts are unavailable from anacrolix v1.61.0's public
   API; native-mode downloads report tracker stats as zero.
 - Retention skips foreign-engine routes: the active engine cannot delete another engine's data; the operator re-switches engines to evict (documented consequence of one-active-engine).
+- Native error surfacing in v1.61.0 is limited to disk-write failures
+  (`SetOnWriteChunkError` → canonical error state); tracker and peer failures
+  surface only as stalled progress (the WaitRange timeout at playback) — the
+  pinned library exposes no per-torrent lastError.
