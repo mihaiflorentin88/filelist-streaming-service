@@ -14,10 +14,10 @@ func TestTrackerIdentityMimicsAllowlistedClient(t *testing.T) {
 	if len(peerID) != 20 {
 		t.Fatalf("peer id must be 20 bytes, got %d", len(peerID))
 	}
-	if !strings.HasPrefix(peerID, "-qB4410-") {
-		t.Fatalf("peer id must carry the qBittorrent 4.4.1 prefix, got %q", peerID)
+	if !strings.HasPrefix(peerID, "-qB4650-") {
+		t.Fatalf("peer id must carry the whitelisted qBittorrent 4.6.5 prefix, got %q", peerID)
 	}
-	if userAgent != "qBittorrent/4.4.1" {
+	if userAgent != "qBittorrent/4.6.5" {
 		t.Fatalf("user agent = %q", userAgent)
 	}
 	other, _ := newTrackerIdentity()
