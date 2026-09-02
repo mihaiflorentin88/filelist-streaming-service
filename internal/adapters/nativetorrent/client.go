@@ -43,11 +43,13 @@ type Client struct {
 	cl      *torrent.Client
 	dataDir string
 	cfg     Config
-	// stop closes to end the speed sampler's loop (Task 5).
+	// stop closes to end the speed sampler's loop.
 	stop chan struct{}
 
 	mu      sync.Mutex
 	session *sessionStore
+	paused  map[string]bool
+	speeds  map[string]*speedMeter
 }
 
 // New constructs the engine and reloads every persisted torrent from the
@@ -97,6 +99,8 @@ func New(cfg Config) (*Client, error) {
 		cfg:     cfg,
 		stop:    make(chan struct{}),
 		session: newSessionStore(cfg.SessionDir, pc),
+		paused:  make(map[string]bool),
+		speeds:  make(map[string]*speedMeter),
 	}
 	if err := c.loadSession(); err != nil {
 		_ = cl.Close()
@@ -152,7 +156,16 @@ func (c *Client) Add(ctx context.Context, r io.Reader, _ string) (string, error)
 	if t := c.torrent(hash); t != nil {
 		return hash, nil
 	}
-	t, err := c.cl.AddTorrent(mi)
+	// Disable the library's initial hash pass: bolt persists piece completion
+	// across restarts, so a silent completion entry only means the torrent is
+	// brand new with an empty content dir. Add stays metadata-only, matching
+	// the "nothing downloads until PrepareFiles" contract.
+	spec, err := torrent.TorrentSpecFromMetaInfoErr(mi)
+	if err != nil {
+		return "", fmt.Errorf("torrent spec: %w", err)
+	}
+	spec.DisableInitialPieceCheck = true
+	t, _, err := c.cl.AddTorrentSpec(spec)
 	if err != nil {
 		return "", fmt.Errorf("add torrent: %w", err)
 	}
@@ -233,10 +246,83 @@ func playable(path string) bool {
 	}
 }
 
-// speedLoop samples per-torrent download rates until Close; the real sampler
-// lands in Task 5.
-func (c *Client) speedLoop() {}
+// Status reports the engine-level DTO. Tracker seeder/leecher counts are not
+// exposed by anacrolix v1.61.0 and are reported as zero; peers/seeds come
+// from live connection gauges.
+func (c *Client) Status(_ context.Context, hash string) (domain.DownloadStatus, error) {
+	t := c.torrent(hash)
+	if t == nil {
+		return domain.DownloadStatus{}, domain.ErrTorrentNotFound
+	}
+	info := t.Info()
+	var total, pieceSize int64
+	if info != nil {
+		total = info.TotalLength()
+		pieceSize = info.PieceLength
+	}
+	done := t.BytesCompleted()
+	progress := 0.0
+	if total > 0 {
+		progress = float64(done) / float64(total)
+	}
+	c.mu.Lock()
+	paused := c.paused[hash]
+	speed := c.currentSpeed(hash)
+	c.mu.Unlock()
+	st := t.Stats()
+	eta := int64(0)
+	if speed > 0 && total > done {
+		eta = (total - done) / speed
+	}
+	state := domain.StateDownloading
+	switch {
+	case paused && progress >= 1:
+		state = domain.StatePausedUP
+	case paused:
+		state = domain.StatePausedDL
+	case progress >= 1:
+		state = domain.StateSeeding
+	}
+	return domain.DownloadStatus{
+		Hash:                hash,
+		State:               state,
+		Progress:            progress,
+		DownloadedBytes:     done,
+		TotalBytes:          total,
+		SpeedBytesPerSecond: speed,
+		ETASeconds:          eta,
+		Peers:               st.TotalPeers,
+		Seeds:               st.ConnectedSeeders,
+		PieceSize:           pieceSize,
+		Sequential:          true,
+		FirstLastPriority:   true,
+		SavePath:            c.dataDir,
+		ContentPath:         filepath.Join(c.dataDir, hash),
+		TempPathEnabled:     false,
+	}, nil
+}
 
-// stopSpeedLoop ends the speed sampler; the real implementation lands in
-// Task 5.
-func (c *Client) stopSpeedLoop() {}
+// Pieces maps piece state to the qbit-compatible integer convention the
+// application consumes: 0 missing, 1 in progress, 2 complete.
+func (c *Client) Pieces(_ context.Context, hash string) (domain.PieceMap, error) {
+	t := c.torrent(hash)
+	if t == nil {
+		return domain.PieceMap{}, domain.ErrTorrentNotFound
+	}
+	n := int(t.NumPieces())
+	states := make([]int, n)
+	for i := range n {
+		ps := t.PieceState(i)
+		switch {
+		case ps.Complete:
+			states[i] = 2
+		case ps.Partial || ps.Checking || ps.QueuedForHash:
+			states[i] = 1
+		}
+	}
+	pieceSize := int64(0)
+	if info := t.Info(); info != nil {
+		pieceSize = info.PieceLength
+	}
+	return domain.PieceMap{States: states, PieceSize: pieceSize}, nil
+}

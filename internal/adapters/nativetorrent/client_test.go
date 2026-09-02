@@ -2,12 +2,16 @@ package nativetorrent
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/anacrolix/torrent/bencode"
 	"github.com/anacrolix/torrent/metainfo"
+
+	"github.com/mihaiflorentin88/filelist-streaming-service/internal/domain"
 )
 
 // buildTestMetainfo builds a real multi-file metainfo from files on disk and
@@ -132,5 +136,54 @@ func TestTestReportsTorrentCount(t *testing.T) {
 	}
 	if msg == "" {
 		t.Fatal("Test must return a diagnostic string")
+	}
+}
+
+func TestStatusAndPiecesWithoutActivity(t *testing.T) {
+	root := seedContent(t)
+	_, raw := buildTestMetainfo(t, root)
+	c := newTestClient(t)
+	hash, err := c.Add(t.Context(), bytes.NewReader(raw), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := c.Status(t.Context(), hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Hash != hash || st.State != domain.StateDownloading || st.Progress != 0 {
+		t.Fatalf("unexpected status %+v", st)
+	}
+	filesSum, err := c.Files(t.Context(), hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wantTotal int64
+	for _, f := range filesSum {
+		wantTotal += f.SizeBytes
+	}
+	if st.TotalBytes != wantTotal {
+		t.Fatalf("TotalBytes = %d, want %d", st.TotalBytes, wantTotal)
+	}
+	if st.SavePath == "" || !strings.HasSuffix(filepath.Join(st.ContentPath), hash) {
+		t.Fatalf("content path must live under the infohash dir: %+v", st)
+	}
+	if st.TempPathEnabled || !st.Sequential || !st.FirstLastPriority {
+		t.Fatalf("native engine reports in-place paths and always-on scheduling: %+v", st)
+	}
+	pm, err := c.Pieces(t.Context(), hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pm.PieceSize <= 0 || len(pm.States) == 0 {
+		t.Fatalf("expected piece map, got %+v", pm)
+	}
+	for _, s := range pm.States {
+		if s != 0 {
+			t.Fatalf("fresh torrent must have all pieces missing, got %v", pm.States)
+		}
+	}
+	if _, err := c.Status(t.Context(), "ffffffffffffffffffffffffffffffffffffffff"); !errors.Is(err, domain.ErrTorrentNotFound) {
+		t.Fatalf("unknown hash must map to ErrTorrentNotFound, got %v", err)
 	}
 }
