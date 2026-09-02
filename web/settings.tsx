@@ -42,12 +42,15 @@ const TABS: Array<{ id: string; label: string }> = [
   { id: 'test', label: 'Test' },
 ];
 
-const TAB_GROUPS: Record<string, Array<{ title: string; fields: SettingsRow[] }>> = {
+const TAB_GROUPS: Record<string, Array<{ title: string; fields: SettingsRow[]; when?: (current: Record<string, unknown>) => boolean }>> = {
   tracker: [
     { title: 'Tracker and metadata', fields: [['FileList URL', 'fileListUrl'], ['FileList username', 'fileListUsername'], ['FileList passkey', 'fileListPasskey', 'password'], ['TMDB API key or token', 'tmdbApiKey', 'password'], ['Metadata language', 'metadataLanguage'], ['Metadata fallback language', 'metadataFallbackLanguage']] },
   ],
   storage: [
-    { title: 'qBittorrent and storage', fields: [['qBittorrent URL', 'qbittorrentUrl'], ['qBittorrent username', 'qbittorrentUsername'], ['qBittorrent password', 'qbittorrentPassword', 'password'], ['Download root', 'downloadRoot'], ['Allocation (GB)', 'allocationGb', 'number', '0.5'], ['Free-space reserve (GB)', 'reserveGb', 'number', '0.5'], ['Eviction rules (comma separated)', 'evictionRules'], ['Protect incomplete downloads', 'protectIncomplete', 'checkbox'], ['Protect actively streamed downloads', 'protectLeased', 'checkbox'], ['Protect favorites', 'protectFavorites', 'checkbox'], ['Protect never-watched downloads', 'protectNeverWatched', 'checkbox'], ['Artwork cache path', 'artworkCachePath'], ['Artwork cache maximum bytes', 'artworkCacheMaxBytes', 'number']] },
+    { title: 'Download engine', fields: [['Download engine', 'downloadEngine', 'engine-toggle']] },
+    { title: 'Built-in torrent engine', fields: [['Torrent peer port', 'torrentPeerPort', 'number'], ['Torrent session directory', 'torrentSessionDir']], when: current => current.downloadEngine === 'native' },
+    { title: 'qBittorrent', fields: [['qBittorrent URL', 'qbittorrentUrl'], ['qBittorrent username', 'qbittorrentUsername'], ['qBittorrent password', 'qbittorrentPassword', 'password']], when: current => current.downloadEngine === 'qbittorrent' },
+    { title: 'Storage', fields: [['Download root', 'downloadRoot'], ['Allocation (GB)', 'allocationGb', 'number', '0.5'], ['Free-space reserve (GB)', 'reserveGb', 'number', '0.5'], ['Eviction rules (comma separated)', 'evictionRules'], ['Protect incomplete downloads', 'protectIncomplete', 'checkbox'], ['Protect actively streamed downloads', 'protectLeased', 'checkbox'], ['Protect favorites', 'protectFavorites', 'checkbox'], ['Protect never-watched downloads', 'protectNeverWatched', 'checkbox'], ['Artwork cache path', 'artworkCachePath'], ['Artwork cache maximum bytes', 'artworkCacheMaxBytes', 'number']] },
   ],
   playback: [
     { title: 'Playback and subtitles', fields: [['Initial buffer bytes', 'initialBufferBytes', 'number'], ['Read-ahead bytes', 'readAheadBytes', 'number'], ['Piece timeout seconds', 'pieceWaitTimeoutSeconds', 'number'], ['SubDL API URL', 'subDLUrl'], ['SubDL API key', 'subDLApiKey', 'password'], ['Preferred audio language', 'preferredAudioLanguage'], ['Preferred subtitle language', 'preferredSubtitleLanguage'], ['Fallback subtitle language', 'fallbackSubtitleLanguage'], ['Watched threshold percent', 'watchedThresholdPercent', 'number'], ['Subtitle cache path', 'subtitleCachePath'], ['Subtitle cache maximum bytes', 'subtitleCacheMaxBytes', 'number'], ['ffprobe path', 'ffprobePath'], ['FFmpeg path', 'ffmpegPath']] },
@@ -160,6 +163,14 @@ export function Settings({ value, fields, onSaved, onError, onDirtyChange }: { v
   }
   const renderField = ([label, key, type, step]: SettingsRow) => {
     const info = descriptor(key, label);
+    if (type === 'engine-toggle') {
+      // The engine choice is a two-way segmented toggle, not free text: the
+      // value is one of two known engines, and the selection drives which
+      // field groups render below it. Disabled when the environment owns it.
+      const options: Array<[string, string]> = [['native', 'Native'], ['qbittorrent', 'qBittorrent']];
+      const active = String(current[key] ?? 'native');
+      return <label class="engine-toggle"><span>{label}{info.restartRequired && <small> restart required</small>}{info.readOnly && <small> environment managed</small>}{info.help && <button type="button" class="help-button" aria-label={`Help for ${label}`} title={info.help} onClick={() => setHelp(info)}>?</button>}</span><span class="engine-toggle-options" role="group" aria-label={label}>{options.map(([engineValue, engineLabel]) => <button type="button" key={engineValue} disabled={info.readOnly} aria-pressed={active === engineValue} onClick={e => { e.preventDefault(); setCurrent({ ...current, [key]: engineValue }) }}>{engineLabel}</button>)}</span></label>;
+    }
     if (type === 'checkbox') {
       // Protection flags render as switches: a real checkbox stays in the
       // DOM (visually hidden, still focusable) for keyboard and assistive
@@ -172,13 +183,15 @@ export function Settings({ value, fields, onSaved, onError, onDirtyChange }: { v
   const panelContent = () => {
     if (tab === 'maintenance') return <><CacheCoverage /><Events onError={onError} confirmRebuild /></>;
     if (tab === 'test') return diagnostics(CONNECTIONS);
-    return <>{TAB_GROUPS[tab].map(renderGroup)}{connectionsFor(tab).length > 0 && diagnostics(connectionsFor(tab))}</>;
+    const visibleGroups = () => (TAB_GROUPS[tab] || []).filter(group => !group.when || group.when(current));
+    return <>{visibleGroups().map(renderGroup)}{connectionsFor(tab).length > 0 && diagnostics(connectionsFor(tab))}</>;
   };
-  const renderGroup = (group: { title: string; fields: SettingsRow[] }) => {
+  const renderGroup = (group: { title: string; fields: SettingsRow[]; when?: (current: Record<string, unknown>) => boolean }) => {
     // Switches read best as their own full-width list under the value fields.
-    const inputs = group.fields.filter(field => field[2] !== 'checkbox');
+    const inputs = group.fields.filter(field => field[2] !== 'checkbox' && field[2] !== 'engine-toggle');
     const switches = group.fields.filter(field => field[2] === 'checkbox');
-    return <fieldset><legend>{group.title}</legend>{inputs.length > 0 && <div class="fields">{inputs.map(renderField)}</div>}{switches.length > 0 && <div class="switch-list">{switches.map(renderField)}</div>}</fieldset>;
+    const toggles = group.fields.filter(field => field[2] === 'engine-toggle');
+    return <fieldset><legend>{group.title}</legend>{toggles.length > 0 && <div class="fields">{toggles.map(renderField)}</div>}{inputs.length > 0 && <div class="fields">{inputs.map(renderField)}</div>}{switches.length > 0 && <div class="switch-list">{switches.map(renderField)}</div>}</fieldset>;
   };
   return <>
     <form class="settings" onSubmit={save}>

@@ -883,6 +883,46 @@ progress {
  cursor: not-allowed
 }
 
+.engine-toggle {
+ display: flex;
+ align-items: center;
+ gap: 12px;
+ min-height: 44px;
+ color: var(--muted);
+ flex-wrap: wrap
+}
+
+.engine-toggle-options {
+ display: inline-flex;
+ border: 1px solid var(--line);
+ overflow: hidden
+}
+
+.engine-toggle-options button {
+ background: none;
+ border: 0;
+ border-right: 1px solid var(--line);
+ color: var(--muted);
+ padding: 8px 18px;
+ font: inherit;
+ cursor: pointer
+}
+
+.engine-toggle-options button:last-child {
+ border-right: 0
+}
+
+.engine-toggle-options button[aria-pressed="true"] {
+ background: var(--teal);
+ color: #08131a;
+ font-weight: 700
+}
+
+.engine-toggle-options button:disabled {
+ opacity: .5;
+ cursor: not-allowed
+}
+
 .switch-field {
  display: flex;
  align-items: center;

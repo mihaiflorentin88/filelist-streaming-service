@@ -14,6 +14,7 @@ const settingsValue: Record<string, unknown> = {
  fileListUrl: 'https://filelist.io', fileListUsername: 'user', fileListPasskey: '', fileListPasskeyConfigured: true,
  tmdbApiKey: '', tmdbApiKeyConfigured: true, metadataLanguage: 'en', metadataFallbackLanguage: 'en',
  qbittorrentUrl: 'http://localhost:8080', qbittorrentUsername: 'admin', qbittorrentPassword: '', qbittorrentPasswordConfigured: true,
+ downloadEngine: 'native', torrentPeerPort: 42069, torrentSessionDir: 'data/torrent-session',
  downloadRoot: '/data', allocationGb: 100, reserveGb: 5, evictionRules: ['oldest-completed'],
  protectIncomplete: true, protectLeased: false, protectFavorites: true, protectNeverWatched: false,
  artworkCachePath: 'data/artwork', artworkCacheMaxBytes: 1073741824,
@@ -29,6 +30,10 @@ const settingsValue: Record<string, unknown> = {
 const schemaFields = [
  { key: 'databasePath', label: 'Database path', help: 'Where the catalog database lives.', tvVisible: false, sensitive: false, restartRequired: true },
  { key: 'listenAddress', label: 'Listen address', help: 'HTTP listen address.', tvVisible: false, sensitive: false, restartRequired: true, readOnly: true },
+ { key: 'downloadEngine', label: 'Download engine', help: 'Selects how downloads are acquired.', tvVisible: false, sensitive: false, restartRequired: true },
+ { key: 'torrentPeerPort', label: 'Torrent peer port', help: 'Built-in engine peer port.', tvVisible: false, sensitive: false, restartRequired: true },
+ { key: 'torrentSessionDir', label: 'Torrent session directory', help: 'Built-in engine session state.', tvVisible: false, sensitive: false, restartRequired: true },
+ { key: 'qbittorrentUrl', label: 'qBittorrent URL', help: 'qBittorrent Web UI address.', tvVisible: false, sensitive: false, restartRequired: false },
 ];
 
 const catalogStatus = { observedReleases: 1200, discoverableReleases: 800, hiddenZeroSeeders: 400, fileListLatestWindowLimit: 1000 };
@@ -133,7 +138,7 @@ describe('settings tabs', () => {
   await act(async () => { settingsTabs()[1].click() });
   await settle();
   expect(location.hash).toBe('#storage');
-  expect(panel().textContent).toContain('qBittorrent URL');
+  expect(panel().textContent).toContain('Download engine');
   expect(settingsTabs()[1].getAttribute('aria-selected')).toBe('true');
  });
 
@@ -508,5 +513,44 @@ describe('settings tabs', () => {
   await act(async () => { resolve({ message: 'filelist ok' }) });
   await settle();
   expect(settingsTabs()[0].querySelector('.led')!.className).toContain('pass');
+ });
+});
+
+describe('download engine toggle', () => {
+ const engineOption = (text: string) => Array.from(panel().querySelectorAll<HTMLButtonElement>('.engine-toggle button')).find(button => button.textContent === text)!;
+ const storageTab = async () => {
+  await openSettings();
+  await act(async () => { settingsTabs()[1].click() });
+  await settle();
+ };
+
+ it('renders the engine toggle and the native engine group on the Storage tab', async () => {
+  await storageTab();
+  expect(engineOption('Native').getAttribute('aria-pressed')).toBe('true');
+  expect(engineOption('qBittorrent').getAttribute('aria-pressed')).toBe('false');
+  expect(panel().textContent).toContain('Torrent peer port');
+  expect(panel().textContent).toContain('Torrent session directory');
+  expect(panel().textContent).not.toContain('qBittorrent URL');
+ });
+
+ it('swaps the engine field groups when the toggle flips, hiding but not clearing values', async () => {
+  await storageTab();
+  await act(async () => { engineOption('qBittorrent').click() });
+  await settle();
+  expect(engineOption('qBittorrent').getAttribute('aria-pressed')).toBe('true');
+  expect(panel().textContent).toContain('qBittorrent URL');
+  expect(panel().textContent).not.toContain('Torrent peer port');
+  const qbUrl = fieldInput('qBittorrent URL');
+  expect(qbUrl).not.toBeNull();
+ });
+
+ it('marks engine fields restart required and saves the toggled engine', async () => {
+  await storageTab();
+  await act(async () => { engineOption('qBittorrent').click() });
+  const form = document.querySelector('form.settings')!;
+  await act(async () => { form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })) });
+  await settle();
+  const put = putCalls.at(-1)!;
+  expect(put.body.downloadEngine).toBe('qbittorrent');
  });
 });

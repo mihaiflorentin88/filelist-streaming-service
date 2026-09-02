@@ -406,6 +406,33 @@ func TestSettingsRoundTripEvictionRulesAndProtections(t *testing.T) {
 	}
 }
 
+func TestSettingsSchemaMarksEngineFieldsRestartRequired(t *testing.T) {
+	handler := newStubHandler(t, nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/settings/schema", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/v1/settings/schema status = %d", rec.Code)
+	}
+	var page struct {
+		Items []struct {
+			Key             string `json:"key"`
+			RestartRequired bool   `json:"restartRequired"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	restart := map[string]bool{}
+	for _, item := range page.Items {
+		restart[item.Key] = item.RestartRequired
+	}
+	for _, key := range []string{"downloadEngine", "torrentPeerPort", "torrentSessionDir"} {
+		if !restart[key] {
+			t.Fatalf("schema field %q must be marked restartRequired", key)
+		}
+	}
+}
+
 func TestSettingsSchemaDescribesEvictionFieldsForBrowserOnly(t *testing.T) {
 	handler := newStubHandler(t, nil)
 	rec := httptest.NewRecorder()
