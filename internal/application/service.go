@@ -1262,7 +1262,7 @@ func (s *Service) prepareManagedDownload(ctx context.Context, d domain.Download)
 		}
 		return d, err
 	}
-	if strings.HasPrefix(strings.ToLower(status.State), "paused") {
+	if domain.IsPaused(status.State) {
 		if err = s.engine.Resume(ctx, hash); err != nil {
 			return d, fmt.Errorf("resume torrent for playback: %w", err)
 		}

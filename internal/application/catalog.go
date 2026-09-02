@@ -303,6 +303,7 @@ func (state catalogStateIndex) sourceState(source domain.CatalogSource) domain.M
 	if selected != nil {
 		result.DownloadID = selected.ID
 		result.Progress = selected.Progress
+		// matches canonical (domain/state.go) and legacy qBittorrent state strings
 		stateName := strings.ToLower(selected.State)
 		switch {
 		case selected.Progress >= 0.999:

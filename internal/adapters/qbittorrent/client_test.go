@@ -411,3 +411,21 @@ func TestHalfConfiguredCredentialsAreRejected(t *testing.T) {
 		})
 	}
 }
+
+func TestCanonicalState(t *testing.T) {
+	cases := map[string]string{
+		"downloading": domain.StateDownloading, "metaDL": domain.StateDownloading,
+		"forcedDL": domain.StateDownloading, "stalledDL": domain.StateDownloading,
+		"uploading": domain.StateSeeding, "stalledUP": domain.StateSeeding,
+		"pausedDL": domain.StatePausedDL, "stoppedDL": domain.StatePausedDL,
+		"pausedUP": domain.StatePausedUP, "stoppedUP": domain.StatePausedUP,
+		"queuedDL": domain.StateQueued, "queuedUP": domain.StateQueued,
+		"error": domain.StateError, "missingFiles": domain.StateError,
+		"weird": "weird",
+	}
+	for raw, want := range cases {
+		if got := canonicalState(raw); got != want {
+			t.Errorf("canonicalState(%q) = %q, want %q", raw, got, want)
+		}
+	}
+}
