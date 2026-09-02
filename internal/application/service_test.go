@@ -298,3 +298,29 @@ func TestEngineRoutePrefix(t *testing.T) {
 		t.Fatal("a foreign engine route must not resolve")
 	}
 }
+
+func TestDownloadsMarksForeignEngineRouteUnavailable(t *testing.T) {
+	repo, settings := retryHarness(t)
+	ctx := context.Background()
+	release := domain.TorrentRelease{ID: "release", Name: "Show.S01.1080p.WEB-DL", Category: "Series"}
+	if err := repo.UpsertReleases(ctx, []domain.TorrentRelease{release}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	stale := domain.Download{ID: "episode", ReleaseID: "release", EngineID: "qb:deadhash", FileIndex: 2, FilePath: "Show.S01E02.mkv", State: "downloading", CreatedAt: now, UpdatedAt: now}
+	if err := repo.SaveDownload(ctx, stale); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(openCatalog{}, &retryEngine{}, repo, settings)
+	service.SetEngineRoutePrefix("native:")
+	items, err := service.Downloads(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected the persisted row to list, got %d items", len(items))
+	}
+	if items[0].State != "unavailable" || items[0].Error == "" {
+		t.Fatalf("a foreign qb: row must surface unavailable under native routing, got state=%q error=%q", items[0].State, items[0].Error)
+	}
+}

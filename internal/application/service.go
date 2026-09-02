@@ -1316,12 +1316,18 @@ func (s *Service) Downloads(ctx context.Context) ([]domain.Download, error) {
 			s.enrichDownload(ctx, &items[i], release)
 		}
 		hash, ok := s.route(items[i].EngineID)
-		if !ok {
-			continue
+		var st domain.DownloadStatus
+		statusErr := error(nil)
+		if ok {
+			st, statusErr = s.engine.Status(ctx, hash)
+		} else {
+			// The active engine cannot describe a row issued under a foreign
+			// Engine prefix; it surfaces as unavailable rather than serving
+			// stale persisted state.
+			statusErr = fmt.Errorf("unsupported engine route")
 		}
-		st, e := s.engine.Status(ctx, hash)
-		if e != nil {
-			items[i].Error = e.Error()
+		if statusErr != nil {
+			items[i].Error = statusErr.Error()
 			items[i].State = "unavailable"
 		} else {
 			var selected *domain.TorrentFile
