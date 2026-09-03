@@ -69,6 +69,8 @@ go run ./cmd/server
 
 Open `http://127.0.0.1:8097`, enter FileList and qBittorrent settings, and save them. Runtime settings are stored in `data/settings.json` with mode `0600`. Browser Settings includes dependency-specific Test buttons and copyable field help. The repository `.env` is for developer diagnostics only and is never read by the application.
 
+The first start asks for the three settings it cannot guess: a writable download root, the FileList username, and the passkey. Answers are stored into `data/settings.json`; headless environments without a terminal skip the questions, keep the defaults, and log a warning, so set `FILELIST_STREAMING_DOWNLOAD_ROOT` (or a settings file) for systemd.
+
 The default trusted networks are loopback and RFC1918 private address ranges. Narrow them in Settings when practical. Do not expose this no-login service to the internet.
 
 ## Docker

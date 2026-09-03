@@ -83,11 +83,12 @@ func Defaults() Settings {
 }
 
 type Store struct {
-	mu         sync.RWMutex
-	path       string
-	base       Settings
-	value      Settings
-	envManaged map[string]bool
+	mu           sync.RWMutex
+	path         string
+	base         Settings
+	value        Settings
+	envManaged   map[string]bool
+	fileProvided map[string]bool
 }
 
 func Load() (*Store, error) {
@@ -96,7 +97,7 @@ func Load() (*Store, error) {
 		path = DefaultSettingsPath
 	}
 	base := Defaults()
-	s := &Store{path: path, envManaged: map[string]bool{}}
+	s := &Store{path: path, envManaged: map[string]bool{}, fileProvided: map[string]bool{}}
 	b, err := os.ReadFile(s.path)
 	if err == nil {
 		if err = json.Unmarshal(b, &base); err != nil {
@@ -116,6 +117,11 @@ func Load() (*Store, error) {
 		var present map[string]json.RawMessage
 		if err := json.Unmarshal(b, &present); err != nil {
 			return nil, fmt.Errorf("decode settings: %w", err)
+		}
+		for _, key := range requiredKeys {
+			if _, ok := present[key]; ok {
+				s.fileProvided[key] = true
+			}
 		}
 		if _, ok := present["evictionRules"]; !ok {
 			base.EvictionRules = []string{"oldest-completed"}

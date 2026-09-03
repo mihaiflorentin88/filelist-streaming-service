@@ -5,6 +5,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/mihaiflorentin88/filelist-streaming-service/internal/adapters/filelist"
@@ -17,6 +19,7 @@ import (
 	"github.com/mihaiflorentin88/filelist-streaming-service/internal/adapters/tmdb"
 	"github.com/mihaiflorentin88/filelist-streaming-service/internal/application"
 	"github.com/mihaiflorentin88/filelist-streaming-service/internal/platform/config"
+	"golang.org/x/term"
 )
 
 var Version = "dev"
@@ -33,6 +36,40 @@ func New(log *slog.Logger) (*App, error) {
 	settings, err := config.Load()
 	if err != nil {
 		return nil, err
+	}
+	// First-run onboarding: when a required setting is neither in the
+	// settings file nor the environment, ask for it before the engine is
+	// built, so an unwritable default download root becomes a question
+	// instead of a crash loop. Headless runs cannot answer and fall back
+	// to the defaults with a warning.
+	if missing := settings.MissingRequired(); len(missing) > 0 {
+		if term.IsTerminal(int(os.Stdin.Fd())) {
+			console := config.Console{
+				In:  os.Stdin,
+				Out: os.Stdout,
+				Secret: func() ([]byte, error) {
+					return term.ReadPassword(int(os.Stdin.Fd()))
+				},
+			}
+			if err := config.PromptRequired(settings, console, true); err != nil {
+				return nil, err
+			}
+		} else {
+			log.Warn("required settings missing; continuing with defaults", "settings", strings.Join(missing, ", "))
+		}
+	}
+	// Media tools: discover ffprobe/ffmpeg on PATH when the configured
+	// paths do not exist, persisting what is found. A missing tool only
+	// degrades subtitle probing and audio fallback at runtime, so warn
+	// instead of failing startup.
+	unfound, err := settings.ResolveMediaTools()
+	if err != nil {
+		return nil, err
+	}
+	if len(unfound) > 0 {
+		log.Warn("media tools not found; subtitle probing and audio fallback are unavailable",
+			"tools", strings.Join(unfound, ", "),
+			"hint", "install ffmpeg (brew install ffmpeg, apt install ffmpeg) or set the paths in Settings")
 	}
 	current := settings.Get()
 	repo, err := sqlite.Open(current.DatabasePath)

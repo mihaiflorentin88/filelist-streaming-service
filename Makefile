@@ -1,4 +1,4 @@
-.PHONY: check test build build-arm64 build-all frontend tizen-wgt validate-tizen-wgt smoke-tizen-engine deploy-pi bootstrap-server-dry-run docker-configure docker-validate docker-import-pi docker-prepare docker-up docker-down docker-logs docker-check docker-urls docker-smoke-stream
+.PHONY: check test build build-arm64 build-all web frontend tizen-wgt validate-tizen-wgt smoke-tizen-engine deploy-pi bootstrap-server-dry-run docker-configure docker-validate docker-import-pi docker-prepare docker-up docker-down docker-logs docker-check docker-urls docker-smoke-stream
 
 VERSION ?= $(shell tr -d '[:space:]' < VERSION)
 PI_HOST ?=
@@ -19,21 +19,30 @@ test:
 	GOCACHE="$(GO_CACHE)" go test -race ./...
 	python3 -m unittest discover -s tools/tests -p 'test_*.py'
 
-build:
+build: web
 	GOCACHE="$(GO_CACHE)" CGO_ENABLED=0 go build -trimpath -ldflags="$(GO_LDFLAGS)" -o bin/filelist-streaming ./cmd/server
 
-build-arm64:
+build-arm64: web
 	GOCACHE="$(GO_CACHE)" CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="$(GO_LDFLAGS)" -o bin/filelist-streaming-linux-arm64 ./cmd/server
 
 # Six-platform release binaries (windows/linux/darwin x amd64/arm64). The
 # binary is cgo-free everywhere; the free-space probe carries per-OS builds.
-build-all:
+# The web prerequisite refreshes the embedded UI once for all six binaries.
+build-all: web
 	GOCACHE="$(GO_CACHE)" CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -trimpath -ldflags="$(GO_LDFLAGS)" -o bin/filelist-streaming-linux-amd64 ./cmd/server
 	GOCACHE="$(GO_CACHE)" CGO_ENABLED=0 GOOS=linux   GOARCH=arm64 go build -trimpath -ldflags="$(GO_LDFLAGS)" -o bin/filelist-streaming-linux-arm64 ./cmd/server
 	GOCACHE="$(GO_CACHE)" CGO_ENABLED=0 GOOS=darwin  GOARCH=amd64 go build -trimpath -ldflags="$(GO_LDFLAGS)" -o bin/filelist-streaming-darwin-amd64 ./cmd/server
 	GOCACHE="$(GO_CACHE)" CGO_ENABLED=0 GOOS=darwin  GOARCH=arm64 go build -trimpath -ldflags="$(GO_LDFLAGS)" -o bin/filelist-streaming-darwin-arm64 ./cmd/server
 	GOCACHE="$(GO_CACHE)" CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="$(GO_LDFLAGS)" -o bin/filelist-streaming-windows-amd64.exe ./cmd/server
 	GOCACHE="$(GO_CACHE)" CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -trimpath -ldflags="$(GO_LDFLAGS)" -o bin/filelist-streaming-windows-arm64.exe ./cmd/server
+
+# web refreshes the browser build that `go:embed static/*` freezes into the
+# server binary, so the build* targets never ship a stale UI. It runs the
+# same pinned node:24 image as `frontend` but only builds @filelist/web; the
+# Tizen client and WGT packing stay in `frontend`. static/ is git-ignored.
+web:
+	docker build -f deploy/docker/Dockerfile.frontend -t filelist-frontend-build .
+	docker run --rm --user "$(shell id -u):$(shell id -g)" -v "$(CURDIR):/src" -v /src/node_modules -v /src/clients/tizen/node_modules filelist-frontend-build npm run build:web
 
 frontend:
 	docker build -f deploy/docker/Dockerfile.frontend -t filelist-frontend-build .
