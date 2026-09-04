@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Name=FileList Streaming
+Comment=Torrent-powered FileList streaming media server
+Exec=/usr/local/bin/filelist-streaming %u
+Terminal=false
+Type=Application
+Icon=filelist-streaming
+Categories=Network;AudioVideo;
+StartupWMClass=filelist-streaming

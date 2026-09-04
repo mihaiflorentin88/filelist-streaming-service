@@ -34,6 +34,15 @@ clients/tizen/.build/
 *.sarif
 coverage/
 
+.task/
+
+# Generated desktop packaging assets (wails3 generate icons/syso output,
+# derived from build/appicon.png on every build)
+cmd/server/*.syso
+build/darwin/icons.icns
+build/darwin/Assets.car
+build/windows/icon.ico
+
 # JavaScript/Python tooling
 node_modules/
 **/node_modules/

@@ -1,0 +1,40 @@
+version: '3'
+
+# Minimal wails3 task wiring for the desktop-GUI packaging flows the spec
+# routes through `wails3 build` / `wails3 package`:
+#   - darwin:  native cgo build + .app bundling (make build / package-darwin)
+#   - windows: cgo-free build with icon .syso + -H windowsgui (make build-all)
+# The linux GUI cross-builds are recorded verbatim in the Makefile (docker
+# wails-cross, see the build-arm64 target) and deliberately have no task
+# here. Generated artifacts (bin/, cmd/server/*.syso, build/darwin/icons.icns,
+# build/windows/icon.ico) are git-ignored; the icons regenerate from
+# build/appicon.png automatically on every build.
+
+vars:
+  APP_NAME: filelist-streaming
+  BIN_DIR: bin
+  # Target OS for build/package. Defaults to the host OS; `wails3 build` /
+  # `wails3 package` dispatch through these root tasks with GOOS/ARCH passed
+  # as task variables (wails3 internal/commands/task_wrapper.go).
+  GOOS: '{{.GOOS | default OS}}'
+
+includes:
+  common: ./build/Taskfile.yml
+  windows: ./build/windows/Taskfile.yml
+  darwin: ./build/darwin/Taskfile.yml
+
+tasks:
+  build:
+    summary: Builds the application (dispatches to <GOOS>:build)
+    cmds:
+      - task: "{{.GOOS}}:build"
+
+  package:
+    summary: Packages a production build (dispatches to <GOOS>:package)
+    cmds:
+      - task: "{{.GOOS}}:package"
+
+  setup:docker:
+    summary: Builds the wails-cross Docker image used by the Makefile linux cross-builds
+    cmds:
+      - task: common:setup:docker

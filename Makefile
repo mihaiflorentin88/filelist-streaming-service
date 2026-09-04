@@ -1,4 +1,4 @@
-.PHONY: check test build build-arm64 build-all web frontend tizen-wgt validate-tizen-wgt smoke-tizen-engine deploy-pi bootstrap-server-dry-run
+.PHONY: check test build build-arm64 build-all desktop-assets package-darwin wails-cross web frontend tizen-wgt validate-tizen-wgt smoke-tizen-engine deploy-pi bootstrap-server-dry-run
 
 VERSION ?= $(shell tr -d '[:space:]' < VERSION)
 PI_HOST ?=
@@ -7,6 +7,13 @@ TIZEN_TARGET ?= 7.0
 TIZEN_WGT := clients/tizen/.build/artifacts/FileListTV-$(TIZEN_VERSION).wgt
 GO_CACHE ?= /tmp/filelist-streaming-go-cache
 GO_LDFLAGS := -s -w -X github.com/mihaiflorentin88/filelist-streaming-service/internal/composition.Version=$(VERSION)
+
+# Desktop GUI tooling. wails3 (v3.0.0-beta.16) drives the darwin builds and
+# packaging plus icon/syso generation (Taskfiles: Taskfile.yml, build/).
+WAILS3 ?= wails3
+# GOMODCACHE bind-mount flags for the wails-cross containers (wails3 tool
+# docker-mounts); keeps the cross builds off the network for vendored modules.
+WAILS_DOCKER_MOUNTS := $(shell $(WAILS3) tool docker-mounts)
 
 check:
 	GOCACHE="$(GO_CACHE)" go test ./...
@@ -18,22 +25,88 @@ test:
 	GOCACHE="$(GO_CACHE)" go test -race ./...
 	python3 -m unittest discover -s tools/tests -p 'test_*.py'
 
-build: web
-	GOCACHE="$(GO_CACHE)" CGO_ENABLED=0 go build -trimpath -ldflags="$(GO_LDFLAGS)" -o bin/filelist-streaming ./cmd/server
+# Host-native cgo GUI build (macOS host -> darwin/arm64). Requires: wails3
+# (icons + build task) and Docker (web + desktop-assets prerequisites).
+# The binary embeds both UIs: internal/gui/static (desktop) and
+# internal/adapters/httpapi/static (browser), so both asset builds run first.
+build: web desktop-assets
+	GOCACHE="$(GO_CACHE)" $(WAILS3) build GO_LDFLAGS="$(GO_LDFLAGS)"
 
-build-arm64: web
-	GOCACHE="$(GO_CACHE)" CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="$(GO_LDFLAGS)" -o bin/filelist-streaming-linux-arm64 ./cmd/server
+# Desktop GUI frontend (Preact) -> internal/gui/static, dockerized exactly
+# like `web` (same image, workspace-scoped npm script). Requires Docker.
+desktop-assets:
+	docker build -f deploy/docker/Dockerfile.frontend -t filelist-frontend-build .
+	docker run --rm --user "$(shell id -u):$(shell id -g)" -v "$(CURDIR):/src" -v /src/node_modules -v /src/clients/tizen/node_modules filelist-frontend-build npm run build:desktop
 
-# Six-platform release binaries (windows/linux/darwin x amd64/arm64). The
-# binary is cgo-free everywhere; the free-space probe carries per-OS builds.
-# The web prerequisite refreshes the embedded UI once for all six binaries.
-build-all: web
-	GOCACHE="$(GO_CACHE)" CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -trimpath -ldflags="$(GO_LDFLAGS)" -o bin/filelist-streaming-linux-amd64 ./cmd/server
-	GOCACHE="$(GO_CACHE)" CGO_ENABLED=0 GOOS=linux   GOARCH=arm64 go build -trimpath -ldflags="$(GO_LDFLAGS)" -o bin/filelist-streaming-linux-arm64 ./cmd/server
-	GOCACHE="$(GO_CACHE)" CGO_ENABLED=0 GOOS=darwin  GOARCH=amd64 go build -trimpath -ldflags="$(GO_LDFLAGS)" -o bin/filelist-streaming-darwin-amd64 ./cmd/server
-	GOCACHE="$(GO_CACHE)" CGO_ENABLED=0 GOOS=darwin  GOARCH=arm64 go build -trimpath -ldflags="$(GO_LDFLAGS)" -o bin/filelist-streaming-darwin-arm64 ./cmd/server
-	GOCACHE="$(GO_CACHE)" CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="$(GO_LDFLAGS)" -o bin/filelist-streaming-windows-amd64.exe ./cmd/server
-	GOCACHE="$(GO_CACHE)" CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -trimpath -ldflags="$(GO_LDFLAGS)" -o bin/filelist-streaming-windows-arm64.exe ./cmd/server
+# macOS .app bundle (make build-all first => universal arm64+amd64 via lipo).
+# With only one slice present it rebuilds and bundles the host-arch binary.
+# Output: bin/FileList Streaming.app (build/darwin/Info.plist metadata).
+package-darwin: web desktop-assets
+	@if [ -f bin/filelist-streaming-darwin-arm64 ] && [ -f bin/filelist-streaming-darwin-amd64 ]; then \
+		echo ">> Universal .app: both darwin arch slices present, merging with lipo"; \
+		lipo -create -output bin/filelist-streaming \
+			bin/filelist-streaming-darwin-arm64 bin/filelist-streaming-darwin-amd64; \
+		GOCACHE="$(GO_CACHE)" $(WAILS3) task darwin:package:existing BUNDLE_NAME="FileList Streaming"; \
+	else \
+		GOCACHE="$(GO_CACHE)" $(WAILS3) package BUNDLE_NAME="FileList Streaming" GO_LDFLAGS="$(GO_LDFLAGS)"; \
+	fi
+
+# Builds the wails-cross images used by the linux GUI cross-builds below.
+# First run pulls/builds ~800MB+ per platform; afterwards Docker's layer
+# cache makes this a no-op. Equivalent to running `wails3 task setup:docker`
+# once (host arch) plus an amd64-variant image for the emulated amd64 slice.
+wails-cross:
+	$(WAILS3) task setup:docker
+	docker build --platform linux/amd64 -t wails-cross:amd64 -f build/docker/Dockerfile.cross build/docker/
+
+# Linux/arm64 GUI binary via the wails Docker cross toolchain. This is the
+# exact invocation Task 15's pi-deploy depends on — do not paraphrase it.
+# Requires: web + desktop-assets (embedded UIs), the wails-cross image
+# (order-only `wails-cross` prerequisite; `wails3 task setup:docker` once),
+# wails3 (docker-mounts), and an arm64-capable Docker host. The container
+# compiles natively with gcc against gtk3/webkit2gtk-4.1 (the `gtk3` tag —
+# what Raspberry Pi OS ships); production drops the wails dev tools.
+build-arm64: web desktop-assets | wails-cross
+	docker run --rm -v "$(CURDIR):/app" -w /app $(WAILS_DOCKER_MOUNTS) \
+		-v filelist-go-build-linux-arm64:/root/.cache/go-build \
+		-e CGO_ENABLED=1 -e GOOS=linux -e GOARCH=arm64 -e CC=gcc \
+		--entrypoint go wails-cross build \
+		-tags production,gtk3 -trimpath -buildvcs=false \
+		-ldflags="$(GO_LDFLAGS)" \
+		-o bin/filelist-streaming-linux-arm64 ./cmd/server
+
+# Seven release binaries. Per-target prerequisites:
+#   - all: web + desktop-assets once (embedded UIs), wails3 on PATH.
+#   - windows amd64/arm64: cgo-free; icon/version resources via
+#     cmd/server/wails_windows_<arch>.syso (wails3 generate syso, generated
+#     and removed per build, git-ignored), GUI subsystem via -H windowsgui.
+#   - darwin arm64: native on a macOS host (wails3 task darwin:build).
+#     darwin amd64: native cross via clang -arch x86_64.
+#   - linux amd64/arm64 GUI: docker wails-cross containers (same invocation
+#     shape as build-arm64); amd64 needs --platform linux/amd64 (emulated on
+#     arm64 hosts — expect a long build).
+#   - linux armv7: pure headless (CGO_ENABLED=0; internal/gui compiles to
+#     the ErrNoDisplay fallback via build tags, no webkit2gtk needed).
+build-all: web desktop-assets | wails-cross
+	GOCACHE="$(GO_CACHE)" $(WAILS3) task windows:build ARCH=amd64 OUTPUT=bin/filelist-streaming-windows-amd64.exe GO_LDFLAGS="$(GO_LDFLAGS)"
+	GOCACHE="$(GO_CACHE)" $(WAILS3) task windows:build ARCH=arm64 OUTPUT=bin/filelist-streaming-windows-arm64.exe GO_LDFLAGS="$(GO_LDFLAGS)"
+	GOCACHE="$(GO_CACHE)" $(WAILS3) task darwin:build ARCH=arm64 OUTPUT=bin/filelist-streaming-darwin-arm64 GO_LDFLAGS="$(GO_LDFLAGS)"
+	GOCACHE="$(GO_CACHE)" $(WAILS3) task darwin:build ARCH=amd64 CGO_FLAGS="-arch x86_64 -mmacosx-version-min=11.0" OUTPUT=bin/filelist-streaming-darwin-amd64 GO_LDFLAGS="$(GO_LDFLAGS)"
+	docker run --rm -v "$(CURDIR):/app" -w /app $(WAILS_DOCKER_MOUNTS) \
+		-v filelist-go-build-linux-arm64:/root/.cache/go-build \
+		-e CGO_ENABLED=1 -e GOOS=linux -e GOARCH=arm64 -e CC=gcc \
+		--entrypoint go wails-cross build \
+		-tags production,gtk3 -trimpath -buildvcs=false \
+		-ldflags="$(GO_LDFLAGS)" \
+		-o bin/filelist-streaming-linux-arm64 ./cmd/server
+	docker run --rm --platform linux/amd64 -v "$(CURDIR):/app" -w /app $(WAILS_DOCKER_MOUNTS) \
+		-v filelist-go-build-linux-amd64:/root/.cache/go-build \
+		-e CGO_ENABLED=1 -e GOOS=linux -e GOARCH=amd64 -e CC=gcc \
+		--entrypoint go wails-cross:amd64 build \
+		-tags production,gtk3 -trimpath -buildvcs=false \
+		-ldflags="$(GO_LDFLAGS)" \
+		-o bin/filelist-streaming-linux-amd64 ./cmd/server
+	GOCACHE="$(GO_CACHE)" CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -trimpath -ldflags="$(GO_LDFLAGS)" -o bin/filelist-streaming-linux-armv7 ./cmd/server
 
 # web refreshes the browser build that `go:embed static/*` freezes into the
 # server binary, so the build* targets never ship a stale UI. It runs the
@@ -88,4 +161,3 @@ deploy-pi: build-arm64
 bootstrap-server-dry-run:
 	@echo "Review only; this target does not install packages."
 	sudo sh deploy/bootstrap-server.sh --confirm-server-install --dry-run
-

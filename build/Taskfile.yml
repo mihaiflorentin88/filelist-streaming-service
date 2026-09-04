@@ -1,0 +1,26 @@
+version: '3'
+
+tasks:
+  generate:icons:
+    summary: Generates build/darwin/icons.icns and build/windows/icon.ico from build/appicon.png
+    run: once
+    dir: build
+    sources:
+      - appicon.png
+    generates:
+      - darwin/icons.icns
+      - windows/icon.ico
+    cmds:
+      - wails3 generate icons -input appicon.png -macfilename darwin/icons.icns -windowsfilename windows/icon.ico
+
+  setup:docker:
+    summary: Builds the wails-cross cross-compilation image (~800MB download, run once)
+    desc: |
+      Used by the Makefile linux GUI cross-builds (make build-arm64 and the
+      linux lines of make build-all). Safe to re-run: Docker layer-caches
+      every step, so this is a no-op once the image exists.
+    preconditions:
+      - sh: docker info > /dev/null 2>&1
+        msg: "Docker is required to build the wails-cross image."
+    cmds:
+      - docker build -t wails-cross -f build/docker/Dockerfile.cross build/docker/

@@ -1,0 +1,28 @@
+version: '3'
+
+includes:
+  common: ../Taskfile.yml
+
+tasks:
+  build:
+    summary: CGO-free windowsgui .exe with icon + version resources (.syso)
+    deps:
+      - task: common:generate:icons
+    cmds:
+      - task: generate:syso
+      - go build -tags production -trimpath -buildvcs=false -ldflags="-H windowsgui {{.GO_LDFLAGS}}" -o "{{.OUTPUT}}" ./cmd/server
+      - rm -f cmd/server/*.syso
+    vars:
+      DEFAULT_OUTPUT: '{{printf "%s/%s.exe" .BIN_DIR .APP_NAME}}'
+      OUTPUT: '{{.OUTPUT | default .DEFAULT_OUTPUT}}'
+      GO_LDFLAGS: '{{.GO_LDFLAGS | default "-s -w"}}'
+    env:
+      GOOS: windows
+      CGO_ENABLED: 0
+      GOARCH: '{{.ARCH | default ARCH}}'
+
+  generate:syso:
+    summary: Embeds icon + version info into cmd/server/wails_windows_<arch>.syso
+    dir: build
+    cmds:
+      - wails3 generate syso -arch {{.ARCH | default ARCH}} -icon windows/icon.ico -manifest windows/wails.exe.manifest -info windows/info.json -out ../cmd/server/wails_windows_{{.ARCH | default ARCH}}.syso

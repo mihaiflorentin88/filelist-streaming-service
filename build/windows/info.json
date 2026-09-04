@@ -1,0 +1,15 @@
+{
+	"fixed": {
+		"file_version": "0.3.0"
+	},
+	"info": {
+		"0000": {
+			"ProductVersion": "0.3.0",
+			"CompanyName": "FileList Streaming",
+			"FileDescription": "FileList Streaming media server",
+			"LegalCopyright": "© 2026 FileList Streaming",
+			"ProductName": "FileList Streaming",
+			"Comments": "Torrent-powered FileList streaming desktop app"
+		}
+	}
+}
