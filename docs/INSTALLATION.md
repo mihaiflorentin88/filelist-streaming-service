@@ -23,6 +23,7 @@ Binaries for every supported platform are on the [releases page](https://github.
 | `filelist-streaming-linux-armv7` | Linux, 32-bit ARM |
 | `filelist-streaming-darwin-arm64` | Mac with Apple Silicon |
 | `filelist-streaming-darwin-amd64` | Intel Mac |
+| `filelist-streaming-windows-amd64.exe` | Windows, 64-bit x86 |
 | `filelist-streaming-windows-arm64.exe` | Windows, 64-bit ARM |
 
 Releases also contain `SHA256SUMS` (`sha256sum -c SHA256SUMS --ignore-missing`), SBOMs, and the unsigned Tizen `FileListTV-<version>.wgt`.
