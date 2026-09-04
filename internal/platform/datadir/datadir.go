@@ -27,6 +27,12 @@ func Relocate(exePath, from, to string) error {
 	if absTo == from {
 		return fmt.Errorf("new data location is the current location")
 	}
+	// A target inside the source would make the copy walk its own
+	// destination — a self-copy recursion leaving a junk tree inside the
+	// live data dir. Refuse like the equality case above.
+	if prefix := from + string(filepath.Separator); strings.HasPrefix(absTo, prefix) {
+		return fmt.Errorf("target %s is inside the current data directory", absTo)
+	}
 	if entries, err := os.ReadDir(absTo); err == nil && len(entries) > 0 {
 		return fmt.Errorf("target %s is not empty", absTo)
 	} else if err != nil && !os.IsNotExist(err) {

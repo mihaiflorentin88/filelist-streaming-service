@@ -4,6 +4,7 @@ import { DownloadsPage } from './pages/DownloadsPage';
 import { JobsPage } from './pages/JobsPage';
 import { ServerPage } from './pages/ServerPage';
 import { SettingsPage } from './pages/SettingsPage';
+import './shell.css';
 import '@filelist/web/style.css';
 
 // Task 10 appended Server and Settings: one View member, one sections

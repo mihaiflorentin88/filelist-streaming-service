@@ -1,13 +1,16 @@
 package gui
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/mihaiflorentin88/filelist-streaming-service/internal/platform/autostart"
 	"github.com/mihaiflorentin88/filelist-streaming-service/internal/platform/config"
 	"github.com/mihaiflorentin88/filelist-streaming-service/internal/platform/datadir"
 )
@@ -281,5 +284,194 @@ func TestRemapDataDirPathsEdges(t *testing.T) {
 	}
 	if !strings.Contains(text, `"instanceName": "kept"`) || !strings.Contains(text, `"futureKey"`) {
 		t.Fatalf("unknown keys must survive the raw rewrite: %s", text)
+	}
+}
+
+// TestChangeDataDirRefusesNestedTarget pins the bindings-level inheritance
+// of datadir's self-copy guard: a target inside the current data dir is
+// refused with datadir's error, before anything moves.
+func TestChangeDataDirRefusesNestedTarget(t *testing.T) {
+	oldDir := t.TempDir()
+	exeDir := t.TempDir()
+
+	b, sup, probe := relocatableBindings(t, oldDir, exeDir)
+
+	err := b.ChangeDataDir(filepath.Join(oldDir, "nested"))
+	if err == nil || !strings.Contains(err.Error(), "is inside the current data directory") {
+		t.Fatalf("nested target error = %v", err)
+	}
+	if sup.State() != StateStopped || probe.count() != 0 {
+		t.Fatalf("refusal must not touch the lifecycle (calls=%d, state=%s)", probe.count(), sup.State())
+	}
+	if _, err := os.Stat(filepath.Join(oldDir, "settings.json")); err != nil {
+		t.Fatalf("source must stay untouched: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(oldDir, "nested")); !os.IsNotExist(err) {
+		t.Fatal("nested target must not be created")
+	}
+}
+
+// TestChangeDataDirReregistersAutostart pins the stale-entry fix: the
+// autostart artifact pins --data-dir and the flag beats the pointer, so a
+// relocation with autostart enabled must re-register against the NEW dir;
+// with autostart disabled nothing may be written.
+func TestChangeDataDirReregistersAutostart(t *testing.T) {
+	oldDir := t.TempDir()
+	midDir := t.TempDir()
+	finalDir := t.TempDir()
+	exeDir := t.TempDir()
+	exe := filepath.Join(exeDir, "filelist-streaming")
+
+	var mu sync.Mutex
+	var registrations []autostart.Options
+	enabled := false
+	b, sup, _ := relocatableBindings(t, oldDir, exeDir)
+	b.autostartEnabled = func() (bool, error) { mu.Lock(); defer mu.Unlock(); return enabled, nil }
+	b.autostartEnable = func(o autostart.Options) error {
+		mu.Lock()
+		defer mu.Unlock()
+		registrations = append(registrations, o)
+		return nil
+	}
+	runningServer(t, sup)
+
+	// Phase 1: autostart off — the relocation must not touch it.
+	if err := b.ChangeDataDir(midDir); err != nil {
+		t.Fatalf("relocation (autostart off): %v", err)
+	}
+	waitForState(t, sup, StateRunning)
+	mu.Lock()
+	if len(registrations) != 0 {
+		mu.Unlock()
+		t.Fatalf("disabled autostart must not be re-registered, got %d writes", len(registrations))
+	}
+	mu.Unlock()
+
+	// Phase 2: autostart on — the next relocation re-registers with the
+	// new dir.
+	enabled = true
+	if err := b.ChangeDataDir(finalDir); err != nil {
+		t.Fatalf("relocation (autostart on): %v", err)
+	}
+	waitForState(t, sup, StateRunning)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(registrations) != 1 {
+		t.Fatalf("enabled autostart must re-register exactly once, got %d", len(registrations))
+	}
+	got := registrations[0]
+	if got.ExePath != exe {
+		t.Fatalf("re-registration exe = %q, want %q", got.ExePath, exe)
+	}
+	wantArgs := []string{"--minimized", "--data-dir", finalDir}
+	if !reflect.DeepEqual(got.Args, wantArgs) {
+		t.Fatalf("re-registration args = %v, want %v", got.Args, wantArgs)
+	}
+}
+
+// TestChangeDataDirPostMoveFailureLeavesStopped pins the ruled post-move
+// failure semantics: a remap failure after the move has committed surfaces
+// the error verbatim and leaves the (previously running) server STOPPED —
+// there is no old location to serve from — while the pointer already names
+// the new dir.
+func TestChangeDataDirPostMoveFailureLeavesStopped(t *testing.T) {
+	oldDir := t.TempDir()
+	newDir := t.TempDir()
+	exeDir := t.TempDir()
+	exe := filepath.Join(exeDir, "filelist-streaming")
+
+	b, sup, probe := relocatableBindings(t, oldDir, exeDir)
+	remapErr := errors.New("disk I/O folly")
+	b.remapPathsFn = func(path, from, to string) error { return remapErr }
+	runningServer(t, sup)
+
+	err := b.ChangeDataDir(newDir)
+	if err == nil || !strings.Contains(err.Error(), "remap settings paths") || !strings.Contains(err.Error(), remapErr.Error()) {
+		t.Fatalf("post-move failure must surface verbatim, got %v", err)
+	}
+	if sup.State() != StateStopped {
+		t.Fatalf("server must stay stopped after a committed-move failure, got %s", sup.State())
+	}
+	if probe.count() != 1 {
+		t.Fatalf("no restart may be attempted after a committed-move failure, got %d factory calls", probe.count())
+	}
+	if _, err := os.Stat(oldDir); !os.IsNotExist(err) {
+		t.Fatalf("move must have committed (old dir gone): %v", err)
+	}
+	pointer, err := os.ReadFile(datadir.PointerPath(exe))
+	if err != nil {
+		t.Fatalf("pointer file: %v", err)
+	}
+	if got := strings.TrimSpace(string(pointer)); got != newDir {
+		t.Fatalf("pointer must name the new dir %q, got %q", newDir, got)
+	}
+}
+
+// TestChangeDataDirGuardBlocksConcurrentAutoStart pins the move-window
+// guard: while a relocation sits between Stop and its swap, a concurrent
+// completing-save must NOT fire the auto-start (previously it could Start
+// the old store mid-move); after the change finishes, its own restart runs.
+func TestChangeDataDirGuardBlocksConcurrentAutoStart(t *testing.T) {
+	oldDir := t.TempDir()
+	newDir := t.TempDir()
+	exeDir := t.TempDir()
+
+	store := newRunnerStore(t, filepath.Join(oldDir, "settings.json")) // fresh store: required keys missing
+	probe := &factoryProbe{}
+	b := &Bindings{settings: store, dataDir: oldDir, dataDirSource: "default"}
+	b.exePathFn = func() (string, error) { return filepath.Join(exeDir, "filelist-streaming"), nil }
+	b.relocateFn = func(exePath, from, to string) error { return datadir.Relocate(exePath, from, to) }
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	b.relocateFn = func(exePath, from, to string) error {
+		once.Do(func() { close(entered) })
+		<-release
+		return datadir.Relocate(exePath, from, to)
+	}
+	sup := NewSupervisor(SupervisorDeps{Log: testLogger(), Settings: store})
+	sup.appFactory = func() (appLike, error) {
+		s, d, _ := b.snapshot()
+		probe.record(s.Path(), d)
+		return &fakeApp{serve: make(chan error), closed: make(chan struct{})}, nil
+	}
+	b.sup = sup
+	runningServer(t, sup)
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- b.ChangeDataDir(newDir) }()
+	<-entered // Stop happened; the move is now blocked mid-flight
+	if sup.State() != StateStopped {
+		t.Fatalf("server must be stopped inside the move window, got %s", sup.State())
+	}
+
+	// The completing save: required keys filled while the relocation holds
+	// the guard. The auto-start edge must defer.
+	next := store.Get()
+	next.DownloadRoot = filepath.Join(oldDir, "downloads")
+	next.FileListUsername = "user"
+	next.FileListPasskey = "pass"
+	result, err := b.SaveSettings(next)
+	if err != nil {
+		t.Fatalf("save during relocation: %v", err)
+	}
+	if result.AutoStarted {
+		t.Fatal("auto-start must defer while a relocation is in flight")
+	}
+	if probe.count() != 1 {
+		t.Fatalf("no Start may race the move (initial start only), got %d factory calls", probe.count())
+	}
+
+	close(release)
+	if err := <-errCh; err != nil {
+		t.Fatalf("ChangeDataDir: %v", err)
+	}
+	waitForState(t, sup, StateRunning)
+	if probe.count() != 2 {
+		t.Fatalf("the relocation's own restart must run, got %d factory calls", probe.count())
+	}
+	store2, dir, _ := b.snapshot()
+	if dir != newDir || store2.Path() != filepath.Join(newDir, "settings.json") {
+		t.Fatalf("holder must be swapped, got (%s, %s)", store2.Path(), dir)
 	}
 }

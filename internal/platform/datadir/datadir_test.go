@@ -45,6 +45,27 @@ func TestRelocateRefusesNonEmptyTarget(t *testing.T) {
 	}
 }
 
+// TestRelocateRefusesTargetInsideSource pins the self-copy guard: a target
+// inside the current data dir is refused before anything moves, so the
+// copy walk can never descend into its own destination.
+func TestRelocateRefusesTargetInsideSource(t *testing.T) {
+	root := t.TempDir()
+	exe := filepath.Join(root, "app")
+	from := filepath.Join(root, "data")
+	to := filepath.Join(from, "nested")
+	os.MkdirAll(from, 0o750)
+	os.WriteFile(filepath.Join(from, "settings.json"), []byte("{}"), 0o640)
+	if err := Relocate(exe, from, to); err == nil {
+		t.Fatal("relocation into a nested dir must be refused")
+	}
+	if _, err := os.Stat(filepath.Join(from, "settings.json")); err != nil {
+		t.Fatal("source must stay untouched on refusal")
+	}
+	if _, err := os.Stat(to); !os.IsNotExist(err) {
+		t.Fatal("nested target must not be created")
+	}
+}
+
 func TestRelocateSameVolumeMovesAndWritesPointer(t *testing.T) {
 	root := t.TempDir()
 	exe := filepath.Join(root, "app")

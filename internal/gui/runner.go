@@ -143,6 +143,12 @@ func wireSupervisor(bind *Bindings, log *slog.Logger) *Supervisor {
 	sup := NewSupervisor(SupervisorDeps{
 		Log: log,
 		CanStart: func() error {
+			// The relocation guard keeps any Start — including the
+			// SaveSettings completing-save auto-start — out of the
+			// move window between Stop and the holder swap.
+			if bind.relocatingServer() {
+				return errors.New("data directory change in progress; try again when it finishes")
+			}
 			store, _, _ := bind.snapshot()
 			if missing := store.MissingRequired(); len(missing) > 0 {
 				return fmt.Errorf("required settings missing: %s", strings.Join(missing, ", "))

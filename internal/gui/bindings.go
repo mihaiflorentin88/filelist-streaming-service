@@ -53,6 +53,11 @@ type Bindings struct {
 	sup           *Supervisor
 	dataDir       string
 	dataDirSource string
+	// relocating guards the move window of ChangeDataDir: wireSupervisor's
+	// CanStart refuses and the SaveSettings completing-save auto-start
+	// defers while it is set, so no Start can race the move (see
+	// ChangeDataDir).
+	relocating bool
 
 	// Test seams; nil falls back to the real platform implementation.
 	exePathFn        func() (string, error)
@@ -62,6 +67,9 @@ type Bindings struct {
 	revealFn         func(path string) error
 	openURLFn        func(url string) error
 	quitFn           func()
+	// Relocation seams (nil = the real datadir calls).
+	relocateFn   func(exePath, from, to string) error
+	remapPathsFn func(path, from, to string) error
 }
 
 // ServerState reports the current lifecycle state for page mounts that miss
@@ -95,7 +103,10 @@ func (b *Bindings) LoadSettings() httpapi.SettingsView {
 // SaveSettings mirrors the HTTP PUT /api/v1/settings contract: native-path
 // probe, secrets-preserving save, restart-required diff. A save that
 // completes the required settings while the server is stopped auto-starts
-// it (the GUI form of "starts automatically once configuration is set").
+// it (the GUI form of "starts automatically once configuration is set") —
+// unless a data-dir relocation is in flight, whose guard keeps the
+// auto-start from racing the move; the restarted change performs its own
+// Start against the holder's (new) location.
 func (b *Bindings) SaveSettings(next config.Settings) (SaveResult, error) {
 	store, _, _ := b.snapshot()
 	old := store.Get()
@@ -108,7 +119,7 @@ func (b *Bindings) SaveSettings(next config.Settings) (SaveResult, error) {
 	}
 	current := store.Get()
 	result := SaveResult{Saved: true, RestartRequired: config.RestartRequired(old, current)}
-	if wasIncomplete && len(store.MissingRequired()) == 0 && b.sup.State() == StateStopped {
+	if wasIncomplete && len(store.MissingRequired()) == 0 && b.sup.State() == StateStopped && !b.relocatingServer() {
 		go func() { _ = b.sup.Start() }()
 		result.AutoStarted = true
 	}
@@ -151,6 +162,13 @@ func (b *Bindings) EnableAutostart() error {
 		return err
 	}
 	dir, _ := b.dataDirInfo()
+	return b.enableAutostart(exe, dir)
+}
+
+// enableAutostart writes the launch-on-boot artifact for one explicit
+// (exe, data dir) pair — ChangeDataDir's commit phase reuses it to
+// re-register the entry against the NEW location after a move.
+func (b *Bindings) enableAutostart(exe, dir string) error {
 	if b.autostartEnable != nil {
 		return b.autostartEnable(autostart.Options{ExePath: exe, Args: []string{"--minimized", "--data-dir", dir}})
 	}
@@ -229,6 +247,15 @@ func (b *Bindings) exePath() (string, error) {
 	return os.Executable()
 }
 
+// relocatingServer reports whether a ChangeDataDir is between Stop and its
+// commit: CanStart and the SaveSettings auto-start edge defer on it so no
+// Start races the move.
+func (b *Bindings) relocatingServer() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.relocating
+}
+
 // snapshot returns the current settings store, data dir, and dir source
 // under the same mutex ChangeDataDir commits its swap with. Everything
 // that outlives a single call — the supervisor's CanStart and factory
@@ -275,16 +302,31 @@ func (b *Bindings) dataDirInfo() (string, string) {
 // ChangeDataDir relocates the data directory to target (spec: Data
 // directory): a running server is stopped first and its prior state
 // remembered; datadir.Relocate moves the contents and writes the
-// data.location pointer atomically (a non-empty target is refused with the
-// error the dialog shows verbatim; any move failure leaves the source
-// untouched); the settings file's data-dir-anchored paths are remapped to
-// the new location; the store and dir swap commits under the holder mutex;
-// the server restarts only if it was running before.
+// data.location pointer atomically (a non-empty or nested target is
+// refused with the error the dialog shows verbatim; any move failure
+// leaves the source untouched); the settings file's data-dir-anchored
+// paths are remapped to the new location; the store and dir swap commits
+// under the holder mutex; a stale autostart entry is re-registered against
+// the new location (its --data-dir flag beats the pointer); the server
+// restarts only if it was running before.
 //
-// Failure ordering: everything before the swap can only leave the prior
-// state, so resume restarts the remembered server and surfaces the failure
-// verbatim; after the swap the move is committed, so a Start failure is
-// surfaced as-is (the data and pointer already name the new location).
+// Failure ordering: a failure before the move commits (validation, stop,
+// Relocate itself with the source still present) restores the prior state —
+// resume restarts the remembered server and surfaces the error verbatim.
+// Once the move has committed (Relocate returned success, or the source is
+// gone under an inside-Relocate failure such as a pointer-write error),
+// there is no old location to serve from: every later failure — remap,
+// store load, autostart re-registration — leaves the server STOPPED and
+// surfaces the error verbatim; data and pointer already name the new
+// location, so the next boot lands there.
+//
+// The whole call holds a relocating guard under the holder mutex:
+// CanStart refuses with a relocation-in-progress error and the
+// SaveSettings completing-save auto-start defers on the same guard, so no
+// Start can slip in between Stop and the swap and serve (or write into) a
+// directory being moved. The guard drops just before the restart: the swap
+// has committed by then, so the restart — and any racing completing-save —
+// lands on the new location through the holder.
 //
 // The single-instance lock is deliberately not migrated: gui.lock guards
 // this process (its loopback show-listener is process-owned, not
@@ -307,6 +349,17 @@ func (b *Bindings) ChangeDataDir(target string) error {
 		return errors.New("data directory is not resolvable yet")
 	}
 
+	// Relocation guard: from here until the swap commits, no Start may
+	// race the move. The defer covers every early return below.
+	b.mu.Lock()
+	b.relocating = true
+	b.mu.Unlock()
+	defer func() {
+		b.mu.Lock()
+		b.relocating = false
+		b.mu.Unlock()
+	}()
+
 	wasRunning := false
 	switch b.sup.State() {
 	case StateRunning:
@@ -317,13 +370,19 @@ func (b *Bindings) ChangeDataDir(target string) error {
 	case StateStarting, StateStopping:
 		return errors.New("server is transitioning; wait for it to stop or start before changing the data directory")
 	}
-	// resume restores the prior state on any pre-swap failure: the data is
-	// still at from (Relocate refuses or fails without touching it), so
+	// resume restores the prior state on a pre-commit failure: the data is
+	// still at from (Relocate refuses or fails without deleting it), so
 	// restarting the remembered server against the old store is exactly
-	// where things stood. A resume failure joins the relocation error
-	// verbatim as the first message.
+	// where things stood. If the source is gone the move already committed
+	// inside a failing Relocate (e.g. the pointer write): the old store
+	// path no longer exists, so the server stays stopped and the error
+	// surfaces verbatim. A resume failure joins the relocation error as
+	// the first message.
 	resume := func(fail error) error {
 		if wasRunning {
+			if _, statErr := os.Stat(from); os.IsNotExist(statErr) {
+				return fail
+			}
 			if err := b.sup.Start(); err != nil {
 				return errors.Join(fail, err)
 			}
@@ -335,16 +394,27 @@ func (b *Bindings) ChangeDataDir(target string) error {
 	if err != nil {
 		return resume(err)
 	}
-	if err := datadir.Relocate(exe, from, to); err != nil {
+	relocate := datadir.Relocate
+	if b.relocateFn != nil {
+		relocate = b.relocateFn
+	}
+	if err := relocate(exe, from, to); err != nil {
 		return resume(err)
 	}
+
+	// The move has committed: every failure from here on leaves the server
+	// stopped (there is no old location to serve) and surfaces verbatim.
 	settingsPath := settingsPathFor(to)
-	if err := remapDataDirPaths(settingsPath, from, to); err != nil {
-		return resume(fmt.Errorf("remap settings paths to %s: %w", to, err))
+	remap := remapDataDirPaths
+	if b.remapPathsFn != nil {
+		remap = b.remapPathsFn
+	}
+	if err := remap(settingsPath, from, to); err != nil {
+		return fmt.Errorf("remap settings paths to %s: %w", to, err)
 	}
 	store, err := config.LoadAt(settingsPath)
 	if err != nil {
-		return resume(err)
+		return err
 	}
 
 	// Commit: the move is verified and the new store loaded. The holder
@@ -354,6 +424,26 @@ func (b *Bindings) ChangeDataDir(target string) error {
 	b.settings = store
 	b.dataDir = to
 	b.dataDirSource = "pointer"
+	b.mu.Unlock()
+
+	// The autostart entry pins --data-dir, and the flag beats the pointer:
+	// a stale entry would boot the OLD location (recreated empty, fresh
+	// database) while the data sits at the new one. Re-register against the
+	// new dir during the commit; a failure surfaces verbatim and leaves the
+	// server stopped.
+	if enabled, err := b.AutostartStatus(); err != nil {
+		return err
+	} else if enabled {
+		if err := b.enableAutostart(exe, to); err != nil {
+			return err
+		}
+	}
+
+	// Drop the guard before the restart: the swap has committed, so our
+	// own Start must pass CanStart, and a racing completing-save now lands
+	// on the new location through the holder.
+	b.mu.Lock()
+	b.relocating = false
 	b.mu.Unlock()
 
 	if wasRunning {

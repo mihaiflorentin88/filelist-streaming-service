@@ -260,3 +260,24 @@ func TestChangeDataDirPostRelocationStartUsesNewStore(t *testing.T) {
 		t.Fatalf("old data dir %s must be gone", oldDir)
 	}
 }
+
+// TestCanStartRefusesWhileRelocating pins the move-window guard on the
+// production wiring: while a ChangeDataDir holds the relocating flag,
+// Start is refused with a relocation-in-progress error and the state stays
+// untouched.
+func TestCanStartRefusesWhileRelocating(t *testing.T) {
+	bind := &Bindings{settings: testStore(t), dataDir: t.TempDir(), dataDirSource: "default"}
+	sup := wireSupervisor(bind, testLogger())
+	bind.sup = sup
+
+	bind.mu.Lock()
+	bind.relocating = true
+	bind.mu.Unlock()
+	err := sup.Start()
+	if err == nil || !strings.Contains(err.Error(), "data directory change in progress") {
+		t.Fatalf("start during relocation must be refused, got %v", err)
+	}
+	if sup.State() != StateStopped {
+		t.Fatalf("refusal must leave the state untouched, got %s", sup.State())
+	}
+}
