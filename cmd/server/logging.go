@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"golang.org/x/term"
 )
 
 const (
@@ -119,9 +121,20 @@ func (t *teeHandler) WithGroup(name string) slog.Handler {
 	return &teeHandler{handlers: next}
 }
 
+// isTerminal reports whether the console stream is an interactive terminal.
+func isTerminal(f *os.File) bool {
+	return term.IsTerminal(int(f.Fd()))
+}
+
+// logFilePath returns the JSON log file path under the resolved data
+// directory.
+func logFilePath(dataDir string) string {
+	return filepath.Join(dataDir, "logs", "server.log")
+}
+
 // newLogger builds the process logger: colored human-readable lines on an
 // interactive terminal, plain JSON otherwise, and an unchanged JSON stream
-// in data/logs/server.log for machine readers.
+// in <data dir>/logs/server.log for machine readers.
 func newLogger(console io.Writer, colored bool, logPath string) (*slog.Logger, func()) {
 	opts := &slog.HandlerOptions{Level: slog.LevelInfo}
 	var consoleHandler slog.Handler = slog.NewJSONHandler(console, opts)
