@@ -5,10 +5,12 @@ package gui
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
 	"testing"
+	"time"
 )
 
 // wantItem is a compact trayItem matcher for table tests.
@@ -113,14 +115,13 @@ func TestTrayIconFor(t *testing.T) {
 		if icon == nil {
 			t.Fatalf("trayIconFor(%q) returned nil", s)
 		}
-		cfg, err := png.DecodeConfig(bytes.NewReader(icon))
+		wantBytes, err := TrayIcons.ReadFile(fmt.Sprintf("assets/tray/tray-%s-%d.png", want, trayIconSize))
 		if err != nil {
-			t.Fatalf("trayIconFor(%q): not a PNG: %v", s, err)
+			t.Fatalf("expected icon tray-%s missing: %v", want, err)
 		}
-		if cfg.Width != trayIconSize || cfg.Height != trayIconSize {
-			t.Errorf("trayIconFor(%q): %dx%d, want %dx%d", s, cfg.Width, cfg.Height, trayIconSize, trayIconSize)
+		if !bytes.Equal(icon, wantBytes) {
+			t.Errorf("trayIconFor(%q) does not match tray-%s-%d.png", s, want, trayIconSize)
 		}
-		_ = want
 	}
 }
 
@@ -154,5 +155,42 @@ func TestTrayIconStatesDistinct(t *testing.T) {
 	}
 	if stopped.At(60, 60) == failed.At(60, 60) {
 		t.Error("failed icon indistinguishable from stopped at dot position")
+	}
+}
+
+// TestRunActionDisabledToggleIsInert pins the enforced half of the
+// "disabled while transitioning" guarantee: a click whose model snapshot
+// was disabled must not start or stop the server, however the supervisor
+// has moved on since the menu was built.
+func TestRunActionDisabledToggleIsInert(t *testing.T) {
+	sup := newTestSupervisor(t, &fakeApp{}, nil, nil)
+	tctrl := &trayController{sup: sup}
+	tctrl.runAction(trayItem{Label: "Start server", Action: trayActionToggleServer, Disabled: true})
+	if got := sup.State(); got != StateStopped {
+		t.Errorf("disabled toggle changed state to %q, want stopped", got)
+	}
+}
+
+// TestRunActionEnabledToggleStarts pins the other half: an enabled
+// snapshot toggles the server (stopped → start here).
+func TestRunActionEnabledToggleStarts(t *testing.T) {
+	serve := make(chan error)
+	sup := newTestSupervisor(t, &fakeApp{serve: serve, closed: make(chan struct{})}, nil, nil)
+	tctrl := &trayController{sup: sup}
+	tctrl.runAction(trayItem{Label: "Start server", Action: trayActionToggleServer})
+	if got := sup.State(); got != StateStarting {
+		t.Fatalf("enabled toggle left state %q, want starting", got)
+	}
+	// Let the serve goroutine finish and shut the supervisor down cleanly.
+	close(serve)
+	deadline := time.Now().Add(5 * time.Second)
+	for sup.State() != StateRunning && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if sup.State() != StateRunning {
+		t.Fatalf("server never reached running, stuck at %q", sup.State())
+	}
+	if err := sup.Stop(); err != nil {
+		t.Fatalf("cleanup Stop: %v", err)
 	}
 }

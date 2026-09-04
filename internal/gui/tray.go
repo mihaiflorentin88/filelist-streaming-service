@@ -125,40 +125,54 @@ func (t *trayController) Refresh(s State) {
 	t.tray.SetMenu(t.buildMenu(model))
 }
 
-// buildMenu materializes the model into a wails menu, dispatching each
-// item's action.
+// buildMenu materializes the model into a wails menu. Every click handler
+// captures its model item and dispatches through runAction, so a disabled
+// row stays inert no matter when the click lands.
 func (t *trayController) buildMenu(model []trayItem) *application.Menu {
 	menu := application.NewMenu()
 	for _, item := range model {
-		switch item.Action {
-		case trayActionOpen:
-			menu.Add(item.Label).OnClick(func(*application.Context) { t.win.Show() })
-		case trayActionToggleServer:
-			menu.Add(item.Label).OnClick(func(*application.Context) {
-				if t.sup.State() == StateRunning {
-					_ = t.sup.Stop()
-				} else {
-					_ = t.sup.Start()
-				}
-			})
-		case trayActionOpenWebUI:
-			menu.Add(item.Label).OnClick(func(*application.Context) { _ = t.bind.OpenWebUI() })
-		case trayActionToggleAutostart:
-			cb := application.NewMenuItemCheckbox(item.Label, item.Checked)
-			cb.SetTooltip(item.Tooltip)
-			cb.OnClick(func(*application.Context) {
-				on, err := t.bind.AutostartStatus()
-				if err == nil && on {
-					_ = t.bind.DisableAutostart()
-				} else {
-					_ = t.bind.EnableAutostart()
-				}
-				t.Refresh(t.sup.State()) // reflect the Enable/Disable read-back
-			})
-			menu.Append(application.NewMenuFromItems(cb))
-		case trayActionQuit:
-			menu.Add(item.Label).OnClick(func(*application.Context) { t.app.Quit() })
+		var mi *application.MenuItem
+		if item.Checkbox {
+			mi = application.NewMenuItemCheckbox(item.Label, item.Checked)
+			menu.Append(application.NewMenuFromItems(mi))
+		} else {
+			mi = menu.Add(item.Label)
 		}
+		mi.SetEnabled(!item.Disabled)
+		mi.SetTooltip(item.Tooltip)
+		mi.OnClick(func(*application.Context) { t.runAction(item) })
 	}
 	return menu
+}
+
+// runAction executes one menu item's action against the model snapshot it
+// was built from. The disabled check is the enforced half of the "no
+// transitions" guarantee: a click queued while the server was stopping
+// must not silently start it.
+func (t *trayController) runAction(item trayItem) {
+	switch item.Action {
+	case trayActionOpen:
+		t.win.Show()
+	case trayActionToggleServer:
+		if item.Disabled {
+			return
+		}
+		if t.sup.State() == StateRunning {
+			_ = t.sup.Stop()
+		} else {
+			_ = t.sup.Start()
+		}
+	case trayActionOpenWebUI:
+		_ = t.bind.OpenWebUI()
+	case trayActionToggleAutostart:
+		on, err := t.bind.AutostartStatus()
+		if err == nil && on {
+			_ = t.bind.DisableAutostart()
+		} else {
+			_ = t.bind.EnableAutostart()
+		}
+		t.Refresh(t.sup.State()) // reflect the Enable/Disable read-back
+	case trayActionQuit:
+		t.app.Quit()
+	}
 }
