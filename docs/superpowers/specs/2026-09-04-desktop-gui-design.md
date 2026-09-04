@@ -36,7 +36,8 @@ settings UI instead of rebuilding it.
 ## Non-goals
 
 - Mobile targets, auto-update, multi-instance coordination beyond
-  second-launch focus, remote GUI administration, GUI on headless servers.
+  second-launch focus, remote GUI administration, GUI on headless servers,
+  in-GUI playback (Downloads hands off to the web player in the browser).
 
 ## Decisions
 
@@ -162,7 +163,8 @@ a transport that works while the server is stopped:
 Window 1100×720, minimum 960×600. Extends the existing design language —
 `web/style.css` tokens (`--panel #101c24`, `--teal #59d6ad`, ink `#071014`,
 system font stack) — so desktop, web, and TV read as one product. Sidebar
-navigation: **Server**, **Settings** (same sidebar idiom as the webapp).
+navigation: **Server**, **Downloads**, **Settings** (same sidebar idiom as
+the webapp).
 
 **Header (persistent):** app name + status pill — colored dot (running teal,
 stopped gray, failed red) + label + address when running. Visible on every
@@ -182,6 +184,20 @@ page; satisfies "always displays the server status wherever the user is".
 **Settings page:** the reused `Settings` component — same tabs, sticky save
 bar, help icons — wrapped with the transport above and a banner when required
 settings are missing (deep-links to Tracker tab).
+
+**Downloads page:** the webapp's downloads view, reused. The `Downloads`
+component (inline in `web/src.tsx`, rendered with the props contract
+`{ items, onRefresh, onPlay, onRemove, onAction }`, web/src.tsx:622) moves
+to an exported `web/downloads.tsx` together with its reconcile and
+scroll-anchor helpers; `src.tsx` imports it back, so the webapp behavior is
+unchanged. The desktop page supplies the same plumbing against
+`http://127.0.0.1:<port>`: `api.downloads()` polled every 3 s with the same
+reconcile and anchor restore, transfer actions (pause / resume / retry /
+delete) posted to `/downloads/{id}/{action}`, removal with confirm. *Play*
+hands off to the web player by opening the matching watch URL in the
+default browser — playback stays on the surfaces built for it (browser,
+TV). With the server stopped the page shows a "start the server to see
+downloads" empty state.
 
 Motion stays minimal and action-driven (state changes animate ≤200 ms,
 ease-out; no decorative loops), per the webapp's existing restrained style.
@@ -328,9 +344,15 @@ receives is the same single artifact desktop users get.
   never silently serves).
 - **Frontend (vitest, `web/` conventions):** status pill states; Server page
   button/label wiring against supervisor events; autostart toggle read-back;
-  stopped-server states for Test/Maintenance; missing-settings banner.
+  stopped-server states for Test/Maintenance and the downloads empty state;
+  missing-settings banner; downloads page plumbing (poll + reconcile +
+  transfer actions) against a mocked API, and the `web/downloads.tsx`
+  extraction keeping the component's props contract intact.
 - **Regression:** existing `make check` stays green; `serve` behavior covered
-  by current tests must not change.
+  by current tests must not change; the webapp with the re-imported
+  `Downloads` component renders identically (existing webapp tests cover the
+  other views; the extraction is mechanical and covered by the new
+  component tests).
 - **Manual per-platform checklist** (GUI specifics not unit-testable):
   tray icon states, close-to-tray, `--minimized` boot, autostart-at-login on
   each OS, `serve` console output on Windows, Pi deploy end-to-end.
