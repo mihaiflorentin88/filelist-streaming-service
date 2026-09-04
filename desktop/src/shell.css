@@ -6,7 +6,7 @@
 
 .shell {
  display: flex;
- min-height: 100vh;
+ height: 100vh;
 }
 
 .shell-nav {
@@ -16,6 +16,7 @@
  flex: none;
  width: 190px;
  padding: 20px 12px;
+ overflow-y: auto;
  background: var(--panel);
  border-right: 1px solid var(--line);
 }
@@ -51,6 +52,7 @@
 }
 
 .shell-header {
+ flex: none;
  display: flex;
  align-items: center;
  justify-content: space-between;
@@ -110,6 +112,9 @@
 }
 
 main {
+ flex: 1;
+ min-height: 0;
+ overflow-y: auto;
  padding: 24px;
 }
 
