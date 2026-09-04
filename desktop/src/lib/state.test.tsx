@@ -83,6 +83,16 @@ describe('useServerState', () => {
     await act(async () => { fakeEvents.emit('server:state', { state: 'bogus' }) });
     expect(host.textContent).toBe('stopped');
   });
+
+  it('initializes late mounts from the latest emitted state', async () => {
+    const first = await mount(<StateProbe />);
+    await act(async () => { fakeEvents.emit('server:state', { state: 'running', address: '127.0.0.1:8097' }) });
+    expect(first.textContent).toBe('running · 127.0.0.1:8097');
+    // A second component mounted after the emit (no new emit) must not
+    // resurrect the boot seed — JobsPage gating depends on this.
+    const second = await mount(<StateProbe />);
+    expect(second.textContent).toBe('running · 127.0.0.1:8097');
+  });
 });
 
 describe('shell chrome', () => {

@@ -25,14 +25,19 @@ export function setServerOrigin(origin: string): void { configureSharedApi(origi
 
 let seeded: StateEvent = { state: 'stopped' };
 // Called once at boot, before the first render, when the Go side hands over
-// its current lifecycle state instead of waiting for the next emit.
+// its current lifecycle state instead of waiting for the next emit. The
+// subscription below also keeps it current so components mounted after an
+// emit (view switches) initialize from the latest state, not the boot seed.
 export function seedServerState(event: StateEvent) { seeded = event }
 
 export function useServerState(): StateEvent {
   const [state, setState] = useState<StateEvent>(seeded);
   useEffect(() => {
     const off = Events.On('server:state', event => {
-      if (isStateEvent(event.data)) setState(event.data);
+      if (isStateEvent(event.data)) {
+        seeded = event.data;
+        setState(event.data);
+      }
     });
     return off;
   }, []);
