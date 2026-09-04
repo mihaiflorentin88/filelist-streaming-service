@@ -109,12 +109,24 @@ only applies once the server can run.
 
 ## Data directory
 
-Uniform resolution for GUI and serve:
+Resolution for GUI mode (whole data dir: settings.json, database, logs/,
+artwork/, engine session):
 
 1. `--data-dir` flag (absolute or CWD-relative),
 2. `data.location` file next to the executable (one absolute path; written
    only after a GUI relocation),
-3. `data/` next to the executable (default).
+3. Platform default:
+   - Linux: `/var/lib/filelist-streaming-service` when it exists and is
+     writable (service-grade location; created by an admin for shared use),
+     otherwise `$XDG_DATA_HOME/filelist-streaming`
+     (`~/.local/share/filelist-streaming`),
+   - Windows: `%APPDATA%\FileList Streaming`,
+   - macOS: `~/Library/Application Support/FileList Streaming`.
+
+Resolution for `serve` is unchanged from today's headless behavior: flag →
+pointer → `data/` next to the executable. Systemd deployments pin
+`--data-dir /var/lib/filelist-streaming/data` in the unit, which is the FHS
+service location for that context.
 
 `FILELIST_STREAMING_SETTINGS_PATH` keeps its existing meaning (selects the
 settings file itself) and wins for that one file when set.
@@ -134,10 +146,9 @@ path with *Change…* and *Open* buttons. Changing it:
 5. Any failure rolls back (source untouched) and surfaces the error; nothing
    is deleted before verification passes.
 
-**macOS .app:** the binary lives inside the bundle, which is not a data home.
-The .app wrapper passes `--data-dir` pointing beside the .app (fallback
-`~/Library/Application Support/FileListStreaming` when unwritable). Raw
-macOS binary and Windows/Linux binaries use binary-adjacent `data/`.
+**macOS .app:** no special data-dir handling — the platform default
+(`~/Library/Application Support/FileList Streaming`) applies to .app and raw
+binary alike.
 
 ## Settings transport
 
