@@ -61,3 +61,6 @@ clients/tizen/certificates/*
 .DS_Store
 .idea/
 .vscode/
+
+# Subagent-driven-development scratch workspace
+.superpowers/
