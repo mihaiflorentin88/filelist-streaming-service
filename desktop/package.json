@@ -1,22 +1,17 @@
 {
-  "name": "@filelist/web",
+  "name": "@filelist/desktop",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "exports": {
-    ".": "./src.tsx",
-    "./settings": "./settings.tsx",
-    "./downloads": "./downloads.tsx",
-    "./jobs": "./jobs.tsx",
-    "./shared-api": "./shared-api.ts",
-    "./style.css": "./style.css"
-  },
   "scripts": {
     "test": "vitest run",
-    "build": "tsc --noEmit && vite build"
+    "build": "tsc --noEmit && vite build",
+    "postbuild": "node -e \"require('fs').writeFileSync('../internal/gui/static/.gitkeep', '')\""
   },
   "dependencies": {
     "@filelist/shared": "0.1.0",
+    "@filelist/web": "0.1.0",
+    "@wailsio/runtime": "latest",
     "preact": "10.29.8"
   },
   "devDependencies": {
