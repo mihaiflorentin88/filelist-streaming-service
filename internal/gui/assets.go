@@ -9,3 +9,10 @@ import "embed"
 //
 //go:embed all:static
 var Static embed.FS
+
+// TrayIcons holds the generated tray state icons (tools/make_tray_icons.py
+// output). Embed-only, so the linux/arm build — which skips the Wails tray —
+// still compiles unchanged.
+//
+//go:embed all:assets/tray
+var TrayIcons embed.FS
