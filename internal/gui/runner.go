@@ -18,6 +18,7 @@ import (
 	"github.com/mihaiflorentin88/filelist-streaming-service/internal/composition"
 	"github.com/mihaiflorentin88/filelist-streaming-service/internal/platform/config"
 	"github.com/mihaiflorentin88/filelist-streaming-service/internal/platform/datadir"
+	"github.com/mihaiflorentin88/filelist-streaming-service/internal/platform/listenaddr"
 	"github.com/mihaiflorentin88/filelist-streaming-service/internal/platform/singleinstance"
 )
 
@@ -128,12 +129,12 @@ func Run(opts Options) error {
 	tray := newTray(app, win, sup, bind)
 	lock.OnShow(func() { win.Show() })
 	sup.OnStateChange(func(s State, sErr error) {
-		app.Event.Emit("server:state", newStateEvent(s, sErr, sup.Address()))
+		app.Event.Emit("server:state", newStateEvent(s, sErr, listenaddr.DisplayAddress(sup.Address())))
 		tray.Refresh(s)
 	})
 	// Boot emit: arrives before the webview loads, so the frontend also
 	// seeds from the ServerState binding at startup (desktop/src/main.tsx).
-	app.Event.Emit("server:state", newStateEvent(sup.State(), sup.Error(), sup.Address()))
+	app.Event.Emit("server:state", newStateEvent(sup.State(), sup.Error(), listenaddr.DisplayAddress(sup.Address())))
 
 	app.Run()
 	return nil

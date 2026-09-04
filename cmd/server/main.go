@@ -18,6 +18,7 @@ import (
 	"github.com/mihaiflorentin88/filelist-streaming-service/internal/composition"
 	"github.com/mihaiflorentin88/filelist-streaming-service/internal/gui"
 	"github.com/mihaiflorentin88/filelist-streaming-service/internal/platform/datadir"
+	"github.com/mihaiflorentin88/filelist-streaming-service/internal/platform/listenaddr"
 )
 
 // settingsPathEnv keeps its historic precedence (spec: Data directory): when
@@ -136,7 +137,7 @@ func runServe(dataDir string, log logger) error {
 		}
 	}()
 
-	log.Info("server listening", "address", app.ListenAddress, "version", composition.Version, "settingsFile", app.Settings.Path())
+	log.Info("server listening", "address", listenaddr.DisplayAddress(app.ListenAddress), "version", composition.Version, "settingsFile", app.Settings.Path())
 	if err := app.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Error("server stopped", "error", err)
 		os.Exit(1)
