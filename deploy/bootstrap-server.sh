@@ -36,10 +36,10 @@ case "$qb_temp_path" in /*) ;; *) echo "qBittorrent temp path must be absolute" 
 case "$download_root$qb_temp_path" in *[!A-Za-z0-9_./:@-]*) echo "download paths cannot contain spaces or shell metacharacters" >&2; exit 2;; esac
 case "$qb_temp_path/" in "${download_root%/}/"*) ;; *) echo "qBittorrent temp path must be inside the download root" >&2; exit 2;; esac
 
-if need apt-get; then package_manager=apt; packages="ca-certificates curl ffmpeg logrotate python3 qbittorrent-nox tar";
-elif need dnf; then package_manager=dnf; packages="ca-certificates curl ffmpeg logrotate python3 qbittorrent-nox tar";
-elif need pacman; then package_manager=pacman; packages="ca-certificates curl ffmpeg logrotate python qbittorrent-nox tar";
-elif need zypper; then package_manager=zypper; packages="ca-certificates curl ffmpeg logrotate python3 qbittorrent-nox tar";
+if need apt-get; then package_manager=apt; packages="ca-certificates curl ffmpeg logrotate python3 qbittorrent-nox tar libgtk-3-0 libwebkit2gtk-4.1-0 libayatana-appindicator3-1";
+elif need dnf; then package_manager=dnf; packages="ca-certificates curl ffmpeg logrotate python3 qbittorrent-nox tar gtk3 webkit2gtk4.1 libayatana-appindicator-gtk3";
+elif need pacman; then package_manager=pacman; packages="ca-certificates curl ffmpeg logrotate python qbittorrent-nox tar gtk3 webkit2gtk-4.1 libayatana-appindicator";
+elif need zypper; then package_manager=zypper; packages="ca-certificates curl ffmpeg logrotate python3 qbittorrent-nox tar gtk3 webkit2gtk-4_1 libayatana-appindicator3-1";
 else echo "Supported package managers: apt, dnf, pacman, zypper." >&2; exit 1; fi
 
 echo "FileList Streaming fresh-server setup"

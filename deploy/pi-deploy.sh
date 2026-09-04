@@ -107,6 +107,16 @@ case "$stage" in /tmp/filelist-streaming-deploy-[0-9]*) ;; *)
 	exit 1
 	;;
 esac
+# Preflight: the desktop GUI needs WebKitGTK at runtime. Abort before any
+# staging or installation if the shared library is missing; deploy-pi stays
+# package-install-free (see deploy/bootstrap-server.sh for full provisioning).
+if ! ssh "$host" "ldconfig -p | grep -q 'libwebkit2gtk-4\.1\.so\.0'"; then
+	echo "ERROR: $host is missing libwebkit2gtk-4.1.so.0 (required by the desktop GUI)." >&2
+	echo "Install it with: sudo apt-get install -y libwebkit2gtk-4.1-0" >&2
+	echo "Or provision the full runtime with: deploy/bootstrap-server.sh" >&2
+	exit 1
+fi
+
 ssh "$host" "install -d -m 700 '$stage'"
 cleanup() { ssh "$host" "rm -rf -- '$stage'" >/dev/null 2>&1 || true; }
 trap cleanup EXIT INT TERM
