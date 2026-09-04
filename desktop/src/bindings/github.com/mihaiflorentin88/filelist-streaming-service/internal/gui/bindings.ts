@@ -109,6 +109,21 @@ export function Quit(): $CancellablePromise<void> {
 }
 
 /**
+ * ReadLogs returns the lines appended to the GUI session's server log
+ * (<data dir>/logs/server.jsonl, the same file OpenPath("logs") reveals)
+ * since the byte offset of the previous call. An offset past the log's
+ * size — truncation or rotation — restarts from the beginning. When the
+ * unread window exceeds logTailCap the newest logTailCap bytes are
+ * returned instead, starting just after the line the cap cuts into, so a
+ * viewer that polls rarely stays bounded. Lines are returned raw; JSONL
+ * rendering is the client's job. A line still being written is held back
+ * until it is complete.
+ */
+export function ReadLogs(offset: number): $CancellablePromise<$models.LogTail> {
+ return $Call.ByName("github.com/mihaiflorentin88/filelist-streaming-service/internal/gui.Bindings.ReadLogs", offset);
+}
+
+/**
  * RestartServer applies restart-required settings: Stop then Start.
  */
 export function RestartServer(): $CancellablePromise<void> {

@@ -21,7 +21,7 @@ const fakeBindings = vi.hoisted(() => ({
   dataDirInfo: vi.fn(),
   openPath: vi.fn(),
   openWebUI: vi.fn(),
-  quit: vi.fn(),
+  readLogs: vi.fn(),
 }));
 
 // The generated bindings module exports one function per Go method; the
@@ -34,6 +34,7 @@ vi.mock('../bindings/github.com/mihaiflorentin88/filelist-streaming-service/inte
   LoadSettings: fakeBindings.loadSettings,
   OpenPath: fakeBindings.openPath,
   OpenWebUI: fakeBindings.openWebUI,
+  ReadLogs: fakeBindings.readLogs,
   StartServer: fakeBindings.startServer,
   StopServer: fakeBindings.stopServer,
   Version: fakeBindings.version,
@@ -171,5 +172,73 @@ describe('ServerPage details row', () => {
     expect(fakeBindings.openPath).toHaveBeenLastCalledWith('logs');
     await act(async () => { button('Open data folder').click() });
     expect(fakeBindings.openPath).toHaveBeenLastCalledWith('data');
+  });
+});
+
+
+describe('ServerPage log viewer', () => {
+  beforeEach(() => { vi.useFakeTimers() });
+  afterEach(() => { vi.useRealTimers() });
+
+  it('toggles the panel, renders JSONL as time LEVEL message, and appends new polls', async () => {
+    fakeBindings.readLogs.mockResolvedValue({
+      lines: ['{"time":"2026-09-05T10:00:00.000Z","level":"INFO","msg":"server started"}', 'not json at all'],
+      nextOffset: 82,
+      size: 82,
+    });
+    const host = await mount();
+    expect(host.querySelector('.log-view')).toBeNull();
+    await act(async () => { button('View logs').click() });
+    await act(async () => { });
+    expect(fakeBindings.readLogs).toHaveBeenCalledWith(0);
+    expect(host.querySelector('.log-view')!.textContent).toContain('2026-09-05T10:00:00.000Z INFO server started');
+    expect(host.querySelector('.log-view')!.textContent).toContain('not json at all');
+
+    fakeBindings.readLogs.mockResolvedValue({
+      lines: ['{"time":"2026-09-05T10:00:01.500Z","level":"WARN","msg":"appended"}'],
+      nextOffset: 130,
+      size: 130,
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500) });
+    expect(fakeBindings.readLogs).toHaveBeenLastCalledWith(82);
+    expect(host.querySelector('.log-view')!.textContent).toContain('appended');
+
+    // Closing the panel stops the polling.
+    await act(async () => { button('View logs').click() });
+    const calls = fakeBindings.readLogs.mock.calls.length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(4500) });
+    expect(fakeBindings.readLogs.mock.calls.length).toBe(calls);
+  });
+
+  it('pauses the tail on scroll-up and resumes at the bottom', async () => {
+    fakeBindings.readLogs.mockResolvedValue({
+      lines: ['{"time":"t1","level":"INFO","msg":"one"}'],
+      nextOffset: 30,
+      size: 30,
+    });
+    const host = await mount();
+    await act(async () => { button('View logs').click() });
+    const view = host.querySelector<HTMLElement>('.log-view')!;
+    Object.defineProperty(view, 'scrollHeight', { value: 1000, configurable: true });
+    Object.defineProperty(view, 'clientHeight', { value: 100, configurable: true });
+
+    // Scrolled up (top of 1000px of scrollable content): the tail must
+    // append without moving the view.
+    view.scrollTop = 0;
+    view.dispatchEvent(new Event('scroll'));
+    fakeBindings.readLogs.mockResolvedValue({
+      lines: ['{"time":"t2","level":"INFO","msg":"two"}'],
+      nextOffset: 60,
+      size: 60,
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500) });
+    expect(view.textContent).toContain('two');
+    expect(view.scrollTop).toBe(0);
+
+    // Back at the bottom edge: the tail re-arms and follows the next line.
+    view.scrollTop = 900;
+    view.dispatchEvent(new Event('scroll'));
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500) });
+    expect(view.scrollTop).toBe(1000);
   });
 });

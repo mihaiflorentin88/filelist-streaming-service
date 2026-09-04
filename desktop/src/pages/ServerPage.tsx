@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import {
   AutostartStatus,
   ChangeDataDir,
@@ -8,11 +8,26 @@ import {
   LoadSettings,
   OpenPath,
   OpenWebUI,
+  ReadLogs,
   StartServer,
   StopServer,
   Version,
 } from '../bindings/github.com/mihaiflorentin88/filelist-streaming-service/internal/gui/bindings';
+
 import { useServerState } from '../lib/state';
+
+// renderLogLine formats one JSONL log record as "time LEVEL message" —
+// the server's slog JSON handler keys — and renders anything unparsable
+// or foreign raw.
+function renderLogLine(line: string): string {
+  try {
+    const parsed = JSON.parse(line) as { time?: unknown; level?: unknown; msg?: unknown };
+    if (typeof parsed.time === 'string' || typeof parsed.msg === 'string') {
+      return [parsed.time, parsed.level, parsed.msg].filter(value => typeof value === 'string').join(' ');
+    }
+  } catch { /* not JSON: raw */ }
+  return line;
+}
 
 // Server page: the status card (the page's one bold element: state line +
 // Start/Stop + Open web UI), the Start-at-login card (toggle reflects the OS
@@ -33,6 +48,15 @@ export function ServerPage() {
   const [changeTarget, setChangeTarget] = useState('');
   const [changeError, setChangeError] = useState('');
   const [moving, setMoving] = useState(false);
+  // The live log viewer: open/closed, the raw lines read so far, and —
+  // outside React state, they are call parameters, not render input — the
+  // byte offset the next poll passes and whether the view is pinned to
+  // the tail (auto-scroll) or the user scrolled up to read history.
+  const [logsOpen, setLogsOpen] = useState(false);
+  const [logLines, setLogLines] = useState<string[]>([]);
+  const logOffset = useRef(0);
+  const logPinned = useRef(true);
+  const logView = useRef<HTMLPreElement>(null);
 
   useEffect(() => {
     let alive = true;
@@ -46,6 +70,43 @@ export function ServerPage() {
     void refreshAutostart();
     return () => { alive = false };
   }, []);
+
+  // While the viewer is open, poll the backend's incremental tail every
+  // 1.5 s. A log truncated or rotated underneath us (our offset is past
+  // the reported size) replaces the view instead of appending — the
+  // backend restarted from byte 0. Transient read errors keep the tail;
+  // the next tick retries.
+  useEffect(() => {
+    if (!logsOpen) return;
+    let alive = true;
+    const poll = async () => {
+      try {
+        const tail = await ReadLogs(logOffset.current);
+        if (!alive) return;
+        const reset = logOffset.current > tail.size;
+        logOffset.current = tail.nextOffset;
+        if (reset) logPinned.current = true;
+        setLogLines(lines => reset ? tail.lines : [...lines, ...tail.lines]);
+      } catch { /* keep the tail; the next tick retries */ }
+    };
+    void poll();
+    const timer = setInterval(() => void poll(), 1500);
+    return () => { alive = false; clearInterval(timer) };
+  }, [logsOpen]);
+
+  // Follow the tail only while the view is pinned to the bottom; a
+  // scroll-up freezes it so history can be read in peace.
+  useEffect(() => {
+    const el = logView.current;
+    if (logPinned.current && el) el.scrollTop = el.scrollHeight;
+  }, [logLines, logsOpen]);
+
+  // A scroll event re-arms the tail only from the bottom edge (a small
+  // tolerance absorbs sub-pixel rounding), never from mid-history.
+  function onLogScroll() {
+    const el = logView.current;
+    if (el) logPinned.current = el.scrollTop + el.clientHeight >= el.scrollHeight - 24;
+  }
 
   async function refreshAutostart() {
     try {
@@ -154,8 +215,15 @@ export function ServerPage() {
           {' '}
           <button type="button" disabled={!dataDir} onClick={() => void run(() => OpenPath('logs'))}>Open logs folder</button>
           {' '}
+          <button type="button" disabled={!dataDir} aria-expanded={logsOpen} onClick={() => setLogsOpen(open => !open)}>View logs</button>
+          {' '}
           <button type="button" disabled={!dataDir} onClick={openChange}>Change…</button>
         </p>
+        {logsOpen && (
+          <pre class="log-view" ref={logView} onScroll={onLogScroll} aria-label="Server log tail">
+            {logLines.length ? logLines.map(line => renderLogLine(line) + '\n') : 'No log lines yet.'}
+          </pre>
+        )}
       </fieldset>
       {changeOpen && (
         <div class="overlay" role="dialog" aria-modal="true" aria-labelledby="change-data-dir-heading">

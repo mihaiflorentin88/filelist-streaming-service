@@ -136,3 +136,22 @@ main {
 .empty-state p {
  color: var(--muted);
 }
+
+/* Live log viewer (Server page): a bordered, monospace scroll pane that
+   tails the GUI session's server log. Desktop-only surface, so it lives
+   in the shell stylesheet; colors reuse the web tokens. */
+.log-view {
+ height: 240px;
+ margin: 10px 0 0;
+ padding: 10px 12px;
+ overflow-y: auto;
+ border: 1px solid var(--line);
+ border-radius: var(--radius);
+ background: var(--panel-2);
+ color: var(--muted);
+ font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+ font-size: 12px;
+ line-height: 1.5;
+ white-space: pre-wrap;
+ word-break: break-all;
+}

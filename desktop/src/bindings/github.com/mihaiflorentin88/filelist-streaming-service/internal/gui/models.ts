@@ -7,9 +7,9 @@
  * setup and auto-started the server.
  */
 export interface SaveResult {
-    "saved": boolean;
-    "restartRequired": boolean;
-    "autoStarted": boolean;
+ "saved": boolean;
+ "restartRequired": boolean;
+ "autoStarted": boolean;
 }
 
 /**
@@ -17,17 +17,28 @@ export interface SaveResult {
  * pill, tray, and buttons.
  */
 export enum State {
-    /**
-     * The Go zero value for the underlying type of the enum.
-     */
-    $zero = "",
+ /**
+  * The Go zero value for the underlying type of the enum.
+  */
+ $zero = "",
 
-    StateStopped = "stopped",
-    StateStarting = "starting",
-    StateRunning = "running",
-    StateStopping = "stopping",
-    StateFailed = "failed",
+ StateStopped = "stopped",
+ StateStarting = "starting",
+ StateRunning = "running",
+ StateStopping = "stopping",
+ StateFailed = "failed",
 };
+
+/**
+ * LogTail is one ReadLogs page: the raw lines read from the GUI session's
+ * server log, the byte offset the next call must pass, and the log's
+ * current size.
+ */
+export interface LogTail {
+ "lines": string[];
+ "nextOffset": number;
+ "size": number;
+}
 
 /**
  * StateEvent is the server lifecycle payload the Wails runner emits on the
@@ -35,7 +46,7 @@ export enum State {
  * desktop/src/lib/state.ts.
  */
 export interface StateEvent {
-    "state": State;
-    "error"?: string;
-    "address"?: string;
+ "state": State;
+ "error"?: string;
+ "address"?: string;
 }

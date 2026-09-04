@@ -11,6 +11,7 @@ export {
 } from "./models.js";
 
 export type {
+    LogTail,
     SaveResult,
     StateEvent
 } from "./models.js";

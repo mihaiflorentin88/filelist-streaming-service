@@ -1,9 +1,11 @@
 package gui
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -35,6 +37,15 @@ type SaveResult struct {
 	Saved           bool `json:"saved"`
 	RestartRequired bool `json:"restartRequired"`
 	AutoStarted     bool `json:"autoStarted"`
+}
+
+// LogTail is one ReadLogs page: the raw lines read from the GUI session's
+// server log, the byte offset the next call must pass, and the log's
+// current size.
+type LogTail struct {
+	Lines      []string `json:"lines"`
+	NextOffset int64    `json:"nextOffset"`
+	Size       int64    `json:"size"`
 }
 
 // Bindings is the Wails service behind the desktop pages: server control,
@@ -225,6 +236,23 @@ func (b *Bindings) OpenWebUI() error {
 		return fmt.Errorf("server address %q has no port to open", address)
 	}
 	return b.openURL("http://127.0.0.1:" + port)
+}
+
+// ReadLogs returns the lines appended to the GUI session's server log
+// (<data dir>/logs/server.jsonl, the same file OpenPath("logs") reveals)
+// since the byte offset of the previous call. An offset past the log's
+// size — truncation or rotation — restarts from the beginning. When the
+// unread window exceeds logTailCap the newest logTailCap bytes are
+// returned instead, starting just after the line the cap cuts into, so a
+// viewer that polls rarely stays bounded. Lines are returned raw; JSONL
+// rendering is the client's job. A line still being written is held back
+// until it is complete.
+func (b *Bindings) ReadLogs(offset int64) (LogTail, error) {
+	dir, _ := b.dataDirInfo()
+	if dir == "" {
+		return LogTail{}, errors.New("data directory is not resolvable yet")
+	}
+	return readLogTail(filepath.Join(dir, "logs", "server.jsonl"), offset)
 }
 
 // Quit shuts the server down and exits the application. The runner may
@@ -551,4 +579,64 @@ func (b *Bindings) openURL(url string) error {
 	default:
 		return exec.Command("xdg-open", url).Start()
 	}
+}
+
+// logTailCap bounds one ReadLogs read: when the unread window exceeds it,
+// the tail of the window is served (the newest lines are the ones a
+// viewer follows), starting just after the line the cap cuts into.
+const logTailCap = 256 << 10 // 256 KiB
+
+// readLogTail reads the complete lines of path from byte offset,
+// enforcing the logTailCap window and the truncation reset the ReadLogs
+// binding promises. It is a free function so tests can drive a temp file
+// without the data-dir resolution.
+func readLogTail(path string, offset int64) (LogTail, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			// No log yet (fresh data dir): an empty tail, not an error.
+			return LogTail{Lines: []string{}}, nil
+		}
+		return LogTail{}, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return LogTail{}, err
+	}
+	size := info.Size()
+	if offset > size || offset < 0 {
+		offset = 0 // truncated or rotated: restart from the beginning
+	}
+	start := offset
+	if size-start > logTailCap {
+		start = size - logTailCap
+	}
+	data := make([]byte, size-start)
+	n, err := f.ReadAt(data, start)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return LogTail{}, err
+	}
+	data = data[:n]
+	if start != offset { // the cap cut into a line: skip its partial head
+		if i := bytes.IndexByte(data, '\n'); i >= 0 {
+			start += int64(i) + 1
+			data = data[i+1:]
+		} else {
+			// One line longer than the whole window: nothing to show.
+			data, start = nil, size
+		}
+	}
+	// Hold back a trailing partial line: the append in progress is sent
+	// whole by the next call.
+	if cut := bytes.LastIndexByte(data, '\n') + 1; cut != len(data) {
+		data = data[:cut]
+	}
+	lines := []string{}
+	if len(data) > 0 {
+		lines = strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	}
+	// start names the first kept byte (past the snapped partial head, if
+	// any), so the next offset is start plus everything returned.
+	return LogTail{Lines: lines, NextOffset: start + int64(len(data)), Size: size}, nil
 }
