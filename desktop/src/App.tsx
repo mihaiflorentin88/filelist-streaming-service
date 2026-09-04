@@ -2,15 +2,18 @@ import { useState } from 'preact/hooks';
 import { useServerState } from './lib/state';
 import { DownloadsPage } from './pages/DownloadsPage';
 import { JobsPage } from './pages/JobsPage';
-import './shell.css';
+import { ServerPage } from './pages/ServerPage';
+import { SettingsPage } from './pages/SettingsPage';
 import '@filelist/web/style.css';
 
-// Task 10 appends Server and Settings: one View member, one sections entry,
-// and one render line each.
-type View = 'downloads' | 'jobs';
+// Task 10 appended Server and Settings: one View member, one sections
+// entry, and one render line each.
+type View = 'downloads' | 'jobs' | 'server' | 'settings';
 const sections: { id: View; label: string }[] = [
   { id: 'downloads', label: 'Downloads' },
   { id: 'jobs', label: 'Jobs' },
+  { id: 'server', label: 'Server' },
+  { id: 'settings', label: 'Settings' },
 ];
 
 export function App() {
@@ -38,6 +41,8 @@ export function App() {
         <main>
           {view === 'downloads' && <DownloadsPage />}
           {view === 'jobs' && <JobsPage />}
+          {view === 'server' && <ServerPage />}
+          {view === 'settings' && <SettingsPage />}
         </main>
       </div>
     </div>

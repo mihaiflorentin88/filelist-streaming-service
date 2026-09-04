@@ -107,9 +107,9 @@ describe('shell chrome', () => {
     expect(host.querySelectorAll('.dot-running').length).toBeGreaterThanOrEqual(3);
   });
 
-  it('carries exactly the shipped sections; Task 10 appends Server and Settings', async () => {
+  it('carries exactly the shipped sections; Task 10 appended Server and Settings', async () => {
     const host = await mount(<App />);
     const labels = Array.from(host.querySelectorAll('.shell-nav button')).map(button => button.textContent?.trim());
-    expect(labels).toEqual(['Downloads', 'Jobs']);
+    expect(labels).toEqual(['Downloads', 'Jobs', 'Server', 'Settings']);
   });
 });

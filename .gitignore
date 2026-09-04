@@ -20,6 +20,8 @@ release/
 artifacts/
 internal/adapters/httpapi/static/index.html
 internal/adapters/httpapi/static/assets/
+internal/gui/static/index.html
+internal/gui/static/assets/
 web/dist/
 clients/tizen/dist/
 clients/tizen/.build/
