@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,13 +20,14 @@ import (
 // fakeApp is a controllable stand-in for composition.App. A nil serve
 // channel means ListenAndServe returns serveErr immediately; a non-nil
 // serve channel blocks until a value is sent, simulating a running
-// server. The closed channel reports exactly one Close() call.
+// server. closeCalls counts Close() invocations (exactly one per app);
+// closed reports the first Close.
 type fakeApp struct {
-	addr     string
-	serveErr error
-	serve    chan error
-	closed   chan struct{}
-	closeOne sync.Once
+	addr       string
+	serveErr   error
+	serve      chan error
+	closed     chan struct{}
+	closeCalls atomic.Int32
 }
 
 func (f *fakeApp) ListenAndServe() error {
@@ -38,7 +40,9 @@ func (f *fakeApp) ListenAndServe() error {
 func (f *fakeApp) Shutdown(ctx context.Context) error { return ctx.Err() }
 
 func (f *fakeApp) Close() {
-	f.closeOne.Do(func() { close(f.closed) })
+	if f.closeCalls.Add(1) == 1 {
+		close(f.closed)
+	}
 }
 
 func (f *fakeApp) ListenAddress() string { return f.addr }
@@ -109,6 +113,13 @@ func TestSupervisorTransitionsAndFailure(t *testing.T) {
 	}
 	if sup.Error() == nil || !strings.Contains(sup.Error().Error(), "address already in use") {
 		t.Fatalf("failed state must carry the bind error, got %v", sup.Error())
+	}
+	// The failed serve attempt must not leak the app: Close is called
+	// exactly once even though s.app was already cleared.
+	select {
+	case <-app.closed:
+	default:
+		t.Fatal("serve failure must Close the app")
 	}
 }
 
@@ -401,7 +412,20 @@ func TestSupervisorOnStateChangeCallbackCanReadState(t *testing.T) {
 // the running transition at a time and no stop races a failed write.
 func TestSupervisorConcurrentStartStop(t *testing.T) {
 	for i := range 20 {
+		// Every Start cycle gets a fresh fake app; sequential cycles on
+		// one supervisor are legal, and each instance must be closed
+		// exactly once.
+		serve := make(chan error)
+		var appsMu sync.Mutex
+		var apps []*fakeApp
 		sup := NewSupervisor(SupervisorDeps{Log: testLogger(), Settings: testStore(t)})
+		sup.appFactory = func() (appLike, error) {
+			app := &fakeApp{serve: serve, closed: make(chan struct{})}
+			appsMu.Lock()
+			apps = append(apps, app)
+			appsMu.Unlock()
+			return app, nil
+		}
 		n := 8
 		var wg sync.WaitGroup
 		errs := make([]error, n)
@@ -417,16 +441,29 @@ func TestSupervisorConcurrentStartStop(t *testing.T) {
 			}()
 		}
 		wg.Wait()
-		okCount := 0
-		for _, err := range errs {
-			if err == nil {
-				okCount++
+		stopOK, startOK := 0, 0
+		for g, err := range errs {
+			if err != nil {
+				continue
+			}
+			if g%2 == 0 {
+				startOK++
+			} else {
+				stopOK++
 			}
 		}
-		// At most one Start may take the server to running and at most
-		// one Stop may take it back; everything else refuses.
-		if okCount > 2 {
-			t.Fatalf("iteration %d: %d operations succeeded, want <= 2", i, okCount)
+		// Starts are serialized against each other: a successful Start
+		// leaves starting/running behind it, so a later Start can only win
+		// after an intervening successful Stop. Sequential start/stop
+		// cycles are legal; overlapping ones are not.
+		if startOK > stopOK+1 {
+			t.Fatalf("iteration %d: %d starts succeeded vs %d stops — start check not serialized", i, startOK, stopOK)
+		}
+		// A successful Start must eventually Close its app, whether the
+		// teardown came from Stop or the supervisor releasing the app.
+		// With no successful Start there is no goroutine to release.
+		if startOK == 0 {
+			continue
 		}
 		// Drain to a clean stopped state for the next iteration.
 		deadline := time.After(2 * time.Second)
@@ -440,6 +477,32 @@ func TestSupervisorConcurrentStartStop(t *testing.T) {
 		if sup.State() == StateRunning {
 			if err := sup.Stop(); err != nil {
 				t.Fatalf("cleanup Stop: %v", err)
+			}
+		}
+		closeDeadline := time.After(2 * time.Second)
+		for {
+			appsMu.Lock()
+			done, total := 0, len(apps)
+			for _, app := range apps {
+				if app.closeCalls.Load() == 1 {
+					done++
+				}
+			}
+			appsMu.Unlock()
+			if done == total && total > 0 {
+				break
+			}
+			select {
+			case <-closeDeadline:
+				t.Fatalf("iteration %d: only %d/%d apps closed", i, done, total)
+			case <-time.After(5 * time.Millisecond):
+			}
+		}
+		// The serve-failure path and Stop must never both close the
+		// same app instance.
+		for _, app := range apps {
+			if got := app.closeCalls.Load(); got != 1 {
+				t.Fatalf("iteration %d: app closed %d times, want 1", i, got)
 			}
 		}
 	}

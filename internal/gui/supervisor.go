@@ -192,9 +192,18 @@ func (s *Supervisor) run() {
 
 	if err := app.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		s.mu.Lock()
-		onChange := s.transition(StateFailed, err)
+		// Only the running state owns this failure: if Stop already
+		// moved to stopping, it also owns Shutdown/Close, and a serve
+		// error arriving during teardown must not flash failed.
+		if s.state == StateRunning {
+			s.app = nil
+			onChange := s.transition(StateFailed, err)
+			s.mu.Unlock()
+			app.Close()
+			s.fire(onChange, StateFailed, err)
+			return
+		}
 		s.mu.Unlock()
-		s.fire(onChange, StateFailed, err)
 	}
 }
 
