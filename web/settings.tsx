@@ -79,7 +79,14 @@ const linkify = (text: string) =>
     /^https?:\/\//.test(part) ? <a key={i} href={part} target="_blank" rel="noreferrer">{part}</a> : part
   );
 
-export function Settings({ value, fields, onSaved, onError, onDirtyChange }: { value: Record<string, unknown>; fields: SettingsField[]; onSaved: (v: Record<string, unknown>) => void; onError: (s: string) => void; onDirtyChange?: (dirty: boolean) => void }) {
+export function Settings({ value, fields, onSaved, onError, onDirtyChange, save: saveTransport }: {
+  value: Record<string, unknown>; fields: SettingsField[]; onSaved: (v: Record<string, unknown>) => void; onError: (s: string) => void; onDirtyChange?: (dirty: boolean) => void;
+  // Alternate save transport for embedded hosts (the desktop GUI): the save
+  // bar calls it with the submitted body instead of the storage PUT, and a
+  // thrown error takes the normal error path. Absent, the webapp behaves
+  // exactly as before.
+  save?: (value: Record<string, unknown>) => Promise<{ saved: boolean; restartRequired?: boolean } | void>
+}) {
   const [current, setCurrent] = useState(() => { const draft = { ...value }; Object.keys(draft).forEach(key => { draft[key] = formValue(key, draft[key]) }); return draft });
   const [message, setMessage] = useState('');
   const [help, setHelp] = useState<SettingsField | null>(null);
@@ -138,7 +145,8 @@ export function Settings({ value, fields, onSaved, onError, onDirtyChange }: { v
     const out = { ...merged };
     Object.keys(out).filter(k => k.endsWith('Configured') || k === 'settingsPath').forEach(k => delete out[k]);
     try {
-      await sharedApi().call('/settings', { method: 'PUT', body: JSON.stringify(out) });
+      if (saveTransport) await saveTransport(out);
+      else await sharedApi().call('/settings', { method: 'PUT', body: JSON.stringify(out) });
       setMessage('Settings saved. Environment-managed values remain controlled by .env.docker.');
       onSaved(merged);
       // The saved tab's draft snaps to the canonical form shape so the tab

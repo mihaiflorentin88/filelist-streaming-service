@@ -29,8 +29,12 @@ vi.mock('@wailsio/runtime', () => ({
   },
 }));
 
-// App mounts the downloads view by default; the shared API is stubbed so
-// the poll loop stays inert while the pill and nav are under test.
+// Server is the landing view, so App now mounts ServerPage on boot: the
+// bindings are stubbed inert so the shell tests stay hermetic.
+vi.mock('../lib/bindings', () => ({
+  Bindings: new Proxy({}, { get: (_target, key) => (key === '__esModule' ? false : vi.fn().mockResolvedValue(undefined)) }),
+}));
+
 vi.mock('@filelist/web/shared-api', () => ({
   configureSharedApi: () => { },
   sharedApi: () => ({ downloads: async () => ({ items: [] }) }),
@@ -107,9 +111,9 @@ describe('shell chrome', () => {
     expect(host.querySelectorAll('.dot-running').length).toBeGreaterThanOrEqual(3);
   });
 
-  it('carries exactly the shipped sections; Task 10 appended Server and Settings', async () => {
+  it('carries exactly the shipped sections; Server first, Task 10 appended Settings', async () => {
     const host = await mount(<App />);
     const labels = Array.from(host.querySelectorAll('.shell-nav button')).map(button => button.textContent?.trim());
-    expect(labels).toEqual(['Downloads', 'Jobs', 'Server', 'Settings']);
+    expect(labels).toEqual(['Server', 'Downloads', 'Jobs', 'Settings']);
   });
 });

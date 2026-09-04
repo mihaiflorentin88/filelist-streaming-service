@@ -3,13 +3,14 @@ import { Settings } from '@filelist/web/settings';
 import { Bindings, type SchemaField, type SettingsView } from '../lib/bindings';
 import { useServerState } from '../lib/state';
 
-// Settings page: the shared web Settings component fed by the bindings
-// transport. LoadSettings/SettingsSchema work with the server stopped; the
-// Test and Maintenance tabs (and the component's save) talk HTTP to the live
-// server, so a stopped server gets the explanatory note above the form. A
-// save that changes restart-required fields surfaces the inline "Restart to
-// apply" action; a save that completes the required settings auto-starts the
-// server (Go side) and clears the missing-settings banner.
+// Settings page: the shared web Settings component with the bindings as the
+// PRIMARY save transport (works while the server is stopped — that is the
+// point). LoadSettings/SettingsSchema also come from the bindings; only the
+// Test and Maintenance tabs still talk HTTP to the live server, so a stopped
+// server gets the explanatory note above the form. A save that changes
+// restart-required fields surfaces the inline "Restart to apply" action; a
+// save that completes the required settings auto-starts the server purely
+// Go-side, and the state event flips the shell pill to running.
 export function SettingsPage() {
   const server = useServerState();
   const [value, setValue] = useState<SettingsView | null>(null);
@@ -42,18 +43,20 @@ export function SettingsPage() {
     return () => { alive = false };
   }, []);
 
-  // The shared component saved over HTTP; mirror the save through the
-  // bindings so the Go store answers for it (restart diff + auto-start).
-  async function onSaved(saved: Record<string, unknown>) {
+  // Primary transport: the save bar routes the submitted body through
+  // SaveSettings (Go store: restart diff + auto-start). A thrown error takes
+  // the component's normal error path (onError below). onSaved then only
+  // syncs the local copy of the saved values.
+  async function saveTransport(out: Record<string, unknown>) {
+    const result = await Bindings.saveSettings(out);
+    setRestartRequired(result.restartRequired);
+    setMissing(await Bindings.missingRequired().catch(() => [] as string[]));
+    return result;
+  }
+
+  function onSaved(saved: Record<string, unknown>) {
     setSaveError('');
-    try {
-      const result = await Bindings.saveSettings(saved);
-      setRestartRequired(result.restartRequired);
-      setMissing(await Bindings.missingRequired().catch(() => [] as string[]));
-      setValue(current => (current ? { ...current, ...saved } as SettingsView : current));
-    } catch (e) {
-      setSaveError((e as Error).message);
-    }
+    setValue(current => (current ? { ...current, ...saved } as SettingsView : current));
   }
 
   function focusTracker() {
@@ -102,7 +105,8 @@ export function SettingsPage() {
             key={formKey}
             value={value as Record<string, unknown>}
             fields={fields}
-            onSaved={saved => void onSaved(saved)}
+            save={saveTransport}
+            onSaved={onSaved}
             onError={message => setSaveError(message)}
           />
           : <p class="supporting">Loading settings…</p>}

@@ -3,6 +3,7 @@ import { act } from 'preact/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { API, type HouseholdState } from '@filelist/shared';
 import { App } from './src';
+import { Settings } from './settings';
 
 // App-seam tests for the redesigned Settings surface (spec #65, tickets
 // #67-#70): the whole app mounts, the API is mocked at the class boundary,
@@ -42,6 +43,7 @@ const catalogStatus = { observedReleases: 1200, discoverableReleases: 800, hidde
 const syncJob = { id: 'job-1', kind: 'catalog_sync', state: 'queued', label: 'Fetch latest', dedupeKey: 'catalog:latest', progress: 0, attempt: 0, retryable: false, createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' };
 
 const putCalls: Array<{ body: Record<string, unknown> }> = [];
+const savedValues: Array<Record<string, unknown>> = [];
 
 let storedSettings: Record<string, unknown> = settingsValue;
 
@@ -120,6 +122,7 @@ afterEach(() => {
  document.body.innerHTML = '';
  window.history.replaceState(null, '', '/');
  putCalls.length = 0;
+ savedValues.length = 0;
  storedSettings = settingsValue;
  vi.restoreAllMocks();
  vi.unstubAllGlobals();
@@ -579,4 +582,50 @@ it('renders obtain links as clickable anchors in field help', async () => {
  const link = modal.querySelector<HTMLAnchorElement>('a[href="https://filelist.io"]')!;
  expect(link.getAttribute('target')).toBe('_blank');
  expect(link.getAttribute('rel')).toBe('noreferrer');
+});
+
+// The optional `save` prop swaps the save bar's transport for embedded hosts
+// (desktop). When provided, the component calls it with the submitted body
+// and never touches the storage PUT; the webapp path (prop absent) is pinned
+// by every other test in this file.
+describe('Settings save transport prop', () => {
+ it('routes the save through the injected transport instead of the HTTP PUT', async () => {
+  const transport = vi.fn(async (out: Record<string, unknown>) => {
+   savedValues.push(out);
+   return { saved: true, restartRequired: true };
+  });
+  const host = document.createElement('div');
+  document.body.appendChild(host);
+  await act(async () => { render(<Settings value={settingsValue} fields={schemaFields} onSaved={() => { }} onError={() => { }} save={transport} />, host) });
+  const input = Array.from(document.querySelectorAll('.settings-panel label')).find(item => item.querySelector('span')?.textContent?.startsWith('FileList URL'))!.querySelector('input')!;
+  input.value = 'https://filelist.example';
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  await act(async () => { });
+  const submit = document.querySelector('.settings-actions button[type="submit"]') as HTMLButtonElement;
+  await act(async () => { submit.click() });
+  await settle();
+  expect(transport).toHaveBeenCalledTimes(1);
+  expect(savedValues[0].fileListUrl).toBe('https://filelist.example');
+  expect(Object.keys(savedValues[0]).filter(key => key.endsWith('Configured') || key === 'settingsPath')).toEqual([]);
+  expect(putCalls.length).toBe(0);
+  expect(document.querySelector('.settings-status')?.textContent).toContain('Settings saved');
+ });
+
+ it('routes a thrown transport error to the normal error path', async () => {
+  const errors: string[] = [];
+  const host = document.createElement('div');
+  document.body.appendChild(host);
+  await act(async () => {
+   render(<Settings value={settingsValue} fields={schemaFields} onSaved={() => { }} onError={message => errors.push(message)} save={async () => { throw new Error('torrent session directory is not writable') }} />, host);
+  });
+  const input = Array.from(document.querySelectorAll('.settings-panel label')).find(item => item.querySelector('span')?.textContent?.startsWith('FileList URL'))!.querySelector('input')!;
+  input.value = 'https://filelist.example';
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  await act(async () => { });
+  const submit = document.querySelector('.settings-actions button[type="submit"]') as HTMLButtonElement;
+  await act(async () => { submit.click() });
+  await settle();
+  expect(errors).toEqual(['torrent session directory is not writable']);
+  expect(document.querySelector('.settings-status')).toBeNull();
+ });
 });

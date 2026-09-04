@@ -10,14 +10,14 @@ import '@filelist/web/style.css';
 // entry, and one render line each.
 type View = 'downloads' | 'jobs' | 'server' | 'settings';
 const sections: { id: View; label: string }[] = [
+  { id: 'server', label: 'Server' },
   { id: 'downloads', label: 'Downloads' },
   { id: 'jobs', label: 'Jobs' },
-  { id: 'server', label: 'Server' },
   { id: 'settings', label: 'Settings' },
 ];
 
 export function App() {
-  const [view, setView] = useState<View>('downloads');
+  const [view, setView] = useState<View>('server');
   const server = useServerState();
   return (
     <div class="shell">

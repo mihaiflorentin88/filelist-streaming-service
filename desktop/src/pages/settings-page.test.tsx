@@ -27,8 +27,28 @@ vi.mock('@filelist/web/shared-api', () => ({
   sharedApi: () => fakeApi,
 }));
 
+// Records 'server:state' subscribers so tests can emit lifecycle events the
+// way the Task 6 runner will.
+const fakeEvents = vi.hoisted(() => {
+  const subscribers = new Map<string, Array<(event: { data: unknown }) => void>>();
+  return {
+    subscribers,
+    emit(topic: string, data: unknown) {
+      for (const handler of subscribers.get(topic) ?? []) handler({ data });
+    },
+    reset() { subscribers.clear() },
+  };
+});
+
 vi.mock('@wailsio/runtime', () => ({
-  Events: { On: () => () => { } },
+  Events: {
+    On: (topic: string, handler: (event: { data: unknown }) => void) => {
+      const list = fakeEvents.subscribers.get(topic) ?? [];
+      list.push(handler);
+      fakeEvents.subscribers.set(topic, list);
+      return () => { fakeEvents.subscribers.set(topic, list.filter(fn => fn !== handler)) };
+    },
+  },
 }));
 
 const settingsValue = {
@@ -100,7 +120,7 @@ describe('SettingsPage transport', () => {
     expect(host.querySelector('[role="alert"]')?.textContent).toContain('bridge unavailable');
   });
 
-  it('mirrors a saved tab through SaveSettings and flags restart-required changes', async () => {
+  it('routes the save bar through SaveSettings instead of the HTTP PUT and flags restart-required changes', async () => {
     fakeBindings.saveSettings.mockResolvedValue({ saved: true, restartRequired: true, autoStarted: false });
     const host = await mount();
     const input = Array.from(host.querySelectorAll<HTMLInputElement>('.settings-panel label')).find(
@@ -118,8 +138,8 @@ describe('SettingsPage transport', () => {
         await promise;
       });
     }
-    expect(fakeApi.call).toHaveBeenCalled(); // the shared component's HTTP PUT
     expect(fakeBindings.saveSettings).toHaveBeenCalled();
+    expect(fakeApi.call).not.toHaveBeenCalled(); // the transport replaced the HTTP PUT
     const payload = fakeBindings.saveSettings.mock.calls[0][0] as Record<string, unknown>;
     expect(payload.fileListUrl).toBe('https://filelist.example');
     expect(host.textContent).toContain('Restart to apply');
@@ -127,6 +147,43 @@ describe('SettingsPage transport', () => {
       Array.from(host.querySelectorAll('button')).find(button => button.textContent === 'Restart to apply')!.click();
     });
     expect(fakeBindings.restartServer).toHaveBeenCalled();
+  });
+
+  it('saves through bindings while stopped; a completing save clears the banner and the note reacts to the running event', async () => {
+    seedServerState({ state: 'stopped' });
+    fakeBindings.saveSettings.mockResolvedValue({ saved: true, restartRequired: false, autoStarted: true });
+    fakeBindings.missingRequired.mockReset();
+    fakeBindings.missingRequired
+      .mockResolvedValueOnce(['fileListPasskey', 'downloadRoot']) // mount read
+      .mockResolvedValue([]); // post-save read: setup completed
+    const host = await mount();
+    expect(host.querySelector('[role="note"]')?.textContent).toContain('Start the server to run tests');
+    expect(host.textContent).toContain('Required settings missing');
+    const input = Array.from(host.querySelectorAll<HTMLInputElement>('.settings-panel label')).find(
+      item => item.querySelector('span')?.textContent?.startsWith('FileList passkey'),
+    )!.querySelector('input')!;
+    await act(async () => {
+      input.value = 'secret-passkey';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => { host.querySelector<HTMLButtonElement>('.settings-actions button[type="submit"]')!.click() });
+    for (let i = 0; i < 5; i++) {
+      await act(async () => {
+        const { promise, resolve } = Promise.withResolvers<void>();
+        setTimeout(resolve, 0);
+        await promise;
+      });
+    }
+    expect(fakeBindings.saveSettings).toHaveBeenCalled();
+    expect(fakeApi.call).not.toHaveBeenCalled(); // works with the server stopped
+    const result = await fakeBindings.saveSettings.mock.results[0].value;
+    expect(result).toEqual({ saved: true, restartRequired: false, autoStarted: true });
+    expect(host.textContent).not.toContain('Required settings missing');
+    // The Go side auto-started; the emitted state event moves the page out of
+    // the stopped-server note (the shell pill flips the same way).
+    expect(host.querySelector('[role="note"]')).not.toBeNull();
+    await act(async () => { fakeEvents.emit('server:state', { state: 'running', address: '127.0.0.1:8097' }) });
+    expect(host.querySelector('[role="note"]')).toBeNull();
   });
 
   it('does not flag restart when the save changed nothing restart-required', async () => {
