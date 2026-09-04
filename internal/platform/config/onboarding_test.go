@@ -53,6 +53,29 @@ func TestMissingRequiredListsKeysAbsentFromFileAndEnvironment(t *testing.T) {
 	}
 }
 
+// TestSaveCompletingRequiredClearsMissingForTheSameStore pins that a save
+// which fills every required key clears MissingRequired on the in-memory
+// store — not just after a reload — so a GUI save that completes setup can
+// detect completion and auto-start.
+func TestSaveCompletingRequiredClearsMissingForTheSameStore(t *testing.T) {
+	dir := t.TempDir()
+	store := loadAt(t, filepath.Join(dir, "settings.json"))
+	if missing := store.MissingRequired(); len(missing) != 3 {
+		t.Fatalf("fresh store missing = %v, want all three required keys", missing)
+	}
+	next := store.Get()
+	next.DownloadRoot = filepath.Join(dir, "downloads")
+	next.TorrentSessionDir = filepath.Join(dir, "session")
+	next.FileListUsername = "me"
+	next.FileListPasskey = "secret"
+	if err := store.Save(next); err != nil {
+		t.Fatal(err)
+	}
+	if missing := store.MissingRequired(); len(missing) != 0 {
+		t.Fatalf("missing after completing save = %v, want none", missing)
+	}
+}
+
 func TestPromptRequiredPersistsAnswersIntoTheSettingsFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "settings.json")

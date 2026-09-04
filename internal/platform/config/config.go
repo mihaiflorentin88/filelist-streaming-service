@@ -222,6 +222,15 @@ func (s *Store) Save(next Settings) error {
 		return err
 	}
 	s.base, s.value, s.envManaged = persisted, effective, managed
+	// The file now carries every persisted key: required keys with a usable
+	// value count as file-provided, exactly as if the store had been loaded
+	// from this file. Without this, MissingRequired keeps reporting keys the
+	// user just saved (the GUI's completing-save auto-start reads it).
+	for _, key := range requiredKeys {
+		if strings.TrimSpace(requiredValue(persisted, key)) != "" {
+			s.fileProvided[key] = true
+		}
+	}
 	return nil
 }
 
