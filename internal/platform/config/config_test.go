@@ -352,3 +352,38 @@ func TestDownloadEngineValidation(t *testing.T) {
 		t.Fatal("blank torrentSessionDir must fail validation")
 	}
 }
+
+func TestLoadAtUsesGivenPath(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+	if err := os.WriteFile(path, []byte(`{"fileListUsername":"u","fileListPasskey":"p"}`), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	s, err := LoadAt(path)
+	if err != nil {
+		t.Fatalf("LoadAt: %v", err)
+	}
+	if s.Path() != path {
+		t.Fatalf("Path() = %q, want %q", s.Path(), path)
+	}
+	if s.Get().FileListUsername != "u" {
+		t.Fatal("settings from the given path must load")
+	}
+}
+
+func TestRestartRequiredTracksListenerAndEngine(t *testing.T) {
+	old := Defaults()
+	next := old
+	if RestartRequired(old, next) {
+		t.Fatal("identical settings never require restart")
+	}
+	next.ListenAddress = ":9999"
+	next.DownloadEngine = "qbittorrent"
+	if !RestartRequired(old, next) {
+		t.Fatal("listener/engine changes require restart")
+	}
+	next.InstanceName = "other"
+	if !RestartRequired(old, next) {
+		t.Fatal("instance name alone never requires restart")
+	}
+}

@@ -188,7 +188,7 @@ func (a *API) putSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	old := a.settings.Get()
-	if err := ensureNativePathsWritable(v.DownloadEngine, v.DownloadRoot, v.TorrentSessionDir); err != nil {
+	if err := config.EnsureNativePathsWritable(v.DownloadEngine, v.DownloadRoot, v.TorrentSessionDir); err != nil {
 		problem(w, 400, err)
 		return
 	}

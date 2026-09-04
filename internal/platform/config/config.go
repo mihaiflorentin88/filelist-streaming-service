@@ -96,6 +96,12 @@ func Load() (*Store, error) {
 	if path == "" {
 		path = DefaultSettingsPath
 	}
+	return LoadAt(path)
+}
+
+// LoadAt loads the store from an explicit settings file path. The data-dir
+// layer calls this after resolving the directory.
+func LoadAt(path string) (*Store, error) {
 	base := Defaults()
 	s := &Store{path: path, envManaged: map[string]bool{}, fileProvided: map[string]bool{}}
 	b, err := os.ReadFile(s.path)
@@ -440,4 +446,47 @@ func mergeSecrets(next *Settings, old Settings) {
 	if next.SubDLAPIKey == "" {
 		next.SubDLAPIKey = old.SubDLAPIKey
 	}
+}
+
+// Validate exposes load-time validation so non-HTTP callers (GUI bindings)
+// apply exactly the same rules before Save. Save() validates internally;
+// this is for pre-checks.
+func (s *Store) Validate(v Settings) error { return s.validate(v) }
+
+// RestartRequired reports whether any setting that the running server read
+// at startup differs, mirroring the HTTP PUT response contract.
+func RestartRequired(old, new Settings) bool {
+	return old.ListenAddress != new.ListenAddress || old.DatabasePath != new.DatabasePath ||
+		old.MaxConcurrentJobs != new.MaxConcurrentJobs || old.TitleRefreshTimeoutMinutes != new.TitleRefreshTimeoutMinutes ||
+		old.DownloadEngine != new.DownloadEngine || old.TorrentPeerPort != new.TorrentPeerPort ||
+		old.TorrentSessionDir != new.TorrentSessionDir
+}
+
+// EnsureNativePathsWritable prepares the directories the native torrent engine
+// writes to at startup: it creates them when missing and proves they accept
+// writes. It runs while saving settings so a bad path fails the save with a
+// visible error instead of crash-looping the service on the next restart.
+// The check runs inside the same process (and therefore the same systemd
+// sandbox) as the engine, so it fails exactly when startup would.
+func EnsureNativePathsWritable(downloadEngine, downloadRoot, sessionDir string) error {
+	if downloadEngine != "native" {
+		return nil
+	}
+	dirs := []struct{ label, path string }{
+		{"download root", downloadRoot},
+		{"torrent session directory", sessionDir},
+	}
+	for _, dir := range dirs {
+		if err := os.MkdirAll(dir.path, 0o755); err != nil {
+			return fmt.Errorf("cannot create %s %s: %w", dir.label, dir.path, err)
+		}
+		probe, err := os.CreateTemp(dir.path, ".write-probe-*")
+		if err != nil {
+			return fmt.Errorf("%s %s is not writable: %w", dir.label, dir.path, err)
+		}
+		name := probe.Name()
+		_ = probe.Close()
+		_ = os.Remove(name)
+	}
+	return nil
 }
