@@ -4,6 +4,19 @@ Configuration is managed in the browser and persisted to `data/settings.json`. A
 
 Every JSON setting can also be supplied as an uppercase `FILELIST_STREAMING_...` environment variable; camel-case boundaries become underscores (for example, `instanceName` becomes `FILELIST_STREAMING_INSTANCE_NAME`). `FILELIST_STREAMING_SETTINGS_PATH` selects the settings file itself. Environment values are authoritative, are marked read-only in browser Settings, and are never copied back into that file.
 
+## Data directory
+
+The data directory holds `settings.json`, the SQLite database, `logs/`, the artwork cache, and the engine session. It is resolved in this order:
+
+1. The `--data-dir` flag (absolute or relative to the working directory).
+2. A `data.location` pointer file next to the executable (written only after a GUI relocation).
+   - **Desktop app:** Linux uses `/var/lib/filelist-streaming-service` when it exists and is writable, otherwise `~/.local/share/filelist-streaming`; Windows uses `%APPDATA%\FileList Streaming`; macOS uses `~/Library/Application Support/FileList Streaming`.
+   - **`serve`:** `data/` next to the executable, unchanged from previous releases.
+
+Change the location from the desktop app's Server page (data folder → **Change…**). The change requires the server stopped — a running server is stopped first and restarted afterwards — and the target directory must not exist or must be empty; a non-empty target is refused and directories are never merged. All contents move (same volume: atomic rename; cross volume: copy, verify each file's size and SHA-256, then delete the source), the pointer file is written atomically, and any failure rolls back leaving the original data untouched.
+
+`FILELIST_STREAMING_SETTINGS_PATH` keeps its existing precedence: when set it selects the settings file itself regardless of the data directory above. Systemd deployments pin `--data-dir /var/lib/filelist-streaming/data` in the unit, so the platform defaults never apply to them.
+
 ## Required dependencies
 
 - FileList URL, username, and passkey. Never enter the account password.

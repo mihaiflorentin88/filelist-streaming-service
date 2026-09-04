@@ -23,20 +23,25 @@ Binaries for every supported platform are on the [releases page](https://github.
 | `filelist-streaming-linux-armv7` | Linux, 32-bit ARM |
 | `filelist-streaming-darwin-arm64` | Mac with Apple Silicon |
 | `filelist-streaming-darwin-amd64` | Intel Mac |
-| `filelist-streaming-windows-amd64.exe` | Windows, 64-bit x86 |
+| `filelist-streaming-windows-arm64.exe` | Windows, 64-bit ARM |
 
 Releases also contain `SHA256SUMS` (`sha256sum -c SHA256SUMS --ignore-missing`), SBOMs, and the unsigned Tizen `FileListTV-<version>.wgt`.
 
-## First run (every operating system)
+The archives follow the `filelist-streaming-<os>-<arch>[.exe]` naming scheme. Every binary except `filelist-streaming-linux-armv7` contains both the desktop app and the headless server. macOS releases additionally ship a universal (Apple Silicon + Intel) `FileList Streaming.app` bundle; `filelist-streaming-linux-armv7` is a pure headless build with the GUI excluded.
 
-Run the binary from a terminal, in the directory where you want its data:
+## First run
+
+One binary runs two modes:
+
+- Launch it without arguments (double-click, or run it from a terminal) to open the desktop app: a window plus a system-tray icon. See [Desktop app](#desktop-app) below.
+- Run `filelist-streaming serve` for the headless server, in the directory where you want its `data/` folder:
 
 ```sh
-./filelist-streaming           # Linux / macOS
-.\filelist-streaming.exe       # Windows PowerShell
+./filelist-streaming serve           # Linux / macOS
+.\filelist-streaming.exe serve       # Windows PowerShell
 ```
 
-The first start asks three questions:
+The first headless start asks three questions:
 
 ```text
 Download root [/srv/filelist-downloads]: /home/you/media
@@ -52,11 +57,65 @@ Then open `http://localhost:8097`. Press `Ctrl+C` to stop the server.
 
 ### Platform notes
 
-**Linux (amd64, arm64, armv7).** Nothing extra to configure. Headless services without a terminal skip the prompts: set `FILELIST_STREAMING_DOWNLOAD_ROOT`, `FILELIST_STREAMING_FILE_LIST_USERNAME`, and `FILELIST_STREAMING_FILE_LIST_PASSKEY` instead.
+**Linux (amd64, arm64, armv7).** Headless services without a terminal skip the prompts: set `FILELIST_STREAMING_DOWNLOAD_ROOT`, `FILELIST_STREAMING_FILE_LIST_USERNAME`, and `FILELIST_STREAMING_FILE_LIST_PASSKEY` instead.
 
 **macOS (Apple Silicon, Intel).** If a browser downloaded the binary, macOS may block it once. Remove the quarantine with `xattr -d com.apple.quarantine filelist-streaming-darwin-*` or allow it under System Settings → Privacy & Security.
 
 **Windows (amd64).** SmartScreen warns about the unsigned binary on first run: choose **More info → Run anyway**.
+
+## Desktop app
+
+Every binary except `filelist-streaming-linux-armv7` includes the desktop app: a native window plus a system-tray icon, with the HTTP server running inside the same process. Launch the binary without arguments to open it.
+
+### First launch
+
+On the first launch the window opens on setup: the Settings page shows a banner with the required settings still missing (download root, FileList username, passkey). Saving a complete configuration auto-starts the server — no extra step. Afterwards the Server page shows the status with Start/Stop controls, and closing the window hides it to the tray; quit from the tray menu (*Quit*, or Cmd+Q on macOS).
+
+### Autostart
+
+Toggle **Start at login** on the GUI's Server page. It starts minimized to the tray. The entry lives at:
+
+| OS | Entry |
+| --- | --- |
+| Windows | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, value `FileList Streaming` |
+| macOS | `~/Library/LaunchAgents/com.filelist-streaming.plist` |
+| Linux | `~/.config/autostart/filelist-streaming.desktop` (XDG autostart) |
+
+The OS artifact is the source of truth: removing it disables autostart, and the toggle always reflects the actual OS state.
+
+### Data directory
+
+The desktop app does not use `data/` next to the binary. Defaults:
+
+| OS | Default data directory |
+| --- | --- |
+| Linux | `/var/lib/filelist-streaming-service` when it exists and is writable, otherwise `~/.local/share/filelist-streaming` |
+| Windows | `%APPDATA%\FileList Streaming` |
+| macOS | `~/Library/Application Support/FileList Streaming` |
+
+Change the location from the GUI (Server page → data folder → *Change…*); the contents move and the new path is recorded in a `data.location` pointer file next to the executable. See [CONFIGURATION.md](CONFIGURATION.md) for the full resolution order and relocation rules.
+
+### Linux runtime packages
+
+The Linux binaries are dynamically linked against GTK 3 and WebKitGTK 4.1 and need those runtime packages installed — including for `serve`, because the dynamic linker loads them even when no window opens. Install the same packages the server bootstrap uses:
+
+| Distro | Packages |
+| --- | --- |
+| Debian/Ubuntu/Raspberry Pi OS (`apt`) | `libgtk-3-0 libwebkit2gtk-4.1-0 libayatana-appindicator3-1` |
+| Fedora/RHEL (`dnf`) | `gtk3 webkit2gtk4.1 libayatana-appindicator-gtk3` |
+| Arch (`pacman`) | `gtk3 webkit2gtk-4.1 libayatana-appindicator` |
+| openSUSE (`zypper`) | `gtk3 webkit2gtk-4_1 libayatana-appindicator3-1` |
+
+`deploy/bootstrap-server.sh` installs these automatically on a fresh server.
+
+### macOS Gatekeeper and Windows SmartScreen
+
+The app bundles are ad-hoc signed but not notarized, so both operating systems warn once:
+
+- **macOS:** if opening the app is blocked, either clear the quarantine flag once (`xattr -cr "/Applications/FileList Streaming.app"`) or right-click the app and choose **Open**, then confirm in the dialog.
+- **Windows:** SmartScreen shows **Windows protected your PC** on first run — choose **More info → Run anyway**.
+
+The desktop app renders through the platform webview: WKWebView on macOS, WebView2 on Windows (preinstalled on Windows 11 and current Windows 10; on older systems install the [Evergreen WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)), WebKitGTK on Linux.
 
 ## Run as a service (Linux, optional)
 
@@ -70,7 +129,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now filelist-streaming.service
 ```
 
-Adjust the download root in the unit file first if it is not `/srv/filelist-downloads`. Because services run without a terminal, provide the required settings through environment variables (see the headless note above) or a prepared settings file.
+Adjust the download root in the unit file first if it is not `/srv/filelist-downloads`. The unit runs the binary in headless mode — `filelist-streaming serve --data-dir /var/lib/filelist-streaming/data` — so a bare launch on the server never opens a GUI. Because services run without a terminal, provide the required settings through environment variables (see the headless note above) or a prepared settings file.
 
 ### Fresh-server bootstrap
 

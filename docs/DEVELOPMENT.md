@@ -4,7 +4,7 @@
 
 ## Local checks
 
-No host dependency installation is required for normal work. Go uses the existing toolchain. Frontend dependencies and Node 24 remain inside the pinned Docker build:
+No host dependency installation is required for normal work on macOS or Windows. On Linux, `go test` compiles the cgo GUI packages, so the dev packages `libgtk-3-dev` and `libwebkit2gtk-4.1-dev` must be installed first (CI does exactly this). Go uses the existing toolchain. Frontend dependencies and Node 24 remain inside the pinned Docker build:
 
 ```sh
 make check
@@ -34,6 +34,42 @@ make deploy-pi
 `deploy-pi` cross-compiles the ARM64 binary and prompts for the SSH target and non-secret deployment paths. Enter accepts remembered values from ignored `deploy/.deploy.local.conf`; `PI_HOST=user@server.lan make deploy-pi` overrides the remembered host. The script backs up and safely merges the qBittorrent streaming policy before replacing the application service, and rolls both services back on failure. Routine deployment installs no packages. The service may use up to 2 GiB, with a 1.5 GiB soft watermark.
 
 `tools/progressive_stream_smoke.py` is a destructive integration test for a release that is not already managed. Run it on the server with the protected application settings path. It applies a per-torrent test limit (2 MiB/s by default), checks startup and tail ranges, optionally runs an existing `ffprobe`, resets that limit, then removes the test torrent and files in `finally`. It never changes qBittorrent's global speed limit and refuses to reuse an existing download.
+
+## Desktop GUI
+
+The single binary embeds both UIs: the desktop shell (`internal/gui/static`, built from `desktop/` with Preact) and the browser UI (`internal/adapters/httpapi/static`). `make build` produces a host-native cgo GUI build (macOS/Linux hosts; Windows hosts stay cgo-free), and `make build-all` produces the seven release binaries through the Wails Docker cross toolchain.
+
+Tooling:
+
+- `wails3` v3.0.0-beta.16 (pinned in `go.mod` as `github.com/wailsapp/wails/v3`) drives the darwin builds, the `.app` packaging, and icon/syso generation. Install it once with `go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.16` and keep it on `PATH`.
+- `npm run build:desktop` (run inside the pinned frontend container by `make desktop-assets`) builds the desktop shell into `internal/gui/static`. It requires Docker, like `make web`.
+
+Prerequisites per host:
+
+| Host | Requirements |
+| --- | --- |
+| macOS | Xcode command-line tools (clang, cgo); `wails3`; Docker for the asset builds |
+| Linux | `gcc`, `libgtk-3-dev`, `libwebkit2gtk-4.1-dev` for cgo GUI packages (`go test`/`make build` need them; CI installs exactly these); `wails3`; Docker |
+| Windows | cgo-free builds; `wails3` for icon/syso resources; Docker for the asset builds |
+
+Running locally:
+
+```sh
+go run ./cmd/server          # bare launch opens the desktop GUI
+go run ./cmd/server serve    # headless server
+```
+
+`go run ./cmd/server` resolves the GUI's platform default data directory (on macOS: `~/Library/Application Support/FileList Streaming`). A bare `go run ./cmd/server serve` resolves `data/` next to the temporary binary that `go run` builds, so pass `--data-dir data` to keep the state in your working directory. The GUI needs a graphics session; without one it exits with an error pointing at `serve`.
+
+Cross-builds:
+
+```sh
+make build-arm64    # linux/arm64 GUI binary via the wails-cross Docker image
+make build-all      # all seven release binaries (Docker required)
+```
+
+
+`make wails-cross` builds the wails-cross container images used by the Linux GUI cross-builds (first run pulls/builds ~800 MB per platform). The Linux cross builds compile with cgo against gtk3/webkit2gtk-4.1 inside the container (`-tags production,gtk3`), so no host GTK packages are needed. `filelist-streaming-linux-armv7` stays a pure `CGO_ENABLED=0` headless build: the GUI is excluded by build tags on `linux/arm` (`internal/gui` compiles to the `ErrNoDisplay` fallback), which is why no webkit2gtk toolchain is required for that target.
 
 ## Architecture and contracts
 

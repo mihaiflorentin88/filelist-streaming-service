@@ -1,6 +1,6 @@
 # FileList Streaming Service
 
-A self-hosted Go media server with a built-in torrent engine, a responsive web application, and a Samsung Tizen TV client for browsing FileList and streaming downloads as they arrive. It is designed for a trusted private LAN and a small server such as a Raspberry Pi 4.
+A self-hosted Go media server with a built-in torrent engine, a responsive web application, a Samsung Tizen TV client, and a desktop app for browsing FileList and streaming downloads as they arrive. It is designed for a trusted private LAN and a small server such as a Raspberry Pi 4.
 
 Version **0.3.0** adds the built-in torrent engine — no qBittorrent or Docker required — first-run setup prompts, and automatic ffmpeg/ffprobe detection. Progressive HTTP Range playback from an incomplete download is server-verified; physical Samsung AVPlay verification below 100% remains pending.
 
@@ -18,6 +18,7 @@ Version **0.3.0** adds the built-in torrent engine — no qBittorrent or Docker 
 - Prefer English audio and Romanian subtitles with English fallback. Track choices are remembered per file; embedded/torrent subtitles and cached SubDL downloads are reused.
 - Browser playback exposes audio selection and can convert audio to AAC while copying video unchanged. Tizen uses native AVPlay direct playback, so the Raspberry Pi never transcodes video.
 - TV-first spatial navigation covers dialogs, season packs, download controls, settings, and playback. First launch can discover compatible servers on the local subnet or retain a manually entered address.
+- The desktop app ships in the same binary as everything else: launched without arguments it opens a window with a system-tray icon (close-to-tray, start-at-login, server start/stop and status), while `filelist-streaming serve` keeps the headless behavior. Data defaults to the per-platform standard directory (`~/.local/share/filelist-streaming` on Linux, `%APPDATA%\FileList Streaming` on Windows, `~/Library/Application Support/FileList Streaming` on macOS) and can be relocated from the GUI.
 - Deploy from a precompiled GitHub release, from source, or through the Raspberry Pi deployment workflow. Normal builds install no packages on the workstation.
 
 ## Screenshots
@@ -117,4 +118,4 @@ The idempotent script supports `apt`, `dnf`, `pacman`, and `zypper`. It never ch
 
 Every push to `master` runs Go tests/race/vet, browser and TV compiler/tests, WGT validation, and packaging tests. A separate security workflow runs Gitleaks, govulncheck, Trivy, CodeQL, actionlint, Zizmor, and pull-request dependency review; Dependabot checks Go, npm, Actions, and Docker dependencies weekly.
 
-`VERSION` is the single release version. A matching `v<VERSION>` tag builds and publishes Linux amd64/arm64/armv7, Windows amd64, macOS amd64/arm64, and an unsigned Apps2Samsung WGT. Releases also contain SHA-256 checksums, CycloneDX/SPDX SBOMs, and build-provenance attestations. See [maintainer notes](docs/MAINTAINER_NOTES.md) and [security policy](SECURITY.md).
+`VERSION` is the single release version. A matching `v<VERSION>` tag builds and publishes Linux amd64/arm64/armv7, Windows amd64/arm64, macOS amd64/arm64 (plus a universal `FileList Streaming.app`), and an unsigned Apps2Samsung WGT. Releases also contain SHA-256 checksums, CycloneDX/SPDX SBOMs, and build-provenance attestations. See [maintainer notes](docs/MAINTAINER_NOTES.md) and [security policy](SECURITY.md).
