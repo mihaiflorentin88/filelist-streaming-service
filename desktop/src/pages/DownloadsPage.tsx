@@ -2,7 +2,15 @@ import { useEffect, useState } from 'preact/hooks';
 import { Download, DownloadTransferAction } from '@filelist/shared';
 import { Downloads, captureDownloadAnchor, reconcileDownloads, restoreDownloadAnchor } from '@filelist/web/downloads';
 import { sharedApi } from '@filelist/web/shared-api';
+import { OpenURL } from '../bindings/github.com/mihaiflorentin88/filelist-streaming-service/internal/gui/bindings';
 import { useServerState } from '../lib/state';
+
+// watchURL builds the web player's deep link for a download: Play in the
+// desktop hands off to the browser (spec: playback stays on the surfaces
+// built for it), which resolves resume position and sources itself.
+function watchURL(address: string | undefined, id: string): string {
+  return `http://${address || '127.0.0.1:8097'}/watch/${encodeURIComponent(id)}`;
+}
 
 // Downloads over the shared web view: this page owns only the data loop
 // (poll, reconcile, scroll anchor) and the not-running gate; toolbar,
@@ -34,7 +42,7 @@ export function DownloadsPage() {
   return <Downloads
     items={items}
     onRefresh={() => { }}
-    onPlay={() => { /* Task 10: open the watch URL in the default browser via Wails bindings */ }}
+    onPlay={d => { void OpenURL(watchURL(server.address, d.id)).catch(() => { }) }}
     onRemove={async download => { await sharedApi().deleteDownload(download.id) }}
     onAction={async (download, action: DownloadTransferAction) => { await sharedApi().call(`/downloads/${encodeURIComponent(download.id)}/${action}`, { method: 'POST' }) }}
   />;

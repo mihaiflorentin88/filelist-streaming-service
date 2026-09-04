@@ -92,6 +92,17 @@ export function OpenPath(kind: string): $CancellablePromise<void> {
 }
 
 /**
+ * OpenURL opens an http(s) URL in the default browser — the Downloads
+ * page's Play hands playback off to the web player this way. The scheme
+ * allow-list keeps arbitrary content (file://, custom schemes, command
+ * strings) away from the OS opener, and the URL travels as one argv
+ * element — never a shell string.
+ */
+export function OpenURL(url: string): $CancellablePromise<void> {
+ return $Call.ByName("github.com/mihaiflorentin88/filelist-streaming-service/internal/gui.Bindings.OpenURL", url);
+}
+
+/**
  * OpenWebUI opens the server's web surface in the default browser. The port
  * follows the running (or most recently run) server; the loopback host is
  * fixed: the web UI is this machine's window onto the same server.

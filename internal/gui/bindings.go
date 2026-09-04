@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -236,6 +237,22 @@ func (b *Bindings) OpenWebUI() error {
 		return fmt.Errorf("server address %q has no port to open", address)
 	}
 	return b.openURL("http://127.0.0.1:" + port)
+}
+
+// OpenURL opens an http(s) URL in the default browser — the Downloads
+// page's Play hands playback off to the web player this way. The scheme
+// allow-list keeps arbitrary content (file://, custom schemes, command
+// strings) away from the OS opener, and the URL travels as one argv
+// element — never a shell string.
+func (b *Bindings) OpenURL(rawURL string) error {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return fmt.Errorf("invalid URL %q: %w", rawURL, err)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("refusing to open %q: only http and https URLs are allowed", rawURL)
+	}
+	return b.openURL(parsed.String())
 }
 
 // ReadLogs returns the lines appended to the GUI session's server log

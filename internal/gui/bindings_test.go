@@ -283,6 +283,45 @@ func TestOpenPathAndWebUIUseOSOpeners(t *testing.T) {
 	}
 }
 
+// TestOpenURLRestrictsSchemes pins the Downloads Play handoff's safety
+// contract: only http(s) reaches the OS opener, and the URL goes through
+// the injectable invoker — tests never open anything for real.
+func TestOpenURLRestrictsSchemes(t *testing.T) {
+	b := &Bindings{}
+	var opened []string
+	b.openURLFn = func(url string) error { opened = append(opened, url); return nil }
+
+	cases := []struct {
+		url string
+		ok  bool
+	}{
+		{"http://127.0.0.1:8097/watch/d1", true},
+		{"https://example.com/watch/x?source=2#t=30", true},
+		{"HTTP://uppercase.scheme", true},
+		{"ftp://example.com/file", false},
+		{"file:///etc/passwd", false},
+		{"javascript:alert(1)", false},
+		{"example.com/no-scheme", false},
+		{"://missing-scheme", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		err := b.OpenURL(tc.url)
+		if tc.ok && err != nil {
+			t.Fatalf("OpenURL(%q) = %v, want accepted", tc.url, err)
+		}
+		if !tc.ok && err == nil {
+			t.Fatalf("OpenURL(%q) accepted, want refused", tc.url)
+		}
+	}
+	if len(opened) != 3 {
+		t.Fatalf("opened %d URLs, want only the 3 http(s) ones: %v", len(opened), opened)
+	}
+	if opened[0] != "http://127.0.0.1:8097/watch/d1" {
+		t.Fatalf("opened[0] = %q", opened[0])
+	}
+}
+
 // parityRepo satisfies application.Repository with panicking defaults; the
 // settings surfaces only touch the store.
 type parityRepo struct{ application.Repository }

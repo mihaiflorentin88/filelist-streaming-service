@@ -4,13 +4,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { seedServerState } from '../lib/state';
 import { DownloadsPage } from './DownloadsPage';
 
-// The shared API is stubbed at the module boundary so the poll loop runs
-// without a server; the Wails event API stays silent (the hook keeps its
-// seed) and each test seeds the lifecycle state it needs.
+// The Wails bindings are stubbed at the module boundary alongside the
+// shared API: Play must reach OpenURL, never a real browser.
+const fakeBindings = vi.hoisted(() => ({
+  openURL: vi.fn(),
+}));
 const fakeApi = vi.hoisted(() => ({
   downloads: vi.fn(),
   deleteDownload: vi.fn(),
   call: vi.fn(),
+}));
+
+vi.mock('../bindings/github.com/mihaiflorentin88/filelist-streaming-service/internal/gui/bindings', () => ({
+  OpenURL: fakeBindings.openURL,
 }));
 
 vi.mock('@filelist/web/shared-api', () => ({
@@ -78,5 +84,32 @@ describe('DownloadsPage gating', () => {
     expect(fakeApi.downloads).toHaveBeenCalled();
     expect(host.querySelector('.empty-state')).toBeNull();
     expect(host.querySelector('[data-download-id="d1"]')).not.toBeNull();
+  });
+});
+
+describe('DownloadsPage Play handoff', () => {
+  beforeEach(() => { fakeBindings.openURL.mockResolvedValue(undefined) });
+
+  it('opens the download watch URL in the browser through OpenURL', async () => {
+    seedServerState({ state: 'running', address: '192.168.1.10:8097' });
+    fakeApi.downloads.mockResolvedValue({ items: [downloading] });
+    const host = await mount();
+    await settle();
+    const play = Array.from(host.querySelectorAll<HTMLButtonElement>('[data-download-id="d1"] button'))
+      .find(b => b.textContent?.trim() === 'Play')!;
+    expect(play).toBeDefined();
+    await act(async () => { play.click() });
+    expect(fakeBindings.openURL).toHaveBeenCalledWith('http://192.168.1.10:8097/watch/d1');
+  });
+
+  it('falls back to the loopback address when the state carries none', async () => {
+    seedServerState({ state: 'running' });
+    fakeApi.downloads.mockResolvedValue({ items: [downloading] });
+    const host = await mount();
+    await settle();
+    const play = Array.from(host.querySelectorAll<HTMLButtonElement>('[data-download-id="d1"] button'))
+      .find(b => b.textContent?.trim() === 'Play')!;
+    await act(async () => { play.click() });
+    expect(fakeBindings.openURL).toHaveBeenCalledWith('http://127.0.0.1:8097/watch/d1');
   });
 });
