@@ -30,9 +30,19 @@ vi.mock('@wailsio/runtime', () => ({
 }));
 
 // Server is the landing view, so App now mounts ServerPage on boot: the
-// bindings are stubbed inert so the shell tests stay hermetic.
-vi.mock('../lib/bindings', () => ({
-  Bindings: new Proxy({}, { get: (_target, key) => (key === '__esModule' ? false : vi.fn().mockResolvedValue(undefined)) }),
+// generated bindings module is stubbed inert so the shell tests stay
+// hermetic.
+vi.mock('../bindings/github.com/mihaiflorentin88/filelist-streaming-service/internal/gui/bindings', () => ({
+  AutostartStatus: vi.fn().mockResolvedValue(false),
+  DataDirInfo: vi.fn().mockResolvedValue(['', '']),
+  DisableAutostart: vi.fn(),
+  EnableAutostart: vi.fn(),
+  LoadSettings: vi.fn().mockResolvedValue({ settingsPath: '' }),
+  OpenPath: vi.fn(),
+  OpenWebUI: vi.fn(),
+  StartServer: vi.fn(),
+  StopServer: vi.fn(),
+  Version: vi.fn().mockResolvedValue(''),
 }));
 
 vi.mock('@filelist/web/shared-api', () => ({

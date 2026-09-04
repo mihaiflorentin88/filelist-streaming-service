@@ -93,7 +93,11 @@ func NewSupervisor(deps SupervisorDeps) *Supervisor {
 			if log == nil {
 				log = slog.Default()
 			}
-			app, err := composition.New(log)
+			// Same store as the GUI runner: NewAt re-reads the settings
+			// file at the store's path (env precedence already decided by
+			// whoever resolved it), so a settings save is picked up by the
+			// next Start.
+			app, err := composition.NewAt(deps.Settings.Path(), log)
 			if err != nil {
 				return nil, err
 			}

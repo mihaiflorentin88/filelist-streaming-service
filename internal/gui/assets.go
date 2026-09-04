@@ -1,6 +1,11 @@
 package gui
 
-import "embed"
+import (
+	"embed"
+	"fmt"
+	"io/fs"
+	"net/http"
+)
 
 // Static holds the desktop GUI's vite build (HTML, JS, CSS). The desktop
 // build wipes and rewrites internal/gui/static on every run; its npm
@@ -16,3 +21,16 @@ var Static embed.FS
 //
 //go:embed all:assets/tray
 var TrayIcons embed.FS
+
+// assetHandler serves the embedded vite build over HTTP for the Wails
+// asset server. The embed root carries the "static" directory name, so
+// the handler serves the sub-FS where index.html lives at "/".
+func assetHandler() http.Handler {
+	static, err := fs.Sub(Static, "static")
+	if err != nil {
+		// all:static guarantees the subdirectory exists; this is unreachable
+		// unless the embed pattern is edited.
+		panic(fmt.Sprintf("gui: embedded static missing: %v", err))
+	}
+	return http.FileServer(http.FS(static))
+}

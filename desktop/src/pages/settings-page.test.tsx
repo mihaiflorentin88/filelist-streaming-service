@@ -20,7 +20,13 @@ const fakeApi = vi.hoisted(() => ({
   call: vi.fn(),
 }));
 
-vi.mock('../lib/bindings', () => ({ Bindings: fakeBindings }));
+vi.mock('../bindings/github.com/mihaiflorentin88/filelist-streaming-service/internal/gui/bindings', () => ({
+  LoadSettings: fakeBindings.loadSettings,
+  MissingRequired: fakeBindings.missingRequired,
+  RestartServer: fakeBindings.restartServer,
+  SaveSettings: fakeBindings.saveSettings,
+  SettingsSchema: fakeBindings.settingsSchema,
+}));
 
 vi.mock('@filelist/web/shared-api', () => ({
   configureSharedApi: () => { },

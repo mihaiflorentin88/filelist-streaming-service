@@ -1,5 +1,16 @@
 import { useEffect, useState } from 'preact/hooks';
-import { Bindings } from '../lib/bindings';
+import {
+  AutostartStatus,
+  DataDirInfo,
+  DisableAutostart,
+  EnableAutostart,
+  LoadSettings,
+  OpenPath,
+  OpenWebUI,
+  StartServer,
+  StopServer,
+  Version,
+} from '../bindings/github.com/mihaiflorentin88/filelist-streaming-service/internal/gui/bindings';
 import { useServerState } from '../lib/state';
 
 // Server page: the status card (the page's one bold element: state line +
@@ -18,20 +29,20 @@ export function ServerPage() {
 
   useEffect(() => {
     let alive = true;
-    void Bindings.version().then(v => { if (alive) setVersion(v) }).catch(() => { });
-    void Bindings.dataDirInfo().then(([dir, source]) => {
+    void Version().then(v => { if (alive) setVersion(v) }).catch(() => { });
+    void DataDirInfo().then(([dir, source]) => {
       if (!alive) return;
       setDataDir(dir);
       setDataDirSource(source);
     }).catch(() => { });
-    void Bindings.loadSettings().then(view => { if (alive) setSettingsPath(view.settingsPath) }).catch(() => { });
+    void LoadSettings().then(view => { if (alive) setSettingsPath(view.settingsPath) }).catch(() => { });
     void refreshAutostart();
     return () => { alive = false };
   }, []);
 
   async function refreshAutostart() {
     try {
-      const enabled = await Bindings.autostartStatus();
+      const enabled = await AutostartStatus();
       setAutostart(enabled);
     } catch (e) {
       setError((e as Error).message);
@@ -41,8 +52,8 @@ export function ServerPage() {
   async function toggleAutostart() {
     setError('');
     try {
-      if (autostart) await Bindings.disableAutostart();
-      else await Bindings.enableAutostart();
+      if (autostart) await DisableAutostart();
+      else await EnableAutostart();
     } catch (e) {
       setError((e as Error).message);
     }
@@ -75,9 +86,9 @@ export function ServerPage() {
         </p>
         <div class="fields">
           {server.state === 'running' || server.state === 'starting'
-            ? <button class="primary" type="button" disabled={transitioning} onClick={() => void run(Bindings.stopServer)}>Stop server</button>
-            : <button class="primary" type="button" disabled={transitioning} onClick={() => void run(Bindings.startServer)}>Start server</button>}
-          <button type="button" disabled={server.state !== 'running'} onClick={() => void run(Bindings.openWebUI)}>Open web UI</button>
+            ? <button class="primary" type="button" disabled={transitioning} onClick={() => void run(StopServer)}>Stop server</button>
+            : <button class="primary" type="button" disabled={transitioning} onClick={() => void run(StartServer)}>Start server</button>}
+          <button type="button" disabled={server.state !== 'running'} onClick={() => void run(OpenWebUI)}>Open web UI</button>
         </div>
         {error && <p class="settings-status" role="alert">{error}</p>}
       </fieldset>
@@ -102,9 +113,9 @@ export function ServerPage() {
         <p class="supporting">
           Data folder: {dataDir || '…'}{dataDirSource ? ` (from ${dataDirSource})` : ''}
           {' '}
-          <button type="button" disabled={!dataDir} onClick={() => void run(() => Bindings.openPath('data'))}>Open data folder</button>
+          <button type="button" disabled={!dataDir} onClick={() => void run(() => OpenPath('data'))}>Open data folder</button>
           {' '}
-          <button type="button" disabled={!dataDir} onClick={() => void run(() => Bindings.openPath('logs'))}>Open logs folder</button>
+          <button type="button" disabled={!dataDir} onClick={() => void run(() => OpenPath('logs'))}>Open logs folder</button>
         </p>
       </fieldset>
     </section>

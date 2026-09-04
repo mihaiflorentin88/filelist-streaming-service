@@ -24,7 +24,20 @@ const fakeBindings = vi.hoisted(() => ({
   quit: vi.fn(),
 }));
 
-vi.mock('../lib/bindings', () => ({ Bindings: fakeBindings }));
+// The generated bindings module exports one function per Go method; the
+// factory maps them onto the same camelCase fakes the assertions use.
+vi.mock('../bindings/github.com/mihaiflorentin88/filelist-streaming-service/internal/gui/bindings', () => ({
+  AutostartStatus: fakeBindings.autostartStatus,
+  DataDirInfo: fakeBindings.dataDirInfo,
+  DisableAutostart: fakeBindings.disableAutostart,
+  EnableAutostart: fakeBindings.enableAutostart,
+  LoadSettings: fakeBindings.loadSettings,
+  OpenPath: fakeBindings.openPath,
+  OpenWebUI: fakeBindings.openWebUI,
+  StartServer: fakeBindings.startServer,
+  StopServer: fakeBindings.stopServer,
+  Version: fakeBindings.version,
+}));
 
 vi.mock('@wailsio/runtime', () => ({
   Events: { On: () => () => { } },

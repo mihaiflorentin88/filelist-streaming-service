@@ -1,6 +1,14 @@
 import { useEffect, useState } from 'preact/hooks';
 import { Settings } from '@filelist/web/settings';
-import { Bindings, type SchemaField, type SettingsView } from '../lib/bindings';
+import type { Settings as SettingsRecord } from '../bindings/github.com/mihaiflorentin88/filelist-streaming-service/internal/platform/config/models';
+import type { SchemaField, SettingsView } from '../bindings/github.com/mihaiflorentin88/filelist-streaming-service/internal/adapters/httpapi/models';
+import {
+  LoadSettings,
+  MissingRequired,
+  RestartServer,
+  SaveSettings,
+  SettingsSchema,
+} from '../bindings/github.com/mihaiflorentin88/filelist-streaming-service/internal/gui/bindings';
 import { useServerState } from '../lib/state';
 
 // Settings page: the shared web Settings component with the bindings as the
@@ -28,14 +36,14 @@ export function SettingsPage() {
     void (async () => {
       try {
         const [view, schema, missingKeys] = await Promise.all([
-          Bindings.loadSettings(),
-          Bindings.settingsSchema(),
-          Bindings.missingRequired().catch(() => [] as string[]),
+          LoadSettings(),
+          SettingsSchema(),
+          MissingRequired().catch(() => []),
         ]);
         if (!alive) return;
         setValue(view);
-        setFields(schema);
-        setMissing(missingKeys);
+        setFields(schema ?? []);
+        setMissing(missingKeys ?? []);
       } catch (e) {
         if (alive) setLoadError((e as Error).message);
       }
@@ -48,9 +56,12 @@ export function SettingsPage() {
   // the component's normal error path (onError below). onSaved then only
   // syncs the local copy of the saved values.
   async function saveTransport(out: Record<string, unknown>) {
-    const result = await Bindings.saveSettings(out);
+    // The shared form emits the fields it renders; the Go side JSON-decodes
+    // the payload into config.Settings, so omitted keys fall back to the
+    // stored file values — the cast marks that bridge contract.
+    const result = await SaveSettings(out as unknown as SettingsRecord);
     setRestartRequired(result.restartRequired);
-    setMissing(await Bindings.missingRequired().catch(() => [] as string[]));
+    setMissing(await MissingRequired().catch(() => []) ?? []);
     return result;
   }
 
@@ -68,7 +79,7 @@ export function SettingsPage() {
   async function restart() {
     setSaveError('');
     try {
-      await Bindings.restartServer();
+      await RestartServer();
       setRestartRequired(false);
     } catch (e) {
       setSaveError((e as Error).message);
@@ -103,7 +114,7 @@ export function SettingsPage() {
         : value
           ? <Settings
             key={formKey}
-            value={value as Record<string, unknown>}
+            value={value as unknown as Record<string, unknown>}
             fields={fields}
             save={saveTransport}
             onSaved={onSaved}

@@ -32,11 +32,23 @@ type App struct {
 	ListenAddress string
 }
 
-func New(log *slog.Logger) (*App, error) {
-	settings, err := config.Load()
+// NewAt assembles the application against an explicit settings file path;
+// the data-dir layer resolves that path before calling (env
+// FILELIST_STREAMING_SETTINGS_PATH wins only because callers pass
+// env-if-set-else-resolved). Both the headless server and the GUI
+// supervisor build through this constructor so there is exactly one
+// settings store per process.
+func NewAt(settingsPath string, log *slog.Logger) (*App, error) {
+	settings, err := config.LoadAt(settingsPath)
 	if err != nil {
 		return nil, err
 	}
+	return assemble(settings, log)
+}
+
+// assemble builds the application around an already-loaded settings store:
+// onboarding, media-tool discovery, and every adapter wiring step.
+func assemble(settings *config.Store, log *slog.Logger) (*App, error) {
 	// First-run onboarding: when a required setting is neither in the
 	// settings file nor the environment, ask for it before the engine is
 	// built, so an unwritable default download root becomes a question

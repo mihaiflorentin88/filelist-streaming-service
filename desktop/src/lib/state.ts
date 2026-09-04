@@ -12,7 +12,7 @@ const IS_SERVER_STATE: Record<ServerState, true> = { stopped: true, starting: tr
 
 // The runner marshals the Go event payload to JSON over the Wails bridge,
 // so it is validated once at this boundary before any view consumes it.
-function isStateEvent(value: unknown): value is StateEvent {
+export function isStateEvent(value: unknown): value is StateEvent {
   if (typeof value !== 'object' || value === null || !('state' in value)) return false;
   const { state } = value;
   return typeof state === 'string' && state in IS_SERVER_STATE;

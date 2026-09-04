@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/mihaiflorentin88/filelist-streaming-service/internal/composition"
+	"github.com/mihaiflorentin88/filelist-streaming-service/internal/gui"
 	"github.com/mihaiflorentin88/filelist-streaming-service/internal/platform/datadir"
 )
 
@@ -35,17 +36,10 @@ type logger interface {
 	Error(msg string, args ...any)
 }
 
-// errNoDisplay is the sentinel runGUI returns until the desktop GUI arrives;
-// the root command turns it into a pointer at `serve`.
-var errNoDisplay = errors.New("no display")
-
-func isNoDisplay(err error) bool { return errors.Is(err, errNoDisplay) }
-
-// runGUI launches the desktop GUI. Stub until the GUI entrypoint task lands:
-// without a display there is nothing to open, so the root command directs
-// users to the headless serve command.
+// runGUI launches the desktop GUI (window, tray, supervisor). On Linux
+// without a display session it returns gui.ErrNoDisplay.
 func runGUI(opts guiOptions) error {
-	return errNoDisplay
+	return gui.Run(gui.Options{Minimized: opts.Minimized, DataDir: opts.DataDir})
 }
 
 // newRootCommand separates command wiring from effects so tests can inject
@@ -59,13 +53,10 @@ func newRootCommand(runGUI func(guiOptions) error, runServe func(string, logger)
 		Version: versionString(),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts := guiOptions{Minimized: minimized, DataDir: dataDir}
-			if err := runGUI(opts); err != nil {
-				if isNoDisplay(err) {
-					return fmt.Errorf("no display available for the GUI; run 'filelist-streaming serve' instead")
-				}
-				return err
-			}
-			return nil
+			// gui.ErrNoDisplay's text already points at `serve`, so the
+			// error is returned as-is; cobra adds the usage line listing
+			// the subcommand.
+			return runGUI(opts)
 		},
 	}
 	root.PersistentFlags().StringVar(&dataDir, "data-dir", "", "data directory (default: data/ next to the executable)")
@@ -153,21 +144,16 @@ func runServe(dataDir string, log logger) error {
 	return nil
 }
 
-// openComposition assembles the application against settingsPath.
-// composition.New reads its settings path from the environment (config.Load),
-// so an explicit settingsPathEnv keeps today's precedence unchanged, and when
-// unset the resolved path is exported for it to pick up.
+// openComposition assembles the application against settingsPath, keeping
+// the settings path explicit: the env bridge (os.Setenv) is gone —
+// composition.NewAt takes the path directly, and runServe passes
+// env-if-set-else-resolved so the historic precedence is unchanged.
 func openComposition(settingsPath string, log logger) (*composition.App, error) {
 	sl, ok := log.(*slog.Logger)
 	if !ok {
 		return nil, fmt.Errorf("openComposition needs the process *slog.Logger, got %T", log)
 	}
-	if os.Getenv(settingsPathEnv) == "" {
-		if err := os.Setenv(settingsPathEnv, settingsPath); err != nil {
-			return nil, fmt.Errorf("export settings path: %w", err)
-		}
-	}
-	return composition.New(sl)
+	return composition.NewAt(settingsPath, sl)
 }
 
 func main() {
