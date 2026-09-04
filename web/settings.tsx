@@ -74,6 +74,12 @@ const isConfigTab = (id: string) => Boolean(TAB_GROUPS[id]);
 // against this form shape.
 const formValue = (key: string, value: unknown) => (key === 'trustedCidrs' || key === 'evictionRules') && Array.isArray(value) ? (value as string[]).join(', ') : value;
 
+// Render plain help text with bare URLs as clickable links.
+const linkify = (text: string) =>
+  text.split(/(https?:\/\/[^\s,)]+)/).map((part, i) =>
+    /^https?:\/\//.test(part) ? <a key={i} href={part} target="_blank" rel="noreferrer">{part}</a> : part
+  );
+
 export function Settings({ value, fields, onSaved, onError, onDirtyChange }: { value: Record<string, unknown>; fields: SettingsField[]; onSaved: (v: Record<string, unknown>) => void; onError: (s: string) => void; onDirtyChange?: (dirty: boolean) => void }) {
   const [current, setCurrent] = useState(() => { const draft = { ...value }; Object.keys(draft).forEach(key => { draft[key] = formValue(key, draft[key]) }); return draft });
   const [message, setMessage] = useState('');
@@ -202,7 +208,7 @@ export function Settings({ value, fields, onSaved, onError, onDirtyChange }: { v
       <div class="settings-panel" role="tabpanel">{panelContent()}</div>
       {isConfigTab(tab) && <><div class="settings-actions"><span class="dirty-count" role="status">{tabEdits(tab).length > 0 ? `${tabEdits(tab).length} unsaved ${tabEdits(tab).length === 1 ? 'change' : 'changes'}` : ''}</span><button type="button" disabled={tabEdits(tab).length === 0} onClick={discard}>Discard changes</button><button class="primary" type="submit" disabled={tabEdits(tab).length === 0}>Save changes</button></div>{message && <p class="settings-status" role="status">{message}</p>}</>}
     </form>
-    {help && <div class="overlay" role="dialog" aria-modal="true" aria-label={`Help for ${help.label}`}><section class="help-modal"><button class="close" onClick={() => setHelp(null)}>Close</button><h2>{help.label}</h2><p>{help.help}</p>{help.readOnly && <p><strong>This setting is managed by the process environment and cannot be edited here.</strong></p>}{help.restartRequired && <p><strong>Restart required after changing this setting.</strong></p>}{help.obtain && <><h3>Where to get it</h3><p>{help.obtain}</p></>}<button onClick={() => void navigator.clipboard.writeText([help.help, help.obtain].filter(Boolean).join('\n\n')).then(() => setMessage('Help copied.'))}>Copy help</button></section></div>}
+    {help && <div class="overlay" role="dialog" aria-modal="true" aria-label={`Help for ${help.label}`}><section class="help-modal"><button class="close" onClick={() => setHelp(null)}>Close</button><h2>{help.label}</h2><p>{help.help}</p>{help.readOnly && <p><strong>This setting is managed by the process environment and cannot be edited here.</strong></p>}{help.restartRequired && <p><strong>Restart required after changing this setting.</strong></p>}{help.obtain && <><h3>Where to get it</h3><p>{linkify(help.obtain)}</p></>}<button onClick={() => void navigator.clipboard.writeText([help.help, help.obtain].filter(Boolean).join('\n\n')).then(() => setMessage('Help copied.'))}>Copy help</button></section></div>}
     {pendingTab !== null && <div class="overlay" role="dialog" aria-modal="true" aria-label="Unsaved tab changes"><section class="help-modal"><h2>Tab has unsaved changes</h2><p>Unsaved changes on this tab stay pending — the tab label keeps its dot until you save or discard them.</p><div class="confirm-actions"><button type="button" onClick={() => { history.replaceState(null, '', `#${tab}`); setPendingTab(null) }}>Keep editing</button><button type="button" class="primary" onClick={() => { const target = pendingTab; setPendingTab(null); setTab(target) }}>Switch anyway</button></div></section></div>}
   </>
 }

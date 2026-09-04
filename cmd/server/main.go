@@ -3,8 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"io"
-	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -13,18 +11,12 @@ import (
 	"time"
 
 	"github.com/mihaiflorentin88/filelist-streaming-service/internal/composition"
+	"golang.org/x/term"
 )
 
 func main() {
-	output := io.Writer(os.Stdout)
-	logPath := filepath.Join("data", "logs", "server.log")
-	if err := os.MkdirAll(filepath.Dir(logPath), 0o750); err == nil {
-		if file, openErr := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o640); openErr == nil {
-			defer file.Close()
-			output = io.MultiWriter(os.Stdout, file)
-		}
-	}
-	log := slog.New(slog.NewJSONHandler(output, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	log, closeLog := newLogger(os.Stdout, term.IsTerminal(int(os.Stdout.Fd())), filepath.Join("data", "logs", "server.log"))
+	defer closeLog()
 	app, err := composition.New(log)
 	if err != nil {
 		log.Error("startup failed", "error", err)

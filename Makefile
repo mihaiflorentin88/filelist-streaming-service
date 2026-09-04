@@ -1,4 +1,4 @@
-.PHONY: check test build build-arm64 build-all web frontend tizen-wgt validate-tizen-wgt smoke-tizen-engine deploy-pi bootstrap-server-dry-run docker-configure docker-validate docker-import-pi docker-prepare docker-up docker-down docker-logs docker-check docker-urls docker-smoke-stream
+.PHONY: check test build build-arm64 build-all web frontend tizen-wgt validate-tizen-wgt smoke-tizen-engine deploy-pi bootstrap-server-dry-run
 
 VERSION ?= $(shell tr -d '[:space:]' < VERSION)
 PI_HOST ?=
@@ -7,7 +7,6 @@ TIZEN_TARGET ?= 7.0
 TIZEN_WGT := clients/tizen/.build/artifacts/FileListTV-$(TIZEN_VERSION).wgt
 GO_CACHE ?= /tmp/filelist-streaming-go-cache
 GO_LDFLAGS := -s -w -X github.com/mihaiflorentin88/filelist-streaming-service/internal/composition.Version=$(VERSION)
-DOCKER_ENV ?= .env.docker
 
 check:
 	GOCACHE="$(GO_CACHE)" go test ./...
@@ -90,35 +89,3 @@ bootstrap-server-dry-run:
 	@echo "Review only; this target does not install packages."
 	sudo sh deploy/bootstrap-server.sh --confirm-server-install --dry-run
 
-docker-configure:
-	sh deploy/docker/configure.sh "$(DOCKER_ENV)"
-
-docker-import-pi:
-	sh deploy/docker/import-pi-config.sh "$(PI_HOST)"
-
-docker-validate:
-	python3 tools/docker_env_validate.py "$(DOCKER_ENV)"
-
-docker-prepare:
-	sh deploy/docker/prepare.sh "$(DOCKER_ENV)"
-
-docker-up: docker-prepare
-	docker compose --env-file "$(DOCKER_ENV)" up -d --build --wait
-	sh deploy/docker/verify.sh "$(DOCKER_ENV)"
-	sh deploy/docker/access-urls.sh "$(DOCKER_ENV)"
-
-docker-down:
-	docker compose --env-file "$(DOCKER_ENV)" down
-
-docker-logs:
-	docker compose --env-file "$(DOCKER_ENV)" logs --tail=200 -f
-
-docker-check:
-	sh deploy/docker/verify.sh "$(DOCKER_ENV)"
-
-docker-urls:
-	sh deploy/docker/access-urls.sh "$(DOCKER_ENV)"
-
-docker-smoke-stream:
-	@test -n "$(RELEASE_ID)" || { echo "Usage: make docker-smoke-stream RELEASE_ID=<disposable FileList release id>" >&2; exit 2; }
-	docker compose --env-file "$(DOCKER_ENV)" exec -T server python3 /usr/local/bin/progressive_stream_smoke.py --release-id "$(RELEASE_ID)" --base-url http://127.0.0.1:8097 --ffprobe

@@ -1,13 +1,13 @@
 # Configuration
 
-Configuration is managed in the browser and persisted to `data/settings.json`. The server can start unconfigured so the first-run settings page is always available. The page is tabbed — Tracker, Storage, Playback, Server, Maintenance, and Test — with the active tab encoded in the URL hash (for example `/settings#playback`; an unknown hash reopens Tracker). One **Save changes** button on the sticky bar at the bottom of the page saves the whole settings object.
+Configuration is managed in the browser and persisted to `data/settings.json`. A terminal first run asks for the required settings; headless starts continue unconfigured so the first-run settings page is always available. The page is tabbed — Tracker, Storage, Playback, Server, Maintenance, and Test — with the active tab encoded in the URL hash (for example `/settings#playback`; an unknown hash reopens Tracker). One **Save changes** button on the sticky bar at the bottom of the page saves the whole settings object.
 
-Every JSON setting can also be supplied as an uppercase `FILELIST_STREAMING_...` environment variable; camel-case boundaries become underscores (for example, `instanceName` becomes `FILELIST_STREAMING_INSTANCE_NAME`). `FILELIST_STREAMING_SETTINGS_PATH` selects the settings file itself. Environment values are authoritative, are marked read-only in browser Settings, and are never copied back into that file. Docker Compose uses this mechanism so one private `.env.docker` remains the source of truth.
+Every JSON setting can also be supplied as an uppercase `FILELIST_STREAMING_...` environment variable; camel-case boundaries become underscores (for example, `instanceName` becomes `FILELIST_STREAMING_INSTANCE_NAME`). `FILELIST_STREAMING_SETTINGS_PATH` selects the settings file itself. Environment values are authoritative, are marked read-only in browser Settings, and are never copied back into that file.
 
 ## Required dependencies
 
 - FileList URL, username, and passkey. Never enter the account password.
-- qBittorrent Web UI URL and the server-visible download root. The bundled Docker sidecar is credential-free: it publishes its Web UI to the household LAN behind a trusted-network (`0.0.0.0/0`) authentication bypass (ADR-0005), so its username and password stay empty. An external qBittorrent that keeps authentication enabled takes its username and password in the same Settings fields.
+- Download root for the built-in engine (default). Selecting the optional qBittorrent engine instead takes the qBittorrent Web UI URL, username, and password in the same Settings fields; keep qBittorrent's authentication enabled.
 
 Each dependency has a separate diagnostic API route. Browser Settings gathers the FileList, qBittorrent, storage, TMDB, and SubDL tests on its Test tab. SubDL uses `https://api.subdl.com`; the public website address is rejected with a corrective error. Every provider field has a hover help icon; selecting it opens copyable credential guidance. Save credentials before testing them. The TV exposes safe playback/subtitle and background-worker settings plus server connection management, while secrets and storage configuration remain browser-only.
 
@@ -57,4 +57,4 @@ The initial listener is `:8097`; requests are accepted only from loopback and RF
 
 ## Logs
 
-Structured logs are written to stdout/journald and `data/logs/server.log`. Raspberry Pi deployment installs `/etc/logrotate.d/filelist-streaming`: rotate daily or at 10 MiB, retain 14 archives, compress, and use `copytruncate` so the daemon does not need to reopen the file.
+Structured logs are written to stdout/journald and `data/logs/server.log`. On an interactive terminal the console renders human-readable colored lines; piped output and the log file stay plain JSON, so machine readers are unaffected. Raspberry Pi deployment installs `/etc/logrotate.d/filelist-streaming`: rotate daily or at 10 MiB, retain 14 archives, compress, and use `copytruncate` so the daemon does not need to reopen the file.

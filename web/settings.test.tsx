@@ -34,6 +34,7 @@ const schemaFields = [
  { key: 'torrentPeerPort', label: 'Torrent peer port', help: 'Built-in engine peer port.', tvVisible: false, sensitive: false, restartRequired: true },
  { key: 'torrentSessionDir', label: 'Torrent session directory', help: 'Built-in engine session state.', tvVisible: false, sensitive: false, restartRequired: true },
  { key: 'qbittorrentUrl', label: 'qBittorrent URL', help: 'qBittorrent Web UI address.', tvVisible: false, sensitive: false, restartRequired: false },
+ { key: 'fileListPasskey', label: 'FileList passkey', help: 'Private API credential used for tracker requests.', obtain: 'Sign in at https://filelist.io and copy the passkey from your profile page.', tvVisible: false, sensitive: true, restartRequired: false },
 ];
 
 const catalogStatus = { observedReleases: 1200, discoverableReleases: 800, hiddenZeroSeeders: 400, fileListLatestWindowLimit: 1000 };
@@ -565,4 +566,17 @@ describe('download engine toggle', () => {
   expect(put.body.torrentPeerPort).toBe(42069);
   expect(put.body.torrentSessionDir).toBe('data/torrent-session');
  });
+});
+
+it('renders obtain links as clickable anchors in field help', async () => {
+ await openSettings();
+ await act(async () => {
+  document.querySelector<HTMLButtonElement>('button[aria-label="Help for FileList passkey"]')!.click();
+ });
+ await settle();
+ const modal = document.querySelector('.help-modal')!;
+ expect(modal.textContent).toContain('Where to get it');
+ const link = modal.querySelector<HTMLAnchorElement>('a[href="https://filelist.io"]')!;
+ expect(link.getAttribute('target')).toBe('_blank');
+ expect(link.getAttribute('rel')).toBe('noreferrer');
 });
