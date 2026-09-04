@@ -11,7 +11,9 @@ The data directory holds `settings.json`, the SQLite database, `logs/`, the artw
 1. The `--data-dir` flag (absolute or relative to the working directory).
 2. A `data.location` pointer file next to the executable (written only after a GUI relocation).
    - **Desktop app:** Linux uses `/var/lib/filelist-streaming-service` when it exists and is writable, otherwise `~/.local/share/filelist-streaming`; Windows uses `%APPDATA%\FileList Streaming`; macOS uses `~/Library/Application Support/FileList Streaming`.
-   - **`serve`:** `data/` next to the executable, unchanged from previous releases.
+   - **`serve`:** `data/` next to the executable (not the working directory).
+
+The `serve` fallback moved in this release: earlier builds resolved the default `data/` relative to the working directory, so launching from a different directory silently created a second, empty data directory. Data from an older deployment is not lost — keep using it by launching with `--data-dir /old/path/data`, or write that path into the `data.location` pointer file next to the executable (the GUI's relocation writes the same file).
 
 Change the location from the desktop app's Server page (data folder → **Change…**). The change requires the server stopped — a running server is stopped first and restarted afterwards — and the target directory must not exist or must be empty; a non-empty target is refused and directories are never merged. All contents move (same volume: atomic rename; cross volume: copy, verify each file's size and SHA-256, then delete the source), the pointer file is written atomically, and any failure rolls back leaving the original data untouched.
 

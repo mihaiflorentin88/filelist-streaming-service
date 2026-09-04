@@ -35,7 +35,7 @@ The archives follow the `filelist-streaming-<os>-<arch>[.exe]` naming scheme. Ev
 One binary runs two modes:
 
 - Launch it without arguments (double-click, or run it from a terminal) to open the desktop app: a window plus a system-tray icon. See [Desktop app](#desktop-app) below.
-- Run `filelist-streaming serve` for the headless server, in the directory where you want its `data/` folder:
+- Run `filelist-streaming serve` for the headless server. It creates its `data/` folder next to the executable — or wherever `--data-dir` points:
 
 ```sh
 ./filelist-streaming serve           # Linux / macOS
@@ -131,6 +131,17 @@ sudo systemctl enable --now filelist-streaming.service
 ```
 
 Adjust the download root in the unit file first if it is not `/srv/filelist-downloads`. The unit runs the binary in headless mode — `filelist-streaming serve --data-dir /var/lib/filelist-streaming/data` — so a bare launch on the server never opens a GUI. Because services run without a terminal, provide the required settings through environment variables (see the headless note above) or a prepared settings file.
+
+### Upgrading
+
+Older service files ran a bare `ExecStart=/usr/local/bin/filelist-streaming` with no `serve` argument. Copying a new binary over the old one onto such a unit breaks the service: with no arguments the binary now attempts the desktop app, and on a headless server it prints the `serve` direction and exits 1 — which `Restart=on-failure` turns into a permanent restart loop. Re-run `make deploy-pi` (it stages the corrected unit), or fix the unit by hand:
+
+```bash
+sudo systemctl edit --full filelist-streaming.service
+# ExecStart=/usr/local/bin/filelist-streaming serve --data-dir /var/lib/filelist-streaming/data
+sudo systemctl daemon-reload
+sudo systemctl restart filelist-streaming
+```
 
 ### Fresh-server bootstrap
 
