@@ -27,6 +27,16 @@ import (
 // the relative default paths on first successful start), the window, the
 // tray, and the state-event wiring. All Wails usage is confined to this
 // package so a framework migration touches one boundary (spec: Risks).
+
+// minimizedHides reports whether a launch starts the window hidden:
+// --minimized hides it, but only with complete configuration — with
+// required settings missing the setup window shows regardless, so
+// autostart's pinned --minimized can never strand a wiped config as a
+// silent tray-only app (spec: CLI).
+func minimizedHides(minimized bool, missingRequired []string) bool {
+	return minimized && len(missingRequired) == 0
+}
+
 func Run(opts Options) error {
 	// Headless Linux must exit with the serve direction, never a raw GTK
 	// init error. Windows/macOS always have a session; failures surface
@@ -106,6 +116,11 @@ func Run(opts Options) error {
 			AddRole(application.WindowMenu))
 	}
 
+	// --minimized boots to the tray only, but minimized-to-tray applies
+	// only once the server can run: autostart pins --minimized, so a wiped
+	// settings file would otherwise sit as a silent tray-only app with no
+	// path back to setup. Incomplete configuration opens the window
+	// regardless (spec: CLI); the tray's click-to-show path stays as is.
 	win := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:     "FileList Streaming",
 		Width:     1100,
@@ -113,7 +128,7 @@ func Run(opts Options) error {
 		MinWidth:  960,
 		MinHeight: 600,
 		URL:       "/",
-		Hidden:    opts.Minimized,
+		Hidden:    minimizedHides(opts.Minimized, settings.MissingRequired()),
 	})
 	// Close-to-tray: the pinned beta registers its own WindowClosing
 	// listener in NewWindow that unconditionally destroys the window, and

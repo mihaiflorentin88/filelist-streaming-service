@@ -281,3 +281,18 @@ func TestCanStartRefusesWhileRelocating(t *testing.T) {
 		t.Fatalf("refusal must leave the state untouched, got %s", sup.State())
 	}
 }
+
+// TestMinimizedHidesOnlyWithCompleteConfig pins the boot fix: autostart
+// pins --minimized, so a wiped settings file must still open the setup
+// window instead of stranding the app as a silent tray-only process.
+func TestMinimizedHidesOnlyWithCompleteConfig(t *testing.T) {
+	if !minimizedHides(true, nil) {
+		t.Fatal("--minimized with complete config must hide the window")
+	}
+	if minimizedHides(true, []string{"fileListPasskey"}) {
+		t.Fatal("--minimized with incomplete config must show the setup window")
+	}
+	if minimizedHides(false, []string{"fileListPasskey"}) {
+		t.Fatal("a non-minimized launch always shows the window")
+	}
+}
