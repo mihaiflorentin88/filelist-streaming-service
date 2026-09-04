@@ -3,6 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "exports": {
+    ".": "./src.tsx",
+    "./settings": "./settings.tsx",
+    "./downloads": "./downloads.tsx",
+    "./jobs": "./jobs.tsx",
+    "./style.css": "./style.css"
+  },
   "scripts": {
     "test": "vitest run",
     "build": "tsc --noEmit && vite build"

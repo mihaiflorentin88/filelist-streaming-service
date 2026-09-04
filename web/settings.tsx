@@ -2,9 +2,10 @@
 // catalog sync maintenance actions and observed catalog coverage. The app
 // renders these on both the Settings and Events views.
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { API, SettingsField } from '@filelist/shared';
+import { SettingsField } from '@filelist/shared';
+import { sharedApi } from './shared-api';
 
-const api = new API(location.origin);
+const api = sharedApi();
 
 export function Events({ onError, confirmRebuild = false }: { onError: (value: string) => void; confirmRebuild?: boolean }) {
   const [message, setMessage] = useState('');
