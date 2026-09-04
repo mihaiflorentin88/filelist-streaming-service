@@ -5,19 +5,17 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { SettingsField } from '@filelist/shared';
 import { sharedApi } from './shared-api';
 
-const api = sharedApi();
-
 export function Events({ onError, confirmRebuild = false }: { onError: (value: string) => void; confirmRebuild?: boolean }) {
   const [message, setMessage] = useState('');
   const [pendingRebuild, setPendingRebuild] = useState(false);
-  async function run(mode: 'latest' | 'rebuild') { try { const job = await api.syncCatalog(mode); setMessage(`${job.label} queued. Follow progress on Jobs.`) } catch (e) { onError((e as Error).message) } finally { setPendingRebuild(false) } }
+  async function run(mode: 'latest' | 'rebuild') { try { const job = await sharedApi().syncCatalog(mode); setMessage(`${job.label} queued. Follow progress on Jobs.`) } catch (e) { onError((e as Error).message) } finally { setPendingRebuild(false) } }
   // The standalone Events page keeps the one-click behavior; the Settings
   // Maintenance tab asks first because the rebuild sweeps every category.
   const requestRebuild = () => { if (confirmRebuild) setPendingRebuild(true); else void run('rebuild') };
   return <section class="events-page"><p class="supporting">Run safe server maintenance without waiting for the schedule.</p><div class="event-actions"><article><h2>Fetch latest</h2><p>Append the newest FileList releases to the existing catalog.</p><button type="button" class="primary" onClick={() => void run('latest')}>Fetch latest</button></article><article><h2>Rebuild catalog</h2><p>Refresh the maximum API-visible results from every enabled category. Existing discoveries are retained.</p><button type="button" onClick={requestRebuild}>Rebuild catalog</button></article></div>{message && <p role="status" class="success">{message}</p>}{pendingRebuild && <div class="overlay" role="dialog" aria-modal="true" aria-label="Rebuild catalog"><section class="help-modal"><h2>Rebuild catalog?</h2><p>Refreshes every enabled category's latest window and rebuilds local projections. Nothing is removed; the work runs as a background job you can follow on the Jobs page.</p><div class="confirm-actions"><button type="button" onClick={() => setPendingRebuild(false)}>Cancel</button><button type="button" class="primary" onClick={() => void run('rebuild')}>Rebuild now</button></div></section></div>}</section>
 }
 
-export function CacheCoverage() { const [status, setStatus] = useState<Record<string, unknown> | null>(null); useEffect(() => { api.call<Record<string, unknown>>('/catalog/status').then(setStatus).catch(() => { }) }, []); if (!status) return null; return <section class="cache-coverage"><h2>Observed catalog coverage</h2><p><strong>{Number(status.observedReleases).toLocaleString()}</strong> releases retained · <strong>{Number(status.discoverableReleases).toLocaleString()}</strong> currently seeded · {Number(status.hiddenZeroSeeders).toLocaleString()} zero-seeder releases hidden</p><p class="supporting">FileList exposes at most {String(status.fileListLatestWindowLimit)} recent releases per latest request and no historical pagination. Searches and future syncs continue growing this append-only cache.</p></section> }
+export function CacheCoverage() { const [status, setStatus] = useState<Record<string, unknown> | null>(null); useEffect(() => { sharedApi().call<Record<string, unknown>>('/catalog/status').then(setStatus).catch(() => { }) }, []); if (!status) return null; return <section class="cache-coverage"><h2>Observed catalog coverage</h2><p><strong>{Number(status.observedReleases).toLocaleString()}</strong> releases retained · <strong>{Number(status.discoverableReleases).toLocaleString()}</strong> currently seeded · {Number(status.hiddenZeroSeeders).toLocaleString()} zero-seeder releases hidden</p><p class="supporting">FileList exposes at most {String(status.fileListLatestWindowLimit)} recent releases per latest request and no historical pagination. Searches and future syncs continue growing this append-only cache.</p></section> }
 
 type SettingsRow = [string, string, string?, string?];
 
@@ -140,7 +138,7 @@ export function Settings({ value, fields, onSaved, onError, onDirtyChange }: { v
     const out = { ...merged };
     Object.keys(out).filter(k => k.endsWith('Configured') || k === 'settingsPath').forEach(k => delete out[k]);
     try {
-      await api.call('/settings', { method: 'PUT', body: JSON.stringify(out) });
+      await sharedApi().call('/settings', { method: 'PUT', body: JSON.stringify(out) });
       setMessage('Settings saved. Environment-managed values remain controlled by .env.docker.');
       onSaved(merged);
       // The saved tab's draft snaps to the canonical form shape so the tab
@@ -160,7 +158,7 @@ export function Settings({ value, fields, onSaved, onError, onDirtyChange }: { v
     setTests(current => ({ ...current, [name]: 'Testing…' }));
     setConnState(current => ({ ...current, [name]: 'testing' }));
     try {
-      const result = await api.call<{ message: string }>(`/dependencies/${name}/test`, { method: 'POST' });
+      const result = await sharedApi().call<{ message: string }>(`/dependencies/${name}/test`, { method: 'POST' });
       setTests(current => ({ ...current, [name]: result.message }));
       setConnState(current => ({ ...current, [name]: 'pass' }));
     } catch (e) {

@@ -1,9 +1,10 @@
 import { render } from 'preact';
-import { afterEach, describe, expect, it } from 'vitest';
+import { act } from 'preact/test-utils';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { CacheCoverage, Settings } from './settings';
+import { configureSharedApi } from './shared-api';
 import { Downloads } from './downloads';
 import { Jobs } from './jobs';
-import { Settings } from './settings';
-import { configureSharedApi } from './shared-api';
 
 // Spec: Reuse boundary — shared components never render webapp shell (no
 // nav, header, footer, or sidebar). Jobs' own pagination nav is part of the
@@ -25,6 +26,7 @@ function mount(ui: Parameters<typeof render>[0]): HTMLElement {
 afterEach(() => {
   for (const host of mountedHosts) { render(null, host); host.remove() }
   mountedHosts.length = 0;
+  vi.unstubAllGlobals();
   document.body.innerHTML = '';
 });
 
@@ -35,5 +37,25 @@ describe.each([
 ])('%s renders no webapp chrome', (_name, ui) => {
   it('has no nav/sidebar/header/footer', () => {
     expect(mount(ui).querySelectorAll('nav:not(.pagination), header, footer, .sidebar')).toHaveLength(0);
+  });
+});
+
+// Regression: shared components must resolve the API client at call time.
+// settings.tsx used to capture `sharedApi()` in a module-scope const, which
+// ESM evaluation freezes before the desktop entry's configureSharedApi call
+// lands. CacheCoverage fetches on mount, so the outgoing URL exposes which
+// client actually ran.
+describe('shared API origin resolution', () => {
+  it('resolves the client at call time, not module evaluation', async () => {
+    const requested: string[] = [];
+    vi.stubGlobal('fetch', (url: string | URL | Request) => { requested.push(String(url)); return { ok: true, status: 204, json: async () => ({}) } as Response });
+    configureSharedApi('http://127.0.0.1:9911');
+    await act(async () => { mount(<CacheCoverage />) });
+    await act(async () => {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      setTimeout(resolve, 0);
+      await promise;
+    });
+    expect(requested[0]).toBe('http://127.0.0.1:9911/api/v1/catalog/status');
   });
 });
