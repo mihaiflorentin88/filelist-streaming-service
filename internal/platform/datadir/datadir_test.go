@@ -119,3 +119,124 @@ func TestCopyVerifiedFailureLeavesNoValidDst(t *testing.T) {
 		t.Fatal("failed copy must not leave a valid dst file")
 	}
 }
+
+// withSeams swaps the platform seams for the duration of the test. The
+// probes are injected closures, so tests never touch /var/lib, %APPDATA%,
+// or ~/Library.
+func withSeams(t *testing.T, probe func(string) (bool, error), cfgDir, home func() (string, error), xdg string) {
+	t.Helper()
+	oldProbe, oldCfg, oldHome, oldXDG := varLibProbe, userConfigDir, userHomeDir, xdgDataHome
+	varLibProbe, userConfigDir, userHomeDir, xdgDataHome = probe, cfgDir, home, func() string { return xdg }
+	t.Cleanup(func() { varLibProbe, userConfigDir, userHomeDir, xdgDataHome = oldProbe, oldCfg, oldHome, oldXDG })
+}
+
+func TestResolveForFlagAndPointerWinOverPlatform(t *testing.T) {
+	root := t.TempDir()
+	exe := filepath.Join(root, "bin", "app")
+	os.MkdirAll(filepath.Dir(exe), 0o750)
+	os.WriteFile(PointerPath(exe), []byte(filepath.Join(root, "pointed")+"\n"), 0o640)
+	withSeams(t, func(string) (bool, error) { return true, nil },
+		func() (string, error) { return root, nil },
+		func() (string, error) { return root, nil }, "")
+
+	dir, source, err := ResolveFor(filepath.Join(root, "flagged"), exe, PlatformGUI)
+	if err != nil || dir != filepath.Join(root, "flagged") || source != "flag" {
+		t.Fatalf("flag must win over platform: dir=%q source=%q err=%v", dir, source, err)
+	}
+	dir, source, err = ResolveFor("", exe, PlatformGUI)
+	if err != nil || source != "pointer" || dir != filepath.Join(root, "pointed") {
+		t.Fatalf("pointer must win over platform: dir=%q source=%q err=%v", dir, source, err)
+	}
+}
+
+func TestPlatformDefaultDarwinUsesAppSupportWithSpace(t *testing.T) {
+	root := t.TempDir()
+	withSeams(t, nil,
+		func() (string, error) { return filepath.Join(root, "AppSupport"), nil },
+		func() (string, error) { return "", nil }, "")
+	dir, err := platformDefaultConfig()
+	if err != nil {
+		t.Fatalf("platformDefaultConfig: %v", err)
+	}
+	want := filepath.Join(root, "AppSupport", "FileList Streaming")
+	if dir != want {
+		t.Fatalf("darwin default: got %q want %q", dir, want)
+	}
+}
+
+func TestPlatformDefaultWindowsUsesAppDataWithSpace(t *testing.T) {
+	root := t.TempDir()
+	withSeams(t, nil,
+		func() (string, error) { return filepath.Join(root, "AppData", "Roaming"), nil },
+		func() (string, error) { return "", nil }, "")
+	dir, err := platformDefaultConfig()
+	if err != nil {
+		t.Fatalf("platformDefaultConfig: %v", err)
+	}
+	want := filepath.Join(root, "AppData", "Roaming", "FileList Streaming")
+	if dir != want {
+		t.Fatalf("windows default: got %q want %q", dir, want)
+	}
+}
+
+func TestPlatformDefaultLinuxVarLibWhenWritable(t *testing.T) {
+	probed := ""
+	withSeams(t, func(dir string) (bool, error) { probed = dir; return true, nil },
+		nil, nil, "")
+	dir, err := platformDefaultLinux()
+	if err != nil {
+		t.Fatalf("platformDefaultLinux: %v", err)
+	}
+	if probed != "/var/lib/filelist-streaming-service" {
+		t.Fatalf("probe must target /var/lib path, probed %q", probed)
+	}
+	if dir != "/var/lib/filelist-streaming-service" {
+		t.Fatalf("writable var-lib must be used, got %q", dir)
+	}
+}
+
+func TestPlatformDefaultLinuxFallsBackToXDGWhenVarLibMissing(t *testing.T) {
+	root := t.TempDir()
+	withSeams(t, func(string) (bool, error) { return false, nil },
+		nil, func() (string, error) { return root, nil },
+		filepath.Join(root, "xdg-data"))
+	dir, err := platformDefaultLinux()
+	if err != nil {
+		t.Fatalf("platformDefaultLinux: %v", err)
+	}
+	want := filepath.Join(root, "xdg-data", "filelist-streaming")
+	if dir != want {
+		t.Fatalf("XDG default: got %q want %q", dir, want)
+	}
+}
+
+func TestPlatformDefaultLinuxXDGDefaultsToHomeLocalShare(t *testing.T) {
+	root := t.TempDir()
+	withSeams(t, func(string) (bool, error) { return false, os.ErrPermission },
+		nil, func() (string, error) { return root, nil }, "")
+	dir, err := platformDefaultLinux()
+	if err != nil {
+		t.Fatalf("platformDefaultLinux: %v", err)
+	}
+	want := filepath.Join(root, ".local", "share", "filelist-streaming")
+	if dir != want {
+		t.Fatalf("XDG fallback to ~/.local/share: got %q want %q", dir, want)
+	}
+}
+
+// TestPlatformDefaultDoesNotCreateDirs pins that resolution only returns the
+// path; creation stays with the caller's MkdirAll (existing behavior), so a
+// nonexistent platform fallback is reported, not silently conjured here.
+func TestPlatformDefaultDoesNotCreateDirs(t *testing.T) {
+	root := t.TempDir()
+	withSeams(t, func(string) (bool, error) { return false, nil },
+		func() (string, error) { return filepath.Join(root, "AppSupport"), nil },
+		func() (string, error) { return "", nil }, "")
+	dir, err := platformDefaultConfig()
+	if err != nil {
+		t.Fatalf("platformDefaultConfig: %v", err)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("resolution must not create the dir, stat err=%v", err)
+	}
+}

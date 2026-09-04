@@ -38,7 +38,7 @@ func Run(opts Options) error {
 	if err != nil {
 		return err
 	}
-	dir, source, err := datadir.Resolve(opts.DataDir, exe)
+	dir, source, err := datadir.ResolveFor(opts.DataDir, exe, datadir.PlatformGUI)
 	if err != nil {
 		return err
 	}

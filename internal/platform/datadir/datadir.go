@@ -1,7 +1,7 @@
 // Package datadir resolves the application data directory and relocates it.
 // Resolution order (spec: Data directory): --data-dir flag, then the
-// data.location pointer file next to the executable, then data/ next to the
-// executable.
+// data.location pointer file next to the executable, then either data/ next
+// to the executable (serve) or the platform default (GUI).
 package datadir
 
 import (
@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -121,7 +122,55 @@ func bytesEqual(a, b []byte) bool {
 	return hex.EncodeToString(a) == hex.EncodeToString(b)
 }
 
-func Resolve(flagDir, exePath string) (string, string, error) {
+// DefaultLocation selects the fallback used when no flag and no pointer
+// apply.
+type DefaultLocation int
+
+const (
+	// BinaryAdjacent falls back to data/ next to the executable (serve).
+	BinaryAdjacent DefaultLocation = iota
+	// PlatformGUI falls back to the per-platform standard location (GUI).
+	PlatformGUI
+)
+
+// Platform seams, injectable so tests never touch /var/lib, %APPDATA%, or
+// ~/Library.
+var (
+	varLibProbe   = defaultVarLibProbe
+	userConfigDir = os.UserConfigDir
+	userHomeDir   = os.UserHomeDir
+	xdgDataHome   = func() string { return os.Getenv("XDG_DATA_HOME") }
+)
+
+const varLibDir = "/var/lib/filelist-streaming-service"
+
+func defaultVarLibProbe(dir string) (bool, error) {
+	fi, err := os.Stat(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if !fi.IsDir() {
+		return false, nil
+	}
+	probe := filepath.Join(dir, ".probe-tmp")
+	f, err := os.OpenFile(probe, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return false, nil
+	}
+	f.Close()
+	os.Remove(probe)
+	return true, nil
+}
+
+// ResolveFor resolves the data directory: flag → pointer → def
+// (BinaryAdjacent: data/ next to the executable; PlatformGUI: the platform
+// default). It returns the resolved path and its source ("flag",
+// "pointer", "platform", or "default"). Paths are returned uncreated; the
+// caller mkdirs.
+func ResolveFor(flagDir, exePath string, def DefaultLocation) (string, string, error) {
 	if strings.TrimSpace(flagDir) != "" {
 		abs, err := filepath.Abs(flagDir)
 		return abs, "flag", err
@@ -129,7 +178,57 @@ func Resolve(flagDir, exePath string) (string, string, error) {
 	if p := readPointer(exePath); p != "" {
 		return p, "pointer", nil
 	}
-	return filepath.Join(filepath.Dir(exePath), "data"), "default", nil
+	switch def {
+	case PlatformGUI:
+		dir, err := platformDefault()
+		return dir, "platform", err
+	default:
+		return filepath.Join(filepath.Dir(exePath), "data"), "default", nil
+	}
+}
+
+func platformDefault() (string, error) {
+	switch runtime.GOOS {
+	case "linux":
+		return platformDefaultLinux()
+	default:
+		return platformDefaultConfig()
+	}
+}
+
+// platformDefaultConfig is the Windows (%APPDATA%) and macOS
+// (~/Library/Application Support) default; both are os.UserConfigDir's
+// base plus the app dir name.
+func platformDefaultConfig() (string, error) {
+	base, err := userConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, "FileList Streaming"), nil
+}
+
+// platformDefaultLinux prefers /var/lib/filelist-streaming-service when it
+// already exists and is writable (admin-created, shared use), else
+// $XDG_DATA_HOME/filelist-streaming (default ~/.local/share/...).
+func platformDefaultLinux() (string, error) {
+	if ok, err := varLibProbe(varLibDir); err == nil && ok {
+		return varLibDir, nil
+	}
+	base := xdgDataHome()
+	if strings.TrimSpace(base) == "" {
+		home, err := userHomeDir()
+		if err != nil {
+			return "", err
+		}
+		base = filepath.Join(home, ".local", "share")
+	}
+	return filepath.Join(base, "filelist-streaming"), nil
+}
+
+// Resolve resolves with the serve fallback (BinaryAdjacent) and is
+// unchanged from the pre-platform behavior.
+func Resolve(flagDir, exePath string) (string, string, error) {
+	return ResolveFor(flagDir, exePath, BinaryAdjacent)
 }
 
 func PointerPath(exePath string) string {
