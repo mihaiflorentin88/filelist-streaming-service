@@ -103,7 +103,7 @@ func TestSettingsResponseRedactsSecrets(t *testing.T) {
 	v.FileListPasskey = "filelist-secret"
 	v.QBittorrentPassword = "qb-secret"
 	v.TMDBAPIKey = "tmdb-secret"
-	b, err := json.Marshal(redactedSettings(v, "data/settings.json"))
+	b, err := json.Marshal(RedactedSettings(v, "data/settings.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
