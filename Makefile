@@ -1,4 +1,4 @@
-.PHONY: check test build build-arm64 build-all desktop-assets package-darwin wails-cross web frontend tizen-wgt validate-tizen-wgt smoke-tizen-engine deploy-pi bootstrap-server-dry-run
+.PHONY: check test build build-arm64 build-arm64-headless build-all desktop-assets package-darwin wails-cross web frontend tizen-wgt validate-tizen-wgt smoke-tizen-engine deploy-pi bootstrap-server-dry-run
 
 VERSION ?= $(shell tr -d '[:space:]' < VERSION)
 PI_HOST ?=
@@ -74,6 +74,16 @@ build-arm64: web desktop-assets | wails-cross
 		-tags production,gtk3 -trimpath -buildvcs=false \
 		-ldflags="$(GO_LDFLAGS)" \
 		-o bin/filelist-streaming-linux-arm64 ./cmd/server
+
+# Pure headless arm64 build (no cgo, no webkit2gtk). Ubuntu 22.04/Raspbian
+# Bullseye lack libwebkit2gtk-4.1, and headless systemd units never open a
+# window — the `headless` tag compiles internal/gui down to the
+# ErrNoDisplay fallback, so the binary is fully static. Use with
+# deploy/systemd/filelist-streaming.service (serve mode).
+build-arm64-headless: web
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -tags headless -trimpath -buildvcs=false \
+		-ldflags="$(GO_LDFLAGS)" \
+		-o bin/filelist-streaming-linux-arm64-headless ./cmd/server
 
 # Seven release binaries. Per-target prerequisites:
 #   - all: web + desktop-assets once (embedded UIs), wails3 on PATH.
@@ -155,8 +165,8 @@ smoke-tizen-engine:
 	fi
 	@echo "smoke-tizen-engine: PASS — clean boot and injected-error panel verified on Google Chrome 63.0.3239.84; broken fixture rejected."
 
-deploy-pi: build-arm64
-	PI_HOST="$(PI_HOST)" sh deploy/pi-deploy.sh "$(CURDIR)/bin/filelist-streaming-linux-arm64" "$(CURDIR)/deploy/systemd/filelist-streaming.service" "$(CURDIR)/deploy/systemd/filelist-streaming.logrotate"
+deploy-pi: build-arm64-headless
+	PI_HOST="$(PI_HOST)" sh deploy/pi-deploy.sh "$(CURDIR)/bin/filelist-streaming-linux-arm64-headless" "$(CURDIR)/deploy/systemd/filelist-streaming.service" "$(CURDIR)/deploy/systemd/filelist-streaming.logrotate"
 
 bootstrap-server-dry-run:
 	@echo "Review only; this target does not install packages."

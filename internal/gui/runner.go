@@ -1,4 +1,4 @@
-//go:build !(linux && arm)
+//go:build !headless && !(linux && arm)
 
 package gui
 
