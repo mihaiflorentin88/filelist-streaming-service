@@ -3,6 +3,7 @@ package gui
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -28,11 +29,12 @@ type serverProxy struct {
 	static http.Handler
 	proxy  *httputil.ReverseProxy
 	lookup func() (string, bool)
+	log    *slog.Logger
 }
 
 // newServerProxy layers /api/ proxying over the embedded static handler.
-func newServerProxy(static http.Handler, lookup func() (string, bool)) *serverProxy {
-	p := &serverProxy{static: static, lookup: lookup}
+func newServerProxy(static http.Handler, lookup func() (string, bool), log *slog.Logger) *serverProxy {
+	p := &serverProxy{static: static, lookup: lookup, log: log}
 	p.proxy = &httputil.ReverseProxy{
 		Rewrite: func(req *httputil.ProxyRequest) {
 			addr, _ := req.In.Context().Value(addrKey{}).(string)
@@ -41,8 +43,10 @@ func newServerProxy(static http.Handler, lookup func() (string, bool)) *serverPr
 			req.SetURL(&url.URL{Scheme: "http", Host: addr})
 		},
 		// Only reachable when the address looked up as running refused the
-		// connection (the server died between lookup and dial).
+		// connection (the server died between lookup and dial). Logged so
+		// the GUI's log viewer can surface the 502's cause.
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			p.log.Error("asset proxy request failed", "method", r.Method, "path", r.URL.Path, "error", err)
 			writeProxyError(w, http.StatusBadGateway, "server unreachable")
 		},
 	}

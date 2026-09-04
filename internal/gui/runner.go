@@ -80,7 +80,7 @@ func Run(opts Options) error {
 		// startup, while a direct SetIcon call would no-op because the
 		// platform impl only exists once Run starts.
 		Icon:   appIcon,
-		Assets: application.AssetOptions{Handler: newServerProxy(assetHandler(), sup.RunningAddress)},
+		Assets: application.AssetOptions{Handler: newServerProxy(assetHandler(), sup.RunningAddress, log)},
 		Services: []application.Service{
 			application.NewService(bind),
 		},

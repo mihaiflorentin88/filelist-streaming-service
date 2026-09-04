@@ -1,10 +1,13 @@
 package gui
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -44,7 +47,7 @@ func TestServerProxyForwardsAPIPaths(t *testing.T) {
 	backend := startBackend(t, &hits, nil)
 	proxy := newServerProxy(http.HandlerFunc(staticHandler), func() (string, bool) {
 		return backend.Listener.Addr().String(), true
-	})
+	}, testLogger())
 
 	resp, err := http.Post(proxyURL(t, proxy), "application/json", nil)
 	if err != nil {
@@ -79,7 +82,7 @@ func TestServerProxyResolvesTheAddressPerRequest(t *testing.T) {
 	current := backendA.Listener.Addr().String()
 	proxy := newServerProxy(http.HandlerFunc(staticHandler), func() (string, bool) {
 		return current, true
-	})
+	}, testLogger())
 	client := &http.Client{Timeout: 0}
 
 	get := func() {
@@ -109,7 +112,7 @@ func TestServerProxyResolvesTheAddressPerRequest(t *testing.T) {
 func TestServerProxyStoppedServerAnswers503(t *testing.T) {
 	proxy := newServerProxy(http.HandlerFunc(staticHandler), func() (string, bool) {
 		return "", false
-	})
+	}, testLogger())
 	resp, err := http.Get(proxyURL(t, proxy))
 	if err != nil {
 		t.Fatalf("get: %v", err)
@@ -134,9 +137,11 @@ func TestServerProxyDeadAddressAnswers502(t *testing.T) {
 	addr := dead.Listener.Addr().String()
 	dead.Close()
 
+	var logBuf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&logBuf, nil))
 	proxy := newServerProxy(http.HandlerFunc(staticHandler), func() (string, bool) {
 		return addr, true
-	})
+	}, log)
 	resp, err := http.Get(proxyURL(t, proxy))
 	if err != nil {
 		t.Fatalf("get: %v", err)
@@ -152,6 +157,10 @@ func TestServerProxyDeadAddressAnswers502(t *testing.T) {
 	if payload["error"] != "server unreachable" {
 		t.Fatalf("error = %q, want %q", payload["error"], "server unreachable")
 	}
+	// The 502 must leave a trail for the GUI's log viewer.
+	if !strings.Contains(logBuf.String(), "asset proxy request failed") || !strings.Contains(logBuf.String(), addr) {
+		t.Fatalf("log = %q, want the proxy failure with the dead address", logBuf.String())
+	}
 }
 
 // TestServerProxyServesStaticElsewhere: everything outside /api/ stays on
@@ -161,7 +170,7 @@ func TestServerProxyServesStaticElsewhere(t *testing.T) {
 	backend := startBackend(t, &hits, nil)
 	proxy := newServerProxy(http.HandlerFunc(staticHandler), func() (string, bool) {
 		return backend.Listener.Addr().String(), true
-	})
+	}, testLogger())
 
 	srv := httptest.NewServer(proxy)
 	defer srv.Close()
@@ -187,7 +196,7 @@ func TestServerProxySendsDialedHostAsHostHeader(t *testing.T) {
 	backend := startBackend(t, &hits, &sawHost)
 	proxy := newServerProxy(http.HandlerFunc(staticHandler), func() (string, bool) {
 		return backend.Listener.Addr().String(), true
-	})
+	}, testLogger())
 
 	resp, err := http.Get(proxyURL(t, proxy))
 	if err != nil {

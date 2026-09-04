@@ -2,7 +2,7 @@ import { render } from 'preact';
 import { Events } from '@wailsio/runtime';
 import { App } from './App';
 import { ServerState } from './bindings/github.com/mihaiflorentin88/filelist-streaming-service/internal/gui/bindings';
-import { isStateEvent, seedServerState, setServerOrigin, type StateEvent } from './lib/state';
+import { isStateEvent, seedServerState, setServerOrigin } from './lib/state';
 
 // All view traffic stays same-origin: the shared API points at the app's
 // own origin, whose /api/ paths the wails asset server reverse-proxies to
@@ -26,7 +26,3 @@ ServerState()
   .then(event => { if (isStateEvent(event)) seedServerState(event) })
   .catch(() => { })
   .finally(() => { render(<App />, document.getElementById('app')!) });
-
-function apply(event: StateEvent): void {
-  seedServerState(event);
-}
