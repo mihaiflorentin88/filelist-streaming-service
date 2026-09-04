@@ -26,10 +26,10 @@ import (
 const settingsPathEnv = config.EnvironmentPrefix + "SETTINGS_PATH"
 
 // Run assembles and runs the Wails desktop app: data-dir resolution,
-// settings load (+ default-path anchoring), single-instance forwarding,
-// the supervisor, the window, the tray, and the state-event wiring.
-// All Wails usage is confined to this package so a framework migration
-// touches one boundary (spec: Risks).
+// settings load, single-instance forwarding, the supervisor (which anchors
+// the relative default paths on first successful start), the window, the
+// tray, and the state-event wiring. All Wails usage is confined to this
+// package so a framework migration touches one boundary (spec: Risks).
 func Run(opts Options) error {
 	// Headless Linux must exit with the serve direction, never a raw GTK
 	// init error. Windows/macOS always have a session; failures surface
@@ -55,11 +55,6 @@ func Run(opts Options) error {
 	}
 	settings, err := config.LoadAt(settingsPath)
 	if err != nil {
-		return err
-	}
-	// With --data-dir (or a pointer file), the relative default paths must
-	// follow the data dir, not the process CWD; see anchorDefaultPaths.
-	if err := anchorDefaultPaths(settings, dir); err != nil {
 		return err
 	}
 
@@ -90,6 +85,19 @@ func Run(opts Options) error {
 			return nil
 		},
 	})
+	// Anchor-on-start (not at boot): a boot-time Save would mark the
+	// default downloadRoot file-provided and shrink first-run setup from
+	// three missing keys to two. The factory runs only after CanStart
+	// passes — the required keys are genuinely provided by then — so
+	// anchoring the relative defaults and persisting there is truthful, and
+	// the default factory's composition.NewAt reloads the anchored file.
+	baseFactory := sup.appFactory
+	sup.appFactory = func() (appLike, error) {
+		if err := anchorDefaultPaths(settings, dir); err != nil {
+			return nil, err
+		}
+		return baseFactory()
+	}
 	bind := &Bindings{settings: settings, sup: sup, dataDir: dir, dataDirSource: source}
 
 	app := application.New(application.Options{
@@ -203,13 +211,15 @@ func anchorDefaultPaths(settings *config.Store, dir string) error {
 
 	// Keys explicitly present in the settings file. The store tracks
 	// file-provided state only for required keys, so this re-reads the raw
-	// file for the three anchored ones.
+	// file for the three anchored ones. json.Unmarshal matches object keys
+	// to struct fields case-insensitively, so the presence check must fold
+	// case the same way.
 	fileKeys := map[string]bool{}
 	if b, err := os.ReadFile(settings.Path()); err == nil {
 		var present map[string]json.RawMessage
 		if json.Unmarshal(b, &present) == nil {
 			for k := range present {
-				fileKeys[k] = true
+				fileKeys[strings.ToLower(k)] = true
 			}
 		}
 	}
@@ -217,7 +227,7 @@ func anchorDefaultPaths(settings *config.Store, dir string) error {
 	anchored := current
 	changed := false
 	for _, a := range anchoredPaths {
-		if fileKeys[a.jsonKey] || settings.EnvironmentManaged(a.jsonKey) {
+		if fileKeys[strings.ToLower(a.jsonKey)] || settings.EnvironmentManaged(a.jsonKey) {
 			continue
 		}
 		switch a.jsonKey {

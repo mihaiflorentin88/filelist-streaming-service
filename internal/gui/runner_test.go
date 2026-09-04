@@ -3,13 +3,134 @@
 package gui
 
 import (
+	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mihaiflorentin88/filelist-streaming-service/internal/platform/config"
 )
+
+// newRunnerStore mirrors the store Run builds: LoadAt over an explicit
+// settings path, exactly as the runner does.
+func newRunnerStore(t *testing.T, path string) *config.Store {
+	t.Helper()
+	settings, err := config.LoadAt(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	return settings
+}
+
+// runnerSupervisor wires the supervisor the way Run does: CanStart gate,
+// then a factory that anchors before delegating to the default NewAt
+// factory. It is the testable seam of Run's boot path (no window needed).
+func runnerSupervisor(settings *config.Store, dir string) *Supervisor {
+	sup := NewSupervisor(SupervisorDeps{
+		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Settings: settings,
+		CanStart: func() error {
+			if missing := settings.MissingRequired(); len(missing) > 0 {
+				return fmt.Errorf("required settings missing: %s", strings.Join(missing, ", "))
+			}
+			return nil
+		},
+	})
+	base := sup.appFactory
+	sup.appFactory = func() (appLike, error) {
+		if err := anchorDefaultPaths(settings, dir); err != nil {
+			return nil, err
+		}
+		return base()
+	}
+	return sup
+}
+
+// waitRunning polls until the supervisor leaves starting; the factory and
+// serve loop are asynchronous.
+func waitRunning(t *testing.T, sup *Supervisor) {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for sup.State() == StateStarting {
+		if time.Now().After(deadline) {
+			t.Fatalf("supervisor never left starting; state=%s err=%v", sup.State(), sup.Error())
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// TestRunnerBootDoesNotAnchorOrSave pins fix C1, case 1: a fresh boot with
+// incomplete config must NOT write the settings file (no boot-time anchor
+// Save), and MissingRequired still lists all three keys — the setup banner
+// under-asking was the regression.
+func TestRunnerBootDoesNotAnchorOrSave(t *testing.T) {
+	work := t.TempDir()
+	t.Chdir(work) // relative default paths mkdir under the temp CWD, not the repo
+	dir := t.TempDir()
+	settings := newRunnerStore(t, filepath.Join(dir, "settings.json"))
+
+	sup := runnerSupervisor(settings, dir)
+	err := sup.Start()
+	if err == nil || !strings.Contains(err.Error(), "required settings missing") {
+		t.Fatalf("incomplete config must refuse Start, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "settings.json")); !os.IsNotExist(err) {
+		t.Fatalf("boot must not create or rewrite the settings file, stat err=%v", err)
+	}
+	if got := settings.MissingRequired(); len(got) != 3 {
+		t.Fatalf("MissingRequired must still list all three keys, got %v", got)
+	}
+}
+
+// TestRunnerStartAnchorsDefaults pins fix C1, case 2: with a complete
+// config, starting the server anchors the three relative default paths
+// under the data dir and persists them; required keys provided via the
+// file stay as written.
+func TestRunnerStartAnchorsDefaults(t *testing.T) {
+	work := t.TempDir()
+	t.Chdir(work)
+	dir := t.TempDir()
+	downloads := filepath.Join(dir, "downloads")
+	body := `{` +
+		`"listenAddress": ":0",` +
+		`"downloadRoot": "` + downloads + `",` +
+		`"fileListUsername": "user",` +
+		`"fileListPasskey": "pass"` +
+		`}`
+	settingsPath := filepath.Join(dir, "settings.json")
+	if err := os.WriteFile(settingsPath, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	settings := newRunnerStore(t, settingsPath)
+
+	sup := runnerSupervisor(settings, dir)
+	if err := sup.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	t.Cleanup(func() { _ = sup.Stop() })
+	waitRunning(t, sup)
+
+	if want := filepath.Join(dir, "data", "filelist.db"); settings.Get().DatabasePath != want {
+		t.Fatalf("start must anchor databasePath to %q, got %q", want, settings.Get().DatabasePath)
+	}
+	if got := settings.Get().DownloadRoot; got != downloads {
+		t.Fatalf("file-provided downloadRoot must stay untouched, got %q", got)
+	}
+	persisted, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(persisted), filepath.Join(dir, "data", "filelist.db")) {
+		t.Fatalf("anchored databasePath must be persisted, got %s", persisted)
+	}
+	if !strings.Contains(string(persisted), downloads) {
+		t.Fatalf("downloadRoot must persist verbatim, got %s", persisted)
+	}
+}
 
 // TestAnchorDefaultPathsDefaultsAnchored pins ruling 3, case 1: a fresh
 // data dir (no settings file) means all three relative default paths anchor
@@ -47,11 +168,11 @@ func TestAnchorDefaultPathsDefaultsAnchored(t *testing.T) {
 // TestAnchorDefaultPathsExplicitFileValuesUntouched pins ruling 3, case 2:
 // a settings file that explicitly carries a value (even the relative
 // default) is the user's word — the store value and the file stay as
-// written.
+// written. The key match is case-insensitive, mirroring Go's JSON decode.
 func TestAnchorDefaultPathsExplicitFileValuesUntouched(t *testing.T) {
 	dir := t.TempDir()
 	settingsPath := filepath.Join(dir, "settings.json")
-	body := `{"databasePath": "data/filelist.db", "downloadRoot": "/srv/downloads"}`
+	body := `{"DataBasePath": "data/filelist.db", "downloadRoot": "/srv/downloads"}`
 	if err := os.WriteFile(settingsPath, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -69,8 +190,10 @@ func TestAnchorDefaultPathsExplicitFileValuesUntouched(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Save rewrites the file with the store's canonical key casing; the
+	// value itself must survive untouched (still CWD-relative).
 	if !strings.Contains(string(persisted), `"databasePath": "data/filelist.db"`) {
-		t.Fatalf("explicit file value must survive verbatim, got %s", persisted)
+		t.Fatalf("explicit file value must survive untouched, got %s", persisted)
 	}
 }
 
