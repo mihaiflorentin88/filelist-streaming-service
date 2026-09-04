@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import {
   AutostartStatus,
+  ChangeDataDir,
   DataDirInfo,
   DisableAutostart,
   EnableAutostart,
@@ -26,6 +27,12 @@ export function ServerPage() {
   // null = not read back yet; the toggle stays disabled until the OS answers.
   const [autostart, setAutostart] = useState<boolean | null>(null);
   const [error, setError] = useState('');
+  // The Change data folder dialog: open/closed, the entered path, the
+  // backend's verbatim refusal (after submit), and the in-flight flag.
+  const [changeOpen, setChangeOpen] = useState(false);
+  const [changeTarget, setChangeTarget] = useState('');
+  const [changeError, setChangeError] = useState('');
+  const [moving, setMoving] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -69,6 +76,36 @@ export function ServerPage() {
       setError((e as Error).message);
     }
   }
+
+  function openChange() {
+    setChangeError('');
+    setChangeTarget('');
+    setChangeOpen(true);
+  }
+
+  // Submit calls the backend once; only a resolved change refreshes the
+  // path (from a fresh DataDirInfo read — the backend may normalize it).
+  // A rejection shows the backend's error verbatim and keeps the dialog
+  // open: the move rolled back Go-side, so the user can correct the path.
+  async function submitChange() {
+    const target = changeTarget.trim();
+    if (!target || moving) return;
+    setChangeError('');
+    setMoving(true);
+    try {
+      await ChangeDataDir(target);
+      const [dir, source] = await DataDirInfo();
+      setDataDir(dir);
+      setDataDirSource(source);
+      setChangeOpen(false);
+      setChangeTarget('');
+    } catch (e) {
+      setChangeError((e as Error).message);
+    } finally {
+      setMoving(false);
+    }
+  }
+
 
   const transitioning = server.state === 'starting' || server.state === 'stopping';
   const stateLine = server.state === 'running'
@@ -116,8 +153,34 @@ export function ServerPage() {
           <button type="button" disabled={!dataDir} onClick={() => void run(() => OpenPath('data'))}>Open data folder</button>
           {' '}
           <button type="button" disabled={!dataDir} onClick={() => void run(() => OpenPath('logs'))}>Open logs folder</button>
+          {' '}
+          <button type="button" disabled={!dataDir} onClick={openChange}>Change…</button>
         </p>
       </fieldset>
+      {changeOpen && (
+        <div class="overlay" role="dialog" aria-modal="true" aria-labelledby="change-data-dir-heading">
+          <section class="removal-confirm">
+            <h2 id="change-data-dir-heading">Change data folder</h2>
+            <p class="supporting">The server will restart; your data moves to the new location.</p>
+            <div class="fields">
+              <label>
+                New location
+                <input
+                  value={changeTarget}
+                  onInput={e => setChangeTarget(e.currentTarget.value)}
+                  placeholder="/absolute/path/for/the/data"
+                  aria-label="New data folder path"
+                />
+              </label>
+            </div>
+            {changeError && <p class="settings-status" role="alert">{changeError}</p>}
+            <div class="confirm-actions">
+              <button type="button" disabled={moving} onClick={() => setChangeOpen(false)}>Cancel</button>
+              <button type="button" class="primary" disabled={moving || !changeTarget.trim()} onClick={() => void submitChange()}>Move data</button>
+            </div>
+          </section>
+        </div>
+      )}
     </section>
   );
 }

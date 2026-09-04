@@ -26,27 +26,14 @@ func newRunnerStore(t *testing.T, path string) *config.Store {
 	return settings
 }
 
-// runnerSupervisor wires the supervisor the way Run does: CanStart gate,
-// then a factory that anchors before delegating to the default NewAt
-// factory. It is the testable seam of Run's boot path (no window needed).
+// runnerSupervisor wires the supervisor exactly the way Run does now:
+// bindings holder first, then wireSupervisor (CanStart gate over the
+// CURRENT store, factory that anchors before delegating to NewAt). It is
+// the testable seam of Run's boot path (no window needed).
 func runnerSupervisor(settings *config.Store, dir string) *Supervisor {
-	sup := NewSupervisor(SupervisorDeps{
-		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Settings: settings,
-		CanStart: func() error {
-			if missing := settings.MissingRequired(); len(missing) > 0 {
-				return fmt.Errorf("required settings missing: %s", strings.Join(missing, ", "))
-			}
-			return nil
-		},
-	})
-	base := sup.appFactory
-	sup.appFactory = func() (appLike, error) {
-		if err := anchorDefaultPaths(settings, dir); err != nil {
-			return nil, err
-		}
-		return base()
-	}
+	bind := &Bindings{settings: settings, dataDir: dir, dataDirSource: "default"}
+	sup := wireSupervisor(bind, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	bind.sup = sup
 	return sup
 }
 
@@ -218,5 +205,58 @@ func TestAnchorDefaultPathsEnvUntouched(t *testing.T) {
 	// not a bypass.
 	if want := filepath.Join(dir, "data", "artwork"); settings.Get().ArtworkCachePath != want {
 		t.Fatalf("artworkCachePath must still anchor to %q, got %q", want, settings.Get().ArtworkCachePath)
+	}
+}
+
+// TestChangeDataDirPostRelocationStartUsesNewStore pins the relocation
+// contract through the production wiring: ChangeDataDir (stopped), then
+// Start — the real wireSupervisor factory must anchor and NewAt against
+// the NEW settings path, so the server reopens its database at the moved
+// location (canary: the sqlite file appears only under the new dir).
+func TestChangeDataDirPostRelocationStartUsesNewStore(t *testing.T) {
+	oldDir := t.TempDir()
+	newDir := t.TempDir()
+	body := fmt.Sprintf(`{
+		"listenAddress": ":0",
+		"databasePath": %q,
+		"downloadRoot": %q,
+		"torrentSessionDir": %q,
+		"fileListUsername": "user",
+		"fileListPasskey": "pass"
+	}`,
+		filepath.Join(oldDir, "filelist.db"),
+		filepath.Join(oldDir, "downloads"),
+		filepath.Join(oldDir, "torrent-session"))
+	settingsPath := filepath.Join(oldDir, "settings.json")
+	if err := os.WriteFile(settingsPath, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	settings := newRunnerStore(t, settingsPath)
+
+	bind := &Bindings{settings: settings, dataDir: oldDir, dataDirSource: "default"}
+	sup := wireSupervisor(bind, testLogger())
+	bind.sup = sup
+
+	if err := bind.ChangeDataDir(newDir); err != nil {
+		t.Fatalf("ChangeDataDir: %v", err)
+	}
+	store, dir, source := bind.snapshot()
+	if dir != newDir || source != "pointer" {
+		t.Fatalf("holder = (%s, %s), want (%s, pointer)", dir, source, newDir)
+	}
+	if want := filepath.Join(newDir, "filelist.db"); store.Get().DatabasePath != want {
+		t.Fatalf("anchored databasePath must remap to %q, got %q", want, store.Get().DatabasePath)
+	}
+	if err := sup.Start(); err != nil {
+		t.Fatalf("start after relocation: %v", err)
+	}
+	t.Cleanup(func() { _ = sup.Stop() })
+	waitRunning(t, sup)
+
+	if _, err := os.Stat(filepath.Join(newDir, "filelist.db")); err != nil {
+		t.Fatalf("database must reopen at the moved location: %v", err)
+	}
+	if _, err := os.Stat(oldDir); !os.IsNotExist(err) {
+		t.Fatalf("old data dir %s must be gone", oldDir)
 	}
 }

@@ -1,6 +1,7 @@
 package gui
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -8,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
+	"sync"
 
 	"github.com/mihaiflorentin88/filelist-streaming-service/internal/adapters/httpapi"
 	"github.com/mihaiflorentin88/filelist-streaming-service/internal/composition"
@@ -38,11 +41,16 @@ type SaveResult struct {
 // the settings transport, autostart, and data-dir helpers. The runner
 // (Task 6) injects the store and supervisor it shares with the server;
 // wails wraps this struct by reflection at runtime, so it stays plain Go.
+//
+// The store/data-dir trio is a mutex-guarded holder: ChangeDataDir swaps
+// all three after a successful relocation, and every reader goes through
+// snapshot, so the supervisor's CanStart/factory closures (wired by
+// wireSupervisor) always consult the CURRENT location.
 type Bindings struct {
-	settings *config.Store
-	sup      *Supervisor
-	// dataDir/dataDirSource come from the runner's datadir.Resolve; when
-	// unset they resolve lazily on first use.
+	mu sync.Mutex
+
+	settings      *config.Store
+	sup           *Supervisor
 	dataDir       string
 	dataDirSource string
 
@@ -79,8 +87,9 @@ func (b *Bindings) RestartServer() error { return b.sup.Restart() }
 // LoadSettings returns the settings exactly as GET /api/v1/settings serves
 // them: secrets blanked, Configured flags, settings file path.
 func (b *Bindings) LoadSettings() httpapi.SettingsView {
-	v := b.settings.Get()
-	return httpapi.RedactedSettings(v, b.settings.Path())
+	store, _, _ := b.snapshot()
+	v := store.Get()
+	return httpapi.RedactedSettings(v, store.Path())
 }
 
 // SaveSettings mirrors the HTTP PUT /api/v1/settings contract: native-path
@@ -88,17 +97,18 @@ func (b *Bindings) LoadSettings() httpapi.SettingsView {
 // completes the required settings while the server is stopped auto-starts
 // it (the GUI form of "starts automatically once configuration is set").
 func (b *Bindings) SaveSettings(next config.Settings) (SaveResult, error) {
-	old := b.settings.Get()
-	wasIncomplete := len(b.settings.MissingRequired()) > 0
+	store, _, _ := b.snapshot()
+	old := store.Get()
+	wasIncomplete := len(store.MissingRequired()) > 0
 	if err := config.EnsureNativePathsWritable(next.DownloadEngine, next.DownloadRoot, next.TorrentSessionDir); err != nil {
 		return SaveResult{}, err
 	}
-	if err := b.settings.Save(next); err != nil {
+	if err := store.Save(next); err != nil {
 		return SaveResult{}, err
 	}
-	current := b.settings.Get()
+	current := store.Get()
 	result := SaveResult{Saved: true, RestartRequired: config.RestartRequired(old, current)}
-	if wasIncomplete && len(b.settings.MissingRequired()) == 0 && b.sup.State() == StateStopped {
+	if wasIncomplete && len(store.MissingRequired()) == 0 && b.sup.State() == StateStopped {
 		go func() { _ = b.sup.Start() }()
 		result.AutoStarted = true
 	}
@@ -108,13 +118,15 @@ func (b *Bindings) SaveSettings(next config.Settings) (SaveResult, error) {
 // SettingsSchema returns the settings schema, identical to the HTTP
 // /api/v1/settings/schema items.
 func (b *Bindings) SettingsSchema() []httpapi.SchemaField {
-	return httpapi.SettingsSchema(b.settings)
+	store, _, _ := b.snapshot()
+	return httpapi.SettingsSchema(store)
 }
 
 // MissingRequired lists the required settings still absent; the Settings
 // page banners it and deep-links the Tracker tab.
 func (b *Bindings) MissingRequired() []string {
-	return b.settings.MissingRequired()
+	store, _, _ := b.snapshot()
+	return store.MissingRequired()
 }
 
 // Version reports the server version (composition.Version, ldflags-injected
@@ -187,7 +199,8 @@ func (b *Bindings) OpenPath(kind string) error {
 func (b *Bindings) OpenWebUI() error {
 	address := b.sup.Address()
 	if address == "" {
-		address = b.settings.Get().ListenAddress
+		store, _, _ := b.snapshot()
+		address = store.Get().ListenAddress
 	}
 	_, port, err := net.SplitHostPort(address)
 	if err != nil || port == "" {
@@ -216,21 +229,210 @@ func (b *Bindings) exePath() (string, error) {
 	return os.Executable()
 }
 
+// snapshot returns the current settings store, data dir, and dir source
+// under the same mutex ChangeDataDir commits its swap with. Everything
+// that outlives a single call — the supervisor's CanStart and factory
+// closures, the Wails method handlers — reads the holder through here.
+func (b *Bindings) snapshot() (*config.Store, string, string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.settings, b.dataDir, b.dataDirSource
+}
+
+// settingsPathEnv keeps its historic precedence (spec: Data directory):
+// when set, both serve and the GUI load the settings file it points at;
+// otherwise the file lives at <resolved data dir>/settings.json.
+const settingsPathEnv = config.EnvironmentPrefix + "SETTINGS_PATH"
+
+// settingsPathFor applies that precedence to a data dir. The env var
+// selects the settings file itself, so it keeps winning after a
+// relocation: ChangeDataDir moves the data, never an env-pinned file.
+func settingsPathFor(dir string) string {
+	if p := os.Getenv(settingsPathEnv); strings.TrimSpace(p) != "" {
+		return p
+	}
+	return filepath.Join(dir, "settings.json")
+}
+
 // dataDirInfo returns the injected data dir, resolving lazily when the
 // runner did not inject one.
 func (b *Bindings) dataDirInfo() (string, string) {
-	if b.dataDir != "" {
-		return b.dataDir, b.dataDirSource
+	_, dir, source := b.snapshot()
+	if dir != "" {
+		return dir, source
 	}
 	exe, err := b.exePath()
 	if err != nil {
 		return "", ""
 	}
-	dir, source, err := datadir.Resolve("", exe)
+	dir, source, err = datadir.Resolve("", exe)
 	if err != nil {
 		return "", ""
 	}
 	return dir, source
+}
+
+// ChangeDataDir relocates the data directory to target (spec: Data
+// directory): a running server is stopped first and its prior state
+// remembered; datadir.Relocate moves the contents and writes the
+// data.location pointer atomically (a non-empty target is refused with the
+// error the dialog shows verbatim; any move failure leaves the source
+// untouched); the settings file's data-dir-anchored paths are remapped to
+// the new location; the store and dir swap commits under the holder mutex;
+// the server restarts only if it was running before.
+//
+// Failure ordering: everything before the swap can only leave the prior
+// state, so resume restarts the remembered server and surfaces the failure
+// verbatim; after the swap the move is committed, so a Start failure is
+// surfaced as-is (the data and pointer already name the new location).
+//
+// The single-instance lock is deliberately not migrated: gui.lock guards
+// this process (its loopback show-listener is process-owned, not
+// path-owned), and a same-volume rename carries the file along with the
+// data anyway — a cross-volume move deletes it with the source. Migrating
+// the lock mid-run would only race a concurrent second launch; a lock file
+// left behind anywhere self-heals via the NotifyURL takeover check on the
+// next boot.
+func (b *Bindings) ChangeDataDir(target string) error {
+	trimmed := strings.TrimSpace(target)
+	if trimmed == "" {
+		return errors.New("new data directory is empty")
+	}
+	to, err := filepath.Abs(trimmed)
+	if err != nil {
+		return err
+	}
+	from, _ := b.dataDirInfo()
+	if from == "" {
+		return errors.New("data directory is not resolvable yet")
+	}
+
+	wasRunning := false
+	switch b.sup.State() {
+	case StateRunning:
+		wasRunning = true
+		if err := b.sup.Stop(); err != nil {
+			return err
+		}
+	case StateStarting, StateStopping:
+		return errors.New("server is transitioning; wait for it to stop or start before changing the data directory")
+	}
+	// resume restores the prior state on any pre-swap failure: the data is
+	// still at from (Relocate refuses or fails without touching it), so
+	// restarting the remembered server against the old store is exactly
+	// where things stood. A resume failure joins the relocation error
+	// verbatim as the first message.
+	resume := func(fail error) error {
+		if wasRunning {
+			if err := b.sup.Start(); err != nil {
+				return errors.Join(fail, err)
+			}
+		}
+		return fail
+	}
+
+	exe, err := b.exePath()
+	if err != nil {
+		return resume(err)
+	}
+	if err := datadir.Relocate(exe, from, to); err != nil {
+		return resume(err)
+	}
+	settingsPath := settingsPathFor(to)
+	if err := remapDataDirPaths(settingsPath, from, to); err != nil {
+		return resume(fmt.Errorf("remap settings paths to %s: %w", to, err))
+	}
+	store, err := config.LoadAt(settingsPath)
+	if err != nil {
+		return resume(err)
+	}
+
+	// Commit: the move is verified and the new store loaded. The holder
+	// swap is the point of no return — the supervisor factory and CanStart
+	// consult it, so the restart below serves the new location.
+	b.mu.Lock()
+	b.settings = store
+	b.dataDir = to
+	b.dataDirSource = "pointer"
+	b.mu.Unlock()
+
+	if wasRunning {
+		return b.sup.Start()
+	}
+	return nil
+}
+
+// remappedPathKeys are the settings fields that may carry a path under the
+// data dir. The GUI itself anchors databasePath, artworkCachePath, and
+// torrentSessionDir there on first start; downloadRoot and the tool paths
+// are user-chosen, and the prefix rewrite only fires when a value actually
+// lives under the old location, so pointing them at the moved copy
+// preserves the user's intent.
+var remappedPathKeys = []string{
+	"databasePath",
+	"downloadRoot",
+	"torrentSessionDir",
+	"artworkCachePath",
+	"subtitleCachePath",
+	"ffprobePath",
+	"ffmpegPath",
+}
+
+// remapDataDirPaths rewrites the settings file's old-dir-anchored path
+// values after a committed move. Literally leaving them would have the
+// restarted server create a fresh database at the abandoned path while the
+// real one sits in the new location. The rewrite is raw JSON (tmp +
+// rename, mirroring the store's own Save) so unknown future keys survive
+// untouched; env-managed values are runtime-only and never read from the
+// file. A missing file is fine (fresh dir, nothing anchored yet); an
+// undecodable one is left for LoadAt to report.
+func remapDataDirPaths(path, from, to string) error {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(b, &fields); err != nil {
+		return nil
+	}
+	changed := false
+	for _, key := range remappedPathKeys {
+		value, ok := fields[key].(string)
+		if !ok {
+			continue
+		}
+		if remapped, ok := remapUnder(value, from, to); ok {
+			fields[key] = remapped
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	out, err := json.MarshalIndent(fields, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, append(out, '\n'), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+// remapUnder moves one path value from under the old dir to the same spot
+// under the new dir; ok reports whether it matched at all.
+func remapUnder(value, from, to string) (string, bool) {
+	if value == from {
+		return to, true
+	}
+	if prefix := from + string(filepath.Separator); strings.HasPrefix(value, prefix) {
+		return filepath.Join(to, strings.TrimPrefix(value, prefix)), true
+	}
+	return "", false
 }
 
 func (b *Bindings) reveal(path string) error {

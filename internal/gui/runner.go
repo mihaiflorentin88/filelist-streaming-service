@@ -15,15 +15,11 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
 
+	"github.com/mihaiflorentin88/filelist-streaming-service/internal/composition"
 	"github.com/mihaiflorentin88/filelist-streaming-service/internal/platform/config"
 	"github.com/mihaiflorentin88/filelist-streaming-service/internal/platform/datadir"
 	"github.com/mihaiflorentin88/filelist-streaming-service/internal/platform/singleinstance"
 )
-
-// settingsPathEnv keeps its historic precedence (spec: Data directory):
-// when set, both serve and the GUI load the settings file it points at;
-// otherwise the file lives at <resolved data dir>/settings.json.
-const settingsPathEnv = config.EnvironmentPrefix + "SETTINGS_PATH"
 
 // Run assembles and runs the Wails desktop app: data-dir resolution,
 // settings load, single-instance forwarding, the supervisor (which anchors
@@ -49,10 +45,7 @@ func Run(opts Options) error {
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return fmt.Errorf("create data dir %s: %w", dir, err)
 	}
-	settingsPath := os.Getenv(settingsPathEnv)
-	if settingsPath == "" {
-		settingsPath = filepath.Join(dir, "settings.json")
-	}
+	settingsPath := settingsPathFor(dir)
 	settings, err := config.LoadAt(settingsPath)
 	if err != nil {
 		return err
@@ -75,31 +68,9 @@ func Run(opts Options) error {
 	}
 	defer closeLog()
 
-	sup := NewSupervisor(SupervisorDeps{
-		Log:      log,
-		Settings: settings,
-		CanStart: func() error {
-			if missing := settings.MissingRequired(); len(missing) > 0 {
-				return fmt.Errorf("required settings missing: %s", strings.Join(missing, ", "))
-			}
-			return nil
-		},
-	})
-	// Anchor-on-start (not at boot): a boot-time Save would mark the
-	// default downloadRoot file-provided and shrink first-run setup from
-	// three missing keys to two. The factory runs only after CanStart
-	// passes — the required keys are genuinely provided by then — so
-	// anchoring the relative defaults and persisting there is truthful, and
-	// the default factory's composition.NewAt reloads the anchored file.
-	baseFactory := sup.appFactory
-	sup.appFactory = func() (appLike, error) {
-		if err := anchorDefaultPaths(settings, dir); err != nil {
-			return nil, err
-		}
-		return baseFactory()
-	}
-	bind := &Bindings{settings: settings, sup: sup, dataDir: dir, dataDirSource: source}
-
+	bind := &Bindings{settings: settings, dataDir: dir, dataDirSource: source}
+	sup := wireSupervisor(bind, log)
+	bind.sup = sup
 	app := application.New(application.Options{
 		Name:   "FileList Streaming",
 		Assets: application.AssetOptions{Handler: assetHandler()},
@@ -160,6 +131,39 @@ func Run(opts Options) error {
 
 	app.Run()
 	return nil
+}
+
+// wireSupervisor builds the GUI supervisor: CanStart checks the bindings'
+// CURRENT store and the factory anchors the relative default paths against
+// the CURRENT data dir before composition.NewAt re-reads the settings file
+// at the store's path. Both closures consult the mutex-guarded holder on
+// every call, so a ChangeDataDir relocation is picked up by the very next
+// Start without rebuilding the supervisor (spec: Data directory).
+func wireSupervisor(bind *Bindings, log *slog.Logger) *Supervisor {
+	sup := NewSupervisor(SupervisorDeps{
+		Log: log,
+		CanStart: func() error {
+			store, _, _ := bind.snapshot()
+			if missing := store.MissingRequired(); len(missing) > 0 {
+				return fmt.Errorf("required settings missing: %s", strings.Join(missing, ", "))
+			}
+			return nil
+		},
+	})
+	// The default appFactory reads deps.Settings, frozen at boot; this
+	// replacement is the one the supervisor ever uses.
+	sup.appFactory = func() (appLike, error) {
+		store, dir, _ := bind.snapshot()
+		if err := anchorDefaultPaths(store, dir); err != nil {
+			return nil, err
+		}
+		app, err := composition.NewAt(store.Path(), log)
+		if err != nil {
+			return nil, err
+		}
+		return appAdapter{app: app}, nil
+	}
+	return sup
 }
 
 // newStateEvent shapes the payload carried by the 'server:state' topic;

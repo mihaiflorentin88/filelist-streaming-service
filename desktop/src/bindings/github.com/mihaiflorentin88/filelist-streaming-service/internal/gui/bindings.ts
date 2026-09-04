@@ -29,7 +29,18 @@ import * as $models from "./models.js";
  * source of truth, never memory.
  */
 export function AutostartStatus(): $CancellablePromise<boolean> {
-    return $Call.ByName("github.com/mihaiflorentin88/filelist-streaming-service/internal/gui.Bindings.AutostartStatus");
+ return $Call.ByName("github.com/mihaiflorentin88/filelist-streaming-service/internal/gui.Bindings.AutostartStatus");
+}
+
+/**
+ * ChangeDataDir relocates the data directory to target: a running server
+ * is stopped first and restarted afterwards, datadir.Relocate moves the
+ * contents and writes the data.location pointer atomically (a non-empty
+ * target is refused; any failure leaves the source untouched), and the
+ * settings store swaps to the new location.
+ */
+export function ChangeDataDir(target: string): $CancellablePromise<void> {
+ return $Call.ByName("github.com/mihaiflorentin88/filelist-streaming-service/internal/gui.Bindings.ChangeDataDir", target);
 }
 
 /**
@@ -37,14 +48,14 @@ export function AutostartStatus(): $CancellablePromise<boolean> {
  * ("flag", "pointer", or "default").
  */
 export function DataDirInfo(): $CancellablePromise<[string, string]> {
-    return $Call.ByName("github.com/mihaiflorentin88/filelist-streaming-service/internal/gui.Bindings.DataDirInfo");
+ return $Call.ByName("github.com/mihaiflorentin88/filelist-streaming-service/internal/gui.Bindings.DataDirInfo");
 }
 
 /**
  * DisableAutostart removes the OS launch-on-boot artifact.
  */
 export function DisableAutostart(): $CancellablePromise<void> {
-    return $Call.ByName("github.com/mihaiflorentin88/filelist-streaming-service/internal/gui.Bindings.DisableAutostart");
+ return $Call.ByName("github.com/mihaiflorentin88/filelist-streaming-service/internal/gui.Bindings.DisableAutostart");
 }
 
 /**
@@ -53,7 +64,7 @@ export function DisableAutostart(): $CancellablePromise<void> {
  * working directory.
  */
 export function EnableAutostart(): $CancellablePromise<void> {
-    return $Call.ByName("github.com/mihaiflorentin88/filelist-streaming-service/internal/gui.Bindings.EnableAutostart");
+ return $Call.ByName("github.com/mihaiflorentin88/filelist-streaming-service/internal/gui.Bindings.EnableAutostart");
 }
 
 /**
@@ -61,7 +72,7 @@ export function EnableAutostart(): $CancellablePromise<void> {
  * them: secrets blanked, Configured flags, settings file path.
  */
 export function LoadSettings(): $CancellablePromise<httpapi$0.SettingsView> {
-    return $Call.ByName("github.com/mihaiflorentin88/filelist-streaming-service/internal/gui.Bindings.LoadSettings");
+ return $Call.ByName("github.com/mihaiflorentin88/filelist-streaming-service/internal/gui.Bindings.LoadSettings");
 }
 
 /**
@@ -69,7 +80,7 @@ export function LoadSettings(): $CancellablePromise<httpapi$0.SettingsView> {
  * page banners it and deep-links the Tracker tab.
  */
 export function MissingRequired(): $CancellablePromise<string[] | null> {
-    return $Call.ByName("github.com/mihaiflorentin88/filelist-streaming-service/internal/gui.Bindings.MissingRequired");
+ return $Call.ByName("github.com/mihaiflorentin88/filelist-streaming-service/internal/gui.Bindings.MissingRequired");
 }
 
 /**
@@ -77,7 +88,7 @@ export function MissingRequired(): $CancellablePromise<string[] | null> {
  * "logs" (<data dir>/logs) or "data" (the data dir itself).
  */
 export function OpenPath(kind: string): $CancellablePromise<void> {
-    return $Call.ByName("github.com/mihaiflorentin88/filelist-streaming-service/internal/gui.Bindings.OpenPath", kind);
+ return $Call.ByName("github.com/mihaiflorentin88/filelist-streaming-service/internal/gui.Bindings.OpenPath", kind);
 }
 
 /**
@@ -86,7 +97,7 @@ export function OpenPath(kind: string): $CancellablePromise<void> {
  * fixed: the web UI is this machine's window onto the same server.
  */
 export function OpenWebUI(): $CancellablePromise<void> {
-    return $Call.ByName("github.com/mihaiflorentin88/filelist-streaming-service/internal/gui.Bindings.OpenWebUI");
+ return $Call.ByName("github.com/mihaiflorentin88/filelist-streaming-service/internal/gui.Bindings.OpenWebUI");
 }
 
 /**
@@ -94,14 +105,14 @@ export function OpenWebUI(): $CancellablePromise<void> {
  * inject quitFn (the wails app's Quit) to run its own teardown instead.
  */
 export function Quit(): $CancellablePromise<void> {
-    return $Call.ByName("github.com/mihaiflorentin88/filelist-streaming-service/internal/gui.Bindings.Quit");
+ return $Call.ByName("github.com/mihaiflorentin88/filelist-streaming-service/internal/gui.Bindings.Quit");
 }
 
 /**
  * RestartServer applies restart-required settings: Stop then Start.
  */
 export function RestartServer(): $CancellablePromise<void> {
-    return $Call.ByName("github.com/mihaiflorentin88/filelist-streaming-service/internal/gui.Bindings.RestartServer");
+ return $Call.ByName("github.com/mihaiflorentin88/filelist-streaming-service/internal/gui.Bindings.RestartServer");
 }
 
 /**
@@ -111,7 +122,7 @@ export function RestartServer(): $CancellablePromise<void> {
  * it (the GUI form of "starts automatically once configuration is set").
  */
 export function SaveSettings(next: config$0.Settings): $CancellablePromise<$models.SaveResult> {
-    return $Call.ByName("github.com/mihaiflorentin88/filelist-streaming-service/internal/gui.Bindings.SaveSettings", next);
+ return $Call.ByName("github.com/mihaiflorentin88/filelist-streaming-service/internal/gui.Bindings.SaveSettings", next);
 }
 
 /**
@@ -119,7 +130,7 @@ export function SaveSettings(next: config$0.Settings): $CancellablePromise<$mode
  * the last 'server:state' event.
  */
 export function ServerState(): $CancellablePromise<$models.StateEvent> {
-    return $Call.ByName("github.com/mihaiflorentin88/filelist-streaming-service/internal/gui.Bindings.ServerState");
+ return $Call.ByName("github.com/mihaiflorentin88/filelist-streaming-service/internal/gui.Bindings.ServerState");
 }
 
 /**
@@ -127,7 +138,7 @@ export function ServerState(): $CancellablePromise<$models.StateEvent> {
  * /api/v1/settings/schema items.
  */
 export function SettingsSchema(): $CancellablePromise<httpapi$0.SchemaField[] | null> {
-    return $Call.ByName("github.com/mihaiflorentin88/filelist-streaming-service/internal/gui.Bindings.SettingsSchema");
+ return $Call.ByName("github.com/mihaiflorentin88/filelist-streaming-service/internal/gui.Bindings.SettingsSchema");
 }
 
 /**
@@ -135,14 +146,14 @@ export function SettingsSchema(): $CancellablePromise<httpapi$0.SchemaField[] | 
  * missing; that shows setup, not failure).
  */
 export function StartServer(): $CancellablePromise<void> {
-    return $Call.ByName("github.com/mihaiflorentin88/filelist-streaming-service/internal/gui.Bindings.StartServer");
+ return $Call.ByName("github.com/mihaiflorentin88/filelist-streaming-service/internal/gui.Bindings.StartServer");
 }
 
 /**
  * StopServer gracefully shuts the running server down.
  */
 export function StopServer(): $CancellablePromise<void> {
-    return $Call.ByName("github.com/mihaiflorentin88/filelist-streaming-service/internal/gui.Bindings.StopServer");
+ return $Call.ByName("github.com/mihaiflorentin88/filelist-streaming-service/internal/gui.Bindings.StopServer");
 }
 
 /**
@@ -150,5 +161,5 @@ export function StopServer(): $CancellablePromise<void> {
  * in release builds).
  */
 export function Version(): $CancellablePromise<string> {
-    return $Call.ByName("github.com/mihaiflorentin88/filelist-streaming-service/internal/gui.Bindings.Version");
+ return $Call.ByName("github.com/mihaiflorentin88/filelist-streaming-service/internal/gui.Bindings.Version");
 }
