@@ -2,6 +2,7 @@ import { render } from 'preact';
 import { act } from 'preact/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../App';
+import { configureSharedApi } from '@filelist/web/shared-api';
 import { seedServerState, useServerState } from './state';
 
 // The Wails runtime is mocked at the module boundary: the fake records
@@ -43,10 +44,11 @@ vi.mock('../bindings/github.com/mihaiflorentin88/filelist-streaming-service/inte
   StartServer: vi.fn(),
   StopServer: vi.fn(),
   Version: vi.fn().mockResolvedValue(''),
+  ServerState: vi.fn().mockRejectedValue(new Error('offline')),
 }));
 
 vi.mock('@filelist/web/shared-api', () => ({
-  configureSharedApi: () => { },
+  configureSharedApi: vi.fn(),
   sharedApi: () => ({ downloads: async () => ({ items: [] }) }),
 }));
 
@@ -125,5 +127,32 @@ describe('shell chrome', () => {
     const host = await mount(<App />);
     const labels = Array.from(host.querySelectorAll('.shell-nav button')).map(button => button.textContent?.trim());
     expect(labels).toEqual(['Server', 'Downloads', 'Jobs', 'Settings']);
+  });
+});
+
+// Boot wiring lives in main.tsx and must be exercised INSIDE a test, with
+// the #app host already in place: a static import would run main.tsx's
+// module body at file load, before any test controls the DOM — so this
+// dynamic import is the boundary under test (deliberate module-load
+// coverage, not a runtime-resolved module).
+// What it pins: the shared API points at the app origin before the first
+// render, and lifecycle events never re-point it — the running event's
+// loopback address is display-only, and using it as an API origin would
+// cross origins from the wails:// webview and be blocked.
+describe('boot wiring', () => {
+  it('sets the shared API origin once at boot, to the app origin', async () => {
+    const app = document.createElement('div');
+    app.id = 'app';
+    document.body.appendChild(app);
+    await import('../main');
+    const { promise, resolve } = Promise.withResolvers<void>();
+    setTimeout(resolve, 0);
+    await act(async () => { await promise });
+
+    expect(configureSharedApi).toHaveBeenCalledWith(location.origin);
+    expect(configureSharedApi).toHaveBeenCalledTimes(1);
+
+    await act(async () => { fakeEvents.emit('server:state', { state: 'running', address: '127.0.0.1:8097' }) });
+    expect(configureSharedApi).toHaveBeenCalledTimes(1);
   });
 });

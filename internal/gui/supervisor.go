@@ -135,6 +135,19 @@ func (s *Supervisor) Address() string {
 	return s.address
 }
 
+// RunningAddress reports the dialable listen address while the server is
+// running. ok is false in every other phase — including after a stop,
+// where Address keeps reporting the most recent run — so callers such as
+// the asset-server proxy can distinguish "no server" from a stale address.
+func (s *Supervisor) RunningAddress() (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state != StateRunning || s.address == "" {
+		return "", false
+	}
+	return s.address, true
+}
+
 // transition commits a state change and returns the callback to fire.
 // Callers must hold the lock and fire the returned callback after
 // unlocking.

@@ -18,9 +18,9 @@ export function isStateEvent(value: unknown): value is StateEvent {
   return typeof state === 'string' && state in IS_SERVER_STATE;
 }
 
-// Boot-time wiring for the shared components' API origin. The loopback
-// default stands in until Task 6's bootstrap replaces it with the
-// supervisor's actual address carried by the state event.
+// Boot-time wiring for the shared components' API origin. The desktop's
+// main.tsx points it at the app origin (proxied same-origin) before the
+// first render; the web client keeps location.origin.
 export function setServerOrigin(origin: string): void { configureSharedApi(origin) }
 
 let seeded: StateEvent = { state: 'stopped' };

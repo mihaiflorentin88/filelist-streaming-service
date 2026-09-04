@@ -15,6 +15,14 @@ import (
 //go:embed all:static
 var Static embed.FS
 
+// appIcon is the macOS dock / Linux taskbar icon (PNG bytes) applied via
+// the wails Options.Icon on raw runs. It is a committed copy of build/
+// appicon.png because //go:embed cannot reach outside this package's
+// directory; assets_test.go guards the two against drift.
+//
+//go:embed assets/appicon.png
+var appIcon []byte
+
 // TrayIcons holds the generated tray state icons (tools/make_tray_icons.py
 // output). Embed-only, so the linux/arm build — which skips the Wails tray —
 // still compiles unchanged.

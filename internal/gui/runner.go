@@ -72,8 +72,14 @@ func Run(opts Options) error {
 	sup := wireSupervisor(bind, log)
 	bind.sup = sup
 	app := application.New(application.Options{
-		Name:   "FileList Streaming",
-		Assets: application.AssetOptions{Handler: assetHandler()},
+		Name: "FileList Streaming",
+		// Dock/taskbar icon for raw runs (make package-darwin stamps the
+		// .app bundle's own icon; this covers `go run ./cmd/server gui`).
+		// Options.Icon — not SetIcon: the framework applies it during
+		// startup, while a direct SetIcon call would no-op because the
+		// platform impl only exists once Run starts.
+		Icon:   appIcon,
+		Assets: application.AssetOptions{Handler: newServerProxy(assetHandler(), sup.RunningAddress)},
 		Services: []application.Service{
 			application.NewService(bind),
 		},
