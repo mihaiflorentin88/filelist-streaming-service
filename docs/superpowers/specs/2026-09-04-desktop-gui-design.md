@@ -199,6 +199,17 @@ default browser — playback stays on the surfaces built for it (browser,
 TV). With the server stopped the page shows a "start the server to see
 downloads" empty state.
 
+**Reuse boundary:** only leaf content components are shared — `Settings`,
+`Events`, `CacheCoverage`, and `Downloads` with their private card/row
+subcomponents. The webapp's shell never crosses: no left sidebar nav, no
+webapp header, no footer, no hero, no route plumbing. Extraction moves zero
+shell code and the shared modules take no dependency on the webapp shell;
+the webapp keeps rendering its own chrome around them, and the desktop app
+wraps them in its own shell (GUI sidebar + status header) only. A vitest
+guard renders each shared component and asserts the output contains no
+`nav`/sidebar/header/footer elements, so a future refactor cannot leak
+webapp chrome into the GUI silently.
+
 Motion stays minimal and action-driven (state changes animate ≤200 ms,
 ease-out; no decorative loops), per the webapp's existing restrained style.
 
@@ -346,8 +357,9 @@ receives is the same single artifact desktop users get.
   button/label wiring against supervisor events; autostart toggle read-back;
   stopped-server states for Test/Maintenance and the downloads empty state;
   missing-settings banner; downloads page plumbing (poll + reconcile +
-  transfer actions) against a mocked API, and the `web/downloads.tsx`
-  extraction keeping the component's props contract intact.
+  transfer actions) against a mocked API; the `web/downloads.tsx` extraction
+  keeping the component's props contract intact; and the reuse-boundary
+  guard — each shared component renders no webapp nav, header, or footer.
 - **Regression:** existing `make check` stays green; `serve` behavior covered
   by current tests must not change; the webapp with the re-imported
   `Downloads` component renders identically (existing webapp tests cover the
