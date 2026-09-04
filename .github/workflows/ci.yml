@@ -25,6 +25,16 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      # Mirrors the Makefile `build` comment: the cgo GUI packages (internal/gui
+      # via wails3) need gtk3/webkit2gtk-4.1 headers to compile on linux. This
+      # step is CI-only — it fails on a macOS host, where WebKit/GTK come from
+      # the system/Xcode SDKs instead.
+      - name: Install WebKit/GTK dev packages (GUI cgo)
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+      # wails3 (v3.0.0-beta.16, matches go.mod github.com/wailsapp/wails/v3)
+      # drives `make build` (icons + wails3 build task); Makefile WAILS3 var.
+      - name: Install wails3
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.16
       - name: Unit tests
         run: go test -race ./...
       - name: Vet
@@ -47,6 +57,9 @@ jobs:
         run: npm ci
       - name: Client unit tests
         run: npm run test:clients
+      # Desktop GUI suite (vitest, @filelist/desktop workspace).
+      - name: Desktop unit tests
+        run: npm run test -w @filelist/desktop
       - name: Test and build browser and TV clients
         run: npm run build
       - name: Package and validate unsigned Apps2Samsung WGT

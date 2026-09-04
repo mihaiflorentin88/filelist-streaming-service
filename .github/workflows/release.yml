@@ -68,37 +68,69 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Linux GUI cross-builds: verbatim wails-cross docker invocation from
+          # the Makefile (build-arm64 / build-all linux lines,
+          # build/docker/Dockerfile.cross, -tags production,gtk3).
           - target: linux-amd64
             goos: linux
             goarch: amd64
             suffix: ''
             format: tar
+            runner: ubuntu-latest
+            method: docker-cross
           - target: linux-arm64
             goos: linux
             goarch: arm64
             suffix: ''
             format: tar
+            runner: ubuntu-latest
+            method: docker-cross
+          # Pure headless (Makefile build-all last line): CGO_ENABLED=0,
+          # internal/gui compiles to the ErrNoDisplay fallback via build tags.
           - target: linux-armv7
             goos: linux
             goarch: arm
             goarm: '7'
             suffix: ''
             format: tar
+            runner: ubuntu-latest
+            method: pure
+          # Windows: cgo-free on the ubuntu runner (CGO_ENABLED=0 in
+          # build/windows/Taskfile.yml); icon/version .syso + -H windowsgui
+          # come from the windows:build task (Makefile build-all windows lines).
           - target: windows-amd64
             goos: windows
             goarch: amd64
             suffix: .exe
             format: zip
+            runner: ubuntu-latest
+            method: windows
+          - target: windows-arm64
+            goos: windows
+            goarch: arm64
+            suffix: .exe
+            format: zip
+            runner: ubuntu-latest
+            method: windows
+          # macOS: native cgo builds on the macOS runner (wails3 task
+          # darwin:build; Makefile build-all darwin lines). The amd64 slice
+          # cross-compiles via clang -arch x86_64 (CGO_FLAGS in
+          # build/darwin/Taskfile.yml).
           - target: darwin-amd64
             goos: darwin
             goarch: amd64
             suffix: ''
             format: tar
+            runner: macos-latest
+            method: darwin-native
+            cgo_flags: -arch x86_64 -mmacosx-version-min=11.0
           - target: darwin-arm64
             goos: darwin
             goarch: arm64
             suffix: ''
             format: tar
+            runner: macos-latest
+            method: darwin-native
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -111,18 +143,111 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - name: Build ${{ matrix.target }}
+      # wails3 (v3.0.0-beta.16, matches go.mod) drives the windows/darwin
+      # task builds and the linux docker-mounts; Makefile WAILS3 var.
+      - name: Install wails3
+        if: matrix.method != 'pure'
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.16
+      # QEMU/binfmt for the arm64 wails-cross image on the amd64 ubuntu runner
+      # (the Makefile ran these on an arm64 host; CI hosts are amd64).
+      - uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
+        if: matrix.method == 'docker-cross' && matrix.goarch == 'arm64'
+      # Desktop GUI assets -> internal/gui/static, embedded into every GUI
+      # binary (Makefile desktop-assets prerequisite of build/build-all).
+      - name: Build desktop GUI assets (make desktop-assets)
+        if: matrix.method == 'windows' || matrix.method == 'docker-cross'
+        run: make desktop-assets
+      # GitHub macOS runners have no Docker, so build the desktop GUI assets
+      # directly with the same npm script the dockerized desktop-assets target
+      # runs (npm run build:desktop -> internal/gui/static).
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        if: matrix.method == 'darwin-native'
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Build desktop GUI assets (npm run build:desktop)
+        if: matrix.method == 'darwin-native'
+        run: |
+          npm ci
+          npm run build:desktop
+      # wails-cross image (make wails-cross: `wails3 task setup:docker` plus,
+      # for the amd64 slice, the `wails-cross:amd64` variant image). On this
+      # amd64 CI host the arm64 image is built (and later run) under emulation
+      # with --platform linux/arm64 — same shape as the Makefile's own
+      # `--platform linux/amd64` line for the amd64 image on arm64 hosts.
+      - name: Build wails-cross image (make wails-cross)
+        if: matrix.method == 'docker-cross'
+        run: |
+          if [[ "${{ matrix.goarch }}" == "arm64" ]]; then
+            docker build --platform linux/arm64 -t wails-cross -f build/docker/Dockerfile.cross build/docker/
+          else
+            wails3 task setup:docker
+            docker build --platform linux/amd64 -t wails-cross:amd64 -f build/docker/Dockerfile.cross build/docker/
+          fi
+      # Windows: verbatim `wails3 task windows:build` from the Makefile
+      # build-all windows lines. The task (build/windows/Taskfile.yml) is
+      # cgo-free (CGO_ENABLED=0) and adds the icon/version .syso plus the
+      # -H windowsgui linker flag.
+      - name: Build ${{ matrix.target }} (wails3 task windows:build)
+        if: matrix.method == 'windows'
+        run: |
+          version="$(tr -d '[:space:]' < VERSION)"
+          mkdir -p staging
+          wails3 task windows:build ARCH=${{ matrix.goarch }} OUTPUT="staging/filelist-streaming${{ matrix.suffix }}" GO_LDFLAGS="-s -w -X github.com/mihaiflorentin88/filelist-streaming-service/internal/composition.Version=${version}"
+      # macOS: verbatim `wails3 task darwin:build` from the Makefile build-all
+      # darwin lines; the amd64 slice cross-compiles via CGO_FLAGS
+      # (-arch x86_64 -mmacosx-version-min=11.0, build/darwin/Taskfile.yml).
+      - name: Build ${{ matrix.target }} (wails3 task darwin:build)
+        if: matrix.method == 'darwin-native'
+        env:
+          CGO_FLAGS_X: ${{ matrix.cgo_flags }}
+        run: |
+          version="$(tr -d '[:space:]' < VERSION)"
+          mkdir -p staging
+          args=(darwin:build "ARCH=${{ matrix.goarch }}" "OUTPUT=staging/filelist-streaming" "GO_LDFLAGS=-s -w -X github.com/mihaiflorentin88/filelist-streaming-service/internal/composition.Version=${version}")
+          if [[ -n "${CGO_FLAGS_X}" ]]; then args+=("CGO_FLAGS=${CGO_FLAGS_X}"); fi
+          wails3 task "${args[@]}"
+      # Linux GUI: verbatim docker invocation from the Makefile build-arm64 /
+      # build-all linux lines (wails-cross image, -tags production,gtk3,
+      # native gcc against gtk3/webkit2gtk-4.1 inside the container). The
+      # amd64 slice uses the wails-cross:amd64 image with --platform
+      # linux/amd64 exactly as in build-all.
+      - name: Build ${{ matrix.target }} (wails-cross docker)
+        if: matrix.method == 'docker-cross'
+        run: |
+          version="$(tr -d '[:space:]' < VERSION)"
+          mkdir -p staging
+          read -ra mounts <<<"$(wails3 tool docker-mounts)"
+          docker_opts=(--rm)
+          image='wails-cross'
+          if [[ "${{ matrix.goarch }}" == "amd64" ]]; then
+            docker_opts+=(--platform linux/amd64)
+            image='wails-cross:amd64'
+          elif [[ "${{ matrix.goarch }}" == "arm64" ]]; then
+            docker_opts+=(--platform linux/arm64)
+          fi
+          docker run "${docker_opts[@]}" -v "$(pwd):/app" -w /app "${mounts[@]}" \
+            -v "filelist-go-build-linux-${{ matrix.goarch }}:/root/.cache/go-build" \
+            -e CGO_ENABLED=1 -e GOOS=linux -e "GOARCH=${{ matrix.goarch }}" -e CC=gcc \
+            --entrypoint go "${image}" build \
+            -tags production,gtk3 -trimpath -buildvcs=false \
+            -ldflags="-s -w -X github.com/mihaiflorentin88/filelist-streaming-service/internal/composition.Version=${version}" \
+            -o staging/filelist-streaming ./cmd/server
+      # Pure headless (Makefile build-all last line): CGO_ENABLED=0 go build,
+      # no GUI toolchain.
+      - name: Build ${{ matrix.target }} (pure CGO_ENABLED=0)
+        if: matrix.method == 'pure'
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           GOARM: ${{ matrix.goarm }}
           CGO_ENABLED: '0'
-          BINARY_SUFFIX: ${{ matrix.suffix }}
         run: |
           version="$(tr -d '[:space:]' < VERSION)"
           mkdir -p staging
-          go build -trimpath -ldflags="-s -w -X github.com/mihaiflorentin88/filelist-streaming-service/internal/composition.Version=${version}" -o "staging/filelist-streaming${BINARY_SUFFIX}" ./cmd/server
-          cp README.md staging/
+          go build -trimpath -ldflags="-s -w -X github.com/mihaiflorentin88/filelist-streaming-service/internal/composition.Version=${version}" -o "staging/filelist-streaming${{ matrix.suffix }}" ./cmd/server
+      - name: Stage release files
+        run: cp README.md staging/
       - name: Create archive
         env:
           RELEASE_TARGET: ${{ matrix.target }}
@@ -142,10 +267,65 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  # Universal macOS .app: merges the two darwin slices with lipo and bundles
+  # them via wails3 (make build-all darwin lines + make package-darwin's
+  # universal branch: lipo + `wails3 task darwin:package:existing`), then
+  # guards the bundle metadata against VERSION.
+  darwin-app:
+    name: Universal macOS .app bundle
+    needs: servers
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Install wails3
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.16
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-darwin-arm64
+          path: release-arm64
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-darwin-amd64
+          path: release-amd64
+      - name: Merge slices with lipo and package universal .app (make package-darwin)
+        run: |
+          version="$(tr -d '[:space:]' < VERSION)"
+          mkdir -p bin slice-arm64 slice-amd64
+          tar -xzf "release-arm64/filelist-streaming-${version}-darwin-arm64.tar.gz" -C slice-arm64
+          tar -xzf "release-amd64/filelist-streaming-${version}-darwin-amd64.tar.gz" -C slice-amd64
+          lipo -create -output bin/filelist-streaming \
+            slice-arm64/filelist-streaming slice-amd64/filelist-streaming
+          GOCACHE="$(go env GOCACHE)" wails3 task darwin:package:existing BUNDLE_NAME="FileList Streaming"
+      # Version guard: the bundle/plist and the windows info.json must carry
+      # the release VERSION, else fail the job (no silently stale metadata).
+      - name: Verify bundle versions match VERSION
+        run: |
+          version="$(tr -d '[:space:]' < VERSION)"
+          plist="bin/FileList Streaming.app/Contents/Info.plist"
+          test "$version" = "$(plutil -extract CFBundleVersion raw "$plist")"
+          test "$version" = "$(plutil -extract CFBundleShortVersionString raw "$plist")"
+          test "$version" = "$(jq -r '.fixed.file_version' build/windows/info.json)"
+      - name: Zip .app bundle (ditto preserves the ad-hoc signature)
+        run: |
+          version="$(tr -d '[:space:]' < VERSION)"
+          ditto -c -k --keepParent "bin/FileList Streaming.app" "filelist-streaming-${version}-darwin-universal.zip"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-darwin-universal
+          path: filelist-streaming-*
+          if-no-files-found: error
+          retention-days: 14
+
   publish:
     name: Publish tagged release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [clients, servers]
+    needs: [clients, servers, darwin-app]
     runs-on: ubuntu-latest
     permissions:
       contents: write # Create the GitHub release and upload its assets.
