@@ -90,12 +90,21 @@ func copyVerified(src, dst string, mode os.FileMode) error {
 	if err := out.Close(); err != nil {
 		return err
 	}
-	in.Seek(0, io.SeekStart)
-	h2 := sha256.New()
-	if _, err := io.Copy(h2, in); err != nil {
+	// Verify the copy: re-open dst and compare its digest against the
+	// source digest captured during the write.
+	vf, err := os.Open(dst)
+	if err != nil {
+		os.Remove(dst)
 		return err
 	}
-	if !bytesEqual(h.Sum(nil), h2.Sum(nil)) {
+	hDst := sha256.New()
+	_, err = io.Copy(hDst, vf)
+	vf.Close()
+	if err != nil {
+		os.Remove(dst)
+		return err
+	}
+	if !bytesEqual(h.Sum(nil), hDst.Sum(nil)) {
 		os.Remove(dst)
 		return fmt.Errorf("verification failed copying %s", src)
 	}

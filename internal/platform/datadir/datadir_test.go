@@ -1,6 +1,7 @@
 package datadir
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -63,5 +64,37 @@ func TestRelocateSameVolumeMovesAndWritesPointer(t *testing.T) {
 	}
 	if got, _, _ := Resolve("", exe); got != to {
 		t.Fatalf("pointer must name the new dir, got %q", got)
+	}
+}
+
+func TestCopyVerifiedProducesIdenticalBytes(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src.bin")
+	payload := bytes.Repeat([]byte("datadir-verify-payload\n"), 4096)
+	os.WriteFile(src, payload, 0o640)
+	dst := filepath.Join(root, "dst.bin")
+	if err := copyVerified(src, dst, 0o640); err != nil {
+		t.Fatalf("copyVerified: %v", err)
+	}
+	got, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatalf("read dst: %v", err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatal("dst bytes must equal source bytes")
+	}
+}
+
+func TestCopyVerifiedFailureLeavesNoValidDst(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src.bin")
+	os.WriteFile(src, []byte("payload"), 0o640)
+	dst := filepath.Join(root, "dst-dir") // a directory: opening dst for writing must fail
+	os.MkdirAll(dst, 0o750)
+	if err := copyVerified(src, dst, 0o640); err == nil {
+		t.Fatal("copyVerified must fail when dst cannot be written")
+	}
+	if info, err := os.Stat(dst); err != nil || !info.IsDir() {
+		t.Fatal("failed copy must not leave a valid dst file")
 	}
 }
