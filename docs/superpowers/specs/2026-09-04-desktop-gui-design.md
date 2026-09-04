@@ -163,8 +163,8 @@ a transport that works while the server is stopped:
 Window 1100×720, minimum 960×600. Extends the existing design language —
 `web/style.css` tokens (`--panel #101c24`, `--teal #59d6ad`, ink `#071014`,
 system font stack) — so desktop, web, and TV read as one product. Sidebar
-navigation: **Server**, **Downloads**, **Settings** (same sidebar idiom as
-the webapp).
+navigation: **Server**, **Downloads**, **Jobs**, **Settings** (same sidebar
+idiom as the webapp).
 
 **Header (persistent):** app name + status pill — colored dot (running teal,
 stopped gray, failed red) + label + address when running. Visible on every
@@ -199,8 +199,16 @@ default browser — playback stays on the surfaces built for it (browser,
 TV). With the server stopped the page shows a "start the server to see
 downloads" empty state.
 
+**Jobs page:** the webapp's Jobs view, reused. The `Jobs` component (inline
+in `web/src.tsx`, web/src.tsx:672 — search/state/kind filters, pagination,
+retry, and a detail overlay with live `job.log` streaming) moves to an
+exported `web/jobs.tsx`; `src.tsx` imports it back unchanged. The desktop
+page renders it against the loopback server; the webapp-only route callbacks
+(`deepJobId` deep links) go unused there. With the server stopped it shows
+the same "start the server" empty state as Downloads.
+
 **Reuse boundary:** only leaf content components are shared — `Settings`,
-`Events`, `CacheCoverage`, and `Downloads` with their private card/row
+`Events`, `CacheCoverage`, `Downloads`, and `Jobs` with their private card/row
 subcomponents. The webapp's shell never crosses: no left sidebar nav, no
 webapp header, no footer, no hero, no route plumbing. Extraction moves zero
 shell code and the shared modules take no dependency on the webapp shell;
@@ -209,6 +217,12 @@ wraps them in its own shell (GUI sidebar + status header) only. A vitest
 guard renders each shared component and asserts the output contains no
 `nav`/sidebar/header/footer elements, so a future refactor cannot leak
 webapp chrome into the GUI silently.
+
+Shared components also take the API origin as configuration instead of
+building clients from `new API(location.origin)`: the webapp keeps its own
+origin, while the desktop app points every shared component — including the
+jobs log `EventSource` — at `http://127.0.0.1:<port>`. Without this, a
+Wails webview's custom-scheme origin would silently miss the server.
 
 Motion stays minimal and action-driven (state changes animate ≤200 ms,
 ease-out; no decorative loops), per the webapp's existing restrained style.
@@ -355,11 +369,12 @@ receives is the same single artifact desktop users get.
   never silently serves).
 - **Frontend (vitest, `web/` conventions):** status pill states; Server page
   button/label wiring against supervisor events; autostart toggle read-back;
-  stopped-server states for Test/Maintenance and the downloads empty state;
-  missing-settings banner; downloads page plumbing (poll + reconcile +
-  transfer actions) against a mocked API; the `web/downloads.tsx` extraction
-  keeping the component's props contract intact; and the reuse-boundary
-  guard — each shared component renders no webapp nav, header, or footer.
+  stopped-server states for Test/Maintenance, Downloads, and Jobs;
+  missing-settings banner; downloads and jobs page plumbing (poll, filters,
+  pagination, retry, live logs) against a mocked API with a parametrized
+  origin; the `web/downloads.tsx` / `web/jobs.tsx` extractions keeping the
+  components' props contracts intact; and the reuse-boundary guard — each
+  shared component renders no webapp nav, header, or footer.
 - **Regression:** existing `make check` stays green; `serve` behavior covered
   by current tests must not change; the webapp with the re-imported
   `Downloads` component renders identically (existing webapp tests cover the
