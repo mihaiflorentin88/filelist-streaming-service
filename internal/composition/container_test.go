@@ -2,17 +2,21 @@ package composition
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/mihaiflorentin88/filelist-streaming-service/internal/application/portal"
+	"github.com/mihaiflorentin88/filelist-streaming-service/internal/application/updates"
 	"github.com/mihaiflorentin88/filelist-streaming-service/internal/platform/config"
 )
 
@@ -175,6 +179,55 @@ func TestListenAndServeTriggersStartupUpdateAtReadiness(t *testing.T) {
 	}
 	if err := <-serveDone; err != nil && !errors.Is(err, http.ErrServerClosed) {
 		t.Fatalf("serve error: %v", err)
+	}
+}
+
+// TestAssembledAppServesPortalAndUpdateRoutes pins the handler wiring:
+// the assembled app's HTTP surface mounts the integration routes backed
+// by the very hub and coordinator that Close joins.
+func TestAssembledAppServesPortalAndUpdateRoutes(t *testing.T) {
+	app := newTestApp(t)
+	server := httptest.NewServer(app.Server.Handler)
+	t.Cleanup(server.Close)
+
+	res, err := http.Get(server.URL + "/api/v1/portal/state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(res.Body)
+	res.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("GET /api/v1/portal/state = %d, body %s", res.StatusCode, body)
+	}
+	var snapshot portal.Snapshot
+	if err := json.Unmarshal(body, &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.AccountsEnabled || snapshot.AdsEnabled || snapshot.Donor || snapshot.Links == nil {
+		t.Fatalf("absent gates must hide the surfaces with non-null links: %+v", snapshot)
+	}
+
+	res, err = http.Get(server.URL + "/api/v1/updates/current")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err = io.ReadAll(res.Body)
+	res.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("GET /api/v1/updates/current = %d, body %s", res.StatusCode, body)
+	}
+	var status updates.Status
+	if err := json.Unmarshal(body, &status); err != nil {
+		t.Fatal(err)
+	}
+	if status.CurrentVersion != Version || status.ReleasesURL == "" {
+		t.Fatalf("current status = %+v, want the build identity and a releases URL", status)
 	}
 }
 

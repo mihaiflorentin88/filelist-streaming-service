@@ -23,6 +23,7 @@ import (
 
 	"github.com/mihaiflorentin88/filelist-streaming-service/internal/adapters/sqlite"
 	"github.com/mihaiflorentin88/filelist-streaming-service/internal/application"
+	"github.com/mihaiflorentin88/filelist-streaming-service/internal/application/portal"
 	"github.com/mihaiflorentin88/filelist-streaming-service/internal/domain"
 	"github.com/mihaiflorentin88/filelist-streaming-service/internal/platform/config"
 )
@@ -48,10 +49,18 @@ type API struct {
 	settings *config.Store
 	log      *slog.Logger
 	version  string
+	// portal is the integration hub and updates the self-update
+	// coordinator. Both are optional: composition wires them, and the
+	// integration routes are only mounted when present.
+	portal  *portal.Hub
+	updates Coordinator
 }
 
-func New(service *application.Service, settings *config.Store, log *slog.Logger, version string) http.Handler {
+func New(service *application.Service, settings *config.Store, log *slog.Logger, version string, opts ...Option) http.Handler {
 	a := &API{service: service, settings: settings, log: log, version: version}
+	for _, opt := range opts {
+		opt(a)
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/system/info", a.info)
 	mux.HandleFunc("GET /api/v1/settings", a.getSettings)
@@ -83,6 +92,19 @@ func New(service *application.Service, settings *config.Store, log *slog.Logger,
 	mux.HandleFunc("GET /api/v1/jobs/{id}/logs", a.jobLogs)
 	mux.HandleFunc("POST /api/v1/jobs/{id}/retry", a.retryJob)
 	mux.HandleFunc("GET /api/v1/events", a.events)
+	if a.portal != nil {
+		mux.HandleFunc("GET /api/v1/portal/state", a.portalState)
+		mux.HandleFunc("GET /api/v1/portal/promotions", a.portalPromotions)
+		mux.HandleFunc("GET /api/v1/portal/promotions/{provider}/{id}/click", a.portalClick)
+		mux.HandleFunc("POST /api/v1/portal/session", a.portalLogin)
+		mux.HandleFunc("POST /api/v1/portal/session/register", a.portalRegister)
+		mux.HandleFunc("GET /api/v1/portal/session/me", a.portalMe)
+	}
+	if a.updates != nil {
+		mux.HandleFunc("GET /api/v1/updates/current", a.updatesCurrent)
+		mux.HandleFunc("POST /api/v1/updates/check", a.updatesCheck)
+		mux.HandleFunc("POST /api/v1/updates/apply", a.updatesApply)
+	}
 	mux.HandleFunc("GET /api/v1/downloads/{id}/subtitles", a.searchSubtitles)
 	mux.HandleFunc("POST /api/v1/downloads/{id}/subtitles/prepare", a.prepareSubtitle)
 	mux.HandleFunc("GET /api/v1/subtitles/{asset}", a.subtitle)

@@ -1033,6 +1033,234 @@ paths:
           "206": { description: Range headers },
           "416": { $ref: "#/components/responses/Problem" },
         }
+  /portal/state:
+    get:
+      {
+        operationId: getPortalState,
+        description: Cached collapsed capabilities, donor state, and ordered project links. Served from the integration hub's cache with zero outbound calls; inactive features read false/empty arrays, never null,
+        responses:
+          {
+            "200":
+              {
+                description: Integration snapshot,
+                content:
+                  {
+                    application/json:
+                      { schema: { $ref: "#/components/schemas/PortalSnapshot" } },
+                  },
+              },
+          },
+      }
+  /portal/promotions:
+    get:
+      operationId: getPortalPromotions
+      parameters:
+        [
+          {
+            in: query,
+            name: count,
+            schema: { type: integer, minimum: 0, maximum: 50 },
+            description: Maximum number of creatives to deliver,
+          },
+        ]
+      responses:
+        {
+          "200":
+            {
+              description: Up to count creatives from the hub's live delivery; a hidden or failed slot is an empty array, never a fabricated creative,
+              content:
+                {
+                  application/json:
+                    {
+                      schema:
+                        {
+                          type: array,
+                          items: { $ref: "#/components/schemas/PortalPromotion" },
+                        },
+                    },
+                },
+            },
+        }
+  /portal/promotions/{provider}/{id}/click:
+    get:
+      operationId: clickPortalPromotion
+      description: Resolves upstream tracking and redirects to the validated destination without exposing the upstream platform URL,
+      parameters:
+        [
+          { in: path, name: provider, required: true, schema: { type: string } },
+          { in: path, name: id, required: true, schema: { type: string } },
+        ]
+      responses:
+        {
+          "302":
+            {
+              description: Redirect to the validated http(s) destination; there is no unsafe or open-redirect fallback,
+              headers:
+                {
+                  Location:
+                    { schema: { type: string, format: uri }, description: Validated absolute http(s) destination },
+                },
+            },
+          "502": { $ref: "#/components/responses/Problem" },
+          "503":
+            {
+              $ref: "#/components/responses/Problem",
+              description: The promotion slot is hidden or the integration is unreachable,
+            },
+        }
+  /portal/session:
+    post:
+      operationId: signInPortal
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/PortalCredentials" } },
+            },
+        }
+      responses:
+        {
+          "200":
+            {
+              description: Session with token and expiry,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/PortalSession" } },
+                },
+            },
+          "400":
+            {
+              $ref: "#/components/responses/Problem",
+              description: Credential rejection stays a form error, never an outage,
+            },
+          "503":
+            {
+              $ref: "#/components/responses/Problem",
+              description: The account surface is hidden (integration outage),
+            },
+        }
+  /portal/session/register:
+    post:
+      operationId: registerPortalAccount
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/PortalRegistration" } },
+            },
+        }
+      responses:
+        {
+          "201":
+            {
+              description: Account created with an empty body and no token; registration does not imply login — clients explicitly sign in afterwards,
+            },
+          "400": { $ref: "#/components/responses/Problem" },
+          "503": { $ref: "#/components/responses/Problem" },
+        }
+  /portal/session/me:
+    get:
+      {
+        operationId: getPortalMe,
+        description: The only portal endpoint that forwards the Authorization bearer upstream; an invalid or expired session answers 401 so clients clear stored identity,
+        security: [{ portalBearer: [] }],
+        responses:
+          {
+            "200":
+              {
+                description: Identity,
+                content:
+                  {
+                    application/json:
+                      { schema: { $ref: "#/components/schemas/PortalUser" } },
+                  },
+              },
+            "401": { $ref: "#/components/responses/Problem" },
+            "503": { $ref: "#/components/responses/Problem" },
+          },
+      }
+  /updates/current:
+    get:
+      {
+        operationId: getUpdateCurrent,
+        description: Cached update status served without any disk or network probe,
+        responses:
+          {
+            "200":
+              {
+                description: Current status,
+                content:
+                  {
+                    application/json:
+                      { schema: { $ref: "#/components/schemas/UpdateStatus" } },
+                  },
+              },
+          },
+      }
+  /updates/check:
+    post:
+      operationId: checkForUpdate
+      responses:
+        {
+          "200":
+            {
+              description: Fresh status; a failed fetch is never served as stale availability,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/UpdateStatus" } },
+                },
+            },
+          "502":
+            {
+              $ref: "#/components/responses/Problem",
+              description: Neutral problem — availability was cleared,
+            },
+        }
+  /updates/apply:
+    post:
+      operationId: applyUpdate
+      description: >
+        Requests installation of an available update. Clients confirm the
+        playback-interruption warning before calling. Every update notice is
+        server-only and warns that TV applications update manually, linking
+        to the repository releases page for manual TV-client updates.
+      responses:
+        {
+          "202":
+            {
+              description: Accepted — the operation is owned by the process from acceptance on and survives a client disconnect; the body is flushed before the coordinator proceeds with the handoff,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/UpdateStatus" } },
+                },
+            },
+          "200":
+            {
+              description: Already current — successful no-op,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: "#/components/schemas/UpdateStatus" } },
+                },
+            },
+          "409":
+            {
+              $ref: "#/components/responses/Problem",
+              description: An apply is already in flight, or this installation is manual-only (development or invalid build identity, unsupported platform or flavor, non-writable installation),
+            },
+          "502":
+            {
+              $ref: "#/components/responses/Problem",
+              description: Neutral upstream, verification, or installation problem,
+            },
+        }
 components:
   responses:
     Problem:
@@ -1571,4 +1799,117 @@ components:
             createdAt: { type: string, format: date-time },
             lastUsedAt: { type: string, format: date-time },
           },
+      }
+    PortalLink:
+      {
+        type: object,
+        required: [id, title, url, description],
+        properties:
+          {
+            id: { type: integer, format: int64 },
+            title: { type: string },
+            url: { type: string },
+            description: { type: string },
+          },
+      }
+    PortalSnapshot:
+      {
+        type: object,
+        required: [accountsEnabled, adsEnabled, donor, links],
+        description: "Cached collapsed capabilities. When accounts or promotions are inactive, or their integration fails, the flags read false and arrays are empty — the surfaces disappear without a global warning, and a later successful probe restores them.",
+        properties:
+          {
+            accountsEnabled: { type: boolean },
+            adsEnabled: { type: boolean },
+            donor: { type: boolean, description: A valid donor hides promotions across the household },
+            links:
+              { type: array, items: { $ref: "#/components/schemas/PortalLink" } },
+          },
+      }
+    PortalPromotion:
+      {
+        type: object,
+        required: [id, provider, title, text, image, screenTime],
+        properties:
+          {
+            id: { type: string },
+            provider: { type: string },
+            title: { type: string },
+            text: { type: string, description: Remote content is rendered as text, never HTML },
+            image: { type: string },
+            screenTime: { type: integer, description: Seconds the creative stays visible before advancing },
+          },
+      }
+    PortalCredentials:
+      {
+        type: object,
+        required: [email, password],
+        properties: { email: { type: string }, password: { type: string } },
+      }
+    PortalRegistration:
+      {
+        type: object,
+        required: [email, password],
+        properties:
+          {
+            email: { type: string },
+            password: { type: string },
+            displayName: { type: string },
+          },
+      }
+    PortalSession:
+      {
+        type: object,
+        required: [token, expires_at],
+        properties:
+          {
+            token: { type: string },
+            expires_at: { type: string, format: date-time },
+          },
+      }
+    PortalUser:
+      {
+        type: object,
+        required: [id, email, display_name, role],
+        properties:
+          {
+            id: { type: integer, format: int64 },
+            email: { type: string },
+            display_name: { type: string },
+            role: { type: string },
+          },
+      }
+    UpdateStatus:
+      {
+        type: object,
+        required: [currentVersion, available, releasesUrl, selfUpdate, applying],
+        description: "Updater state. Every update notice is server-only and warns that TV applications update manually, linking to the repository releases page (releasesUrl) for manual TV-client updates. latest, notes, and releasedAt appear only while an update is available. applying is true from acceptance until the handoff finishes; no progress percentage exists.",
+        properties:
+          {
+            currentVersion: { type: string },
+            available: { type: boolean },
+            latest: { type: string },
+            notes: { type: string },
+            releasedAt: { type: string },
+            releasesUrl:
+              {
+                type: string,
+                format: uri,
+                description: Manual-update destination for TV applications,
+              },
+            selfUpdate:
+              {
+                type: boolean,
+                description: False when this installation cannot update itself and stays manual-only,
+              },
+            applying: { type: boolean },
+          },
+      }
+  securitySchemes:
+    portalBearer:
+      {
+        type: http,
+        scheme: bearer,
+        bearerFormat: JWT,
+        description: Portal account JWT issued by POST /portal/session; forwarded only by GET /portal/session/me,
       }

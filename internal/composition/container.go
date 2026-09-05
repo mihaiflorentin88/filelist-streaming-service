@@ -214,7 +214,11 @@ func assemble(settings *config.Store, log *slog.Logger) (*App, error) {
 	go func() { runGroup.Wait(); close(runDone) }()
 	app.runCtx, app.runCancel, app.runDone = runCtx, runCancel, runDone
 
-	handler := httpapi.New(service, settings, log, Version)
+	handler := httpapi.New(
+		service, settings, log, Version,
+		httpapi.WithPortal(hub),
+		httpapi.WithUpdates(app.Updates),
+	)
 	app.Server = &http.Server{Addr: current.ListenAddress, Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 32 << 10}
 	return app, nil
 }

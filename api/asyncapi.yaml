@@ -1,12 +1,62 @@
 asyncapi: 3.0.0
-info: {title: FileList Streaming Events, version: 0.2.1}
+info: {title: FileList Streaming Events, version: 0.3.0}
 servers: {lan: {host: 'server.lan:8097', protocol: http, pathname: /api/v1/events}}
 channels:
   events:
     address: /api/v1/events
     messages:
       event:
-        payload: {type: object, required: [id, kind, createdAt, payload], properties: {id: {type: integer}, kind: {type: string}, createdAt: {type: string, format: date-time}, payload: {type: object}}}
+        # The wire envelope is domain.Event. The payload member is the
+        # JSON-encoded event body as a string: parse the envelope, then
+        # the payload.
+        payload:
+          type: object
+          required: [id, kind, createdAt, payload]
+          properties:
+            id: {type: integer}
+            kind: {type: string}
+            createdAt: {type: string, format: date-time}
+            payload: {type: string, description: JSON-encoded event body; decode the envelope, then the payload string}
+        description: >
+          Any event on the journaled SSE transport (GET /api/v1/events,
+          replayed with Last-Event-ID or `after`). Existing streaming kinds
+          keep their bodies; the integration kinds are portal.state,
+          updates.status, and updates.failed below. Refetch current
+          snapshots on reconnect before displaying replayed availability.
+      portalState:
+        title: portal.state
+        payload: {$ref: '#/components/schemas/eventEnvelope'}
+        description: >
+          kind "portal.state" — the payload string decodes to the portal
+          Snapshot {accountsEnabled, adsEnabled, donor, links} with the
+          exact wire tags; published when a refresh cycle changes the
+          cached snapshot.
+      updatesStatus:
+        title: updates.status
+        payload: {$ref: '#/components/schemas/eventEnvelope'}
+        description: >
+          kind "updates.status" — the payload string decodes to the update
+          Status {currentVersion, available, latest, notes, releasedAt,
+          releasesUrl, selfUpdate, applying}; published when availability
+          changes and after an accepted operation finishes.
+      updatesFailed:
+        title: updates.failed
+        payload: {$ref: '#/components/schemas/eventEnvelope'}
+        description: >
+          kind "updates.failed" — the payload string decodes to
+          {"message": "<neutral text>"}; a failed background operation
+          journals this, then an updates.status snapshot with
+          applying:false.
 operations: {receiveEvents: {action: receive, channel: {$ref: '#/channels/events'}}}
+components:
+  schemas:
+    eventEnvelope:
+      type: object
+      required: [id, kind, createdAt, payload]
+      properties:
+        id: {type: integer}
+        kind: {type: string}
+        createdAt: {type: string, format: date-time}
+        payload: {type: string, description: JSON-encoded event body; parse the envelope, then the payload}
 # Cold connections are live-only. Clients that reconnect with Last-Event-ID or
 # `after` may receive at most 200 journaled events before live delivery.
