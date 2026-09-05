@@ -24,6 +24,8 @@ Prebuilt archives for every supported platform are on the [releases page](https:
 | `filelist-streaming-<version>-linux-amd64.tar.gz` | `filelist-streaming-linux-amd64` with desktop app + server | 64-bit x86 Linux desktops/servers with WebKitGTK 4.1 installed (see [Linux runtime packages](#linux-runtime-packages)). |
 | `filelist-streaming-<version>-linux-arm64.tar.gz` | `filelist-streaming-linux-arm64` with desktop app + server | 64-bit ARM desktop distros (Raspberry Pi OS Bookworm, Ubuntu 24.04) with WebKitGTK 4.1 — GUI-capable. |
 | `filelist-streaming-<version>-linux-armv7.tar.gz` | Pure headless `filelist-streaming-linux-armv7` (GUI excluded at build time) | Older 32-bit ARM boards (e.g. Raspberry Pi 2/3 on 32-bit OS). Server only. |
+| `filelist-streaming-<version>-linux-amd64-headless.tar.gz` | Pure static `filelist-streaming-linux-amd64-headless` (GUI excluded at build time via `-tags headless`) | 64-bit x86 servers without WebKitGTK. Server only. |
+| `filelist-streaming-<version>-linux-arm64-headless.tar.gz` | Pure static `filelist-streaming-linux-arm64-headless` (GUI excluded at build time via `-tags headless`) | 64-bit ARM servers without WebKitGTK (e.g. Raspberry Pi 4/5 on a minimal distro). Server only. |
 | `filelist-streaming-<version>-windows-amd64.zip` | `filelist-streaming-windows-amd64.exe` with desktop app + server | 64-bit x86 Windows. SmartScreen warns on first run — choose **More info → Run anyway**. |
 | `filelist-streaming-<version>-windows-arm64.zip` | `filelist-streaming-windows-arm64.exe` with desktop app + server | Windows on ARM (e.g. Snapdragon laptops). |
 
@@ -33,9 +35,9 @@ Every release also ships:
 - CycloneDX/SPDX SBOMs for the Go and npm dependencies.
 - The unsigned Tizen `FileListTV-<version>.wgt` (see [Samsung Tizen application](#samsung-tizen-application)).
 
-Every binary except `filelist-streaming-linux-armv7` contains both the desktop app and the headless server; `filelist-streaming-linux-armv7` is a pure headless build with the GUI excluded. If you build from source instead, `make help` lists every target with the exact artifact it produces.
+Every binary except `filelist-streaming-linux-armv7`, `filelist-streaming-linux-arm64-headless`, and `filelist-streaming-linux-amd64-headless` contains both the desktop app and the headless server; those three are pure headless builds with the GUI excluded at build time (the armv7 build via its architecture constraints, the headless builds via the `headless` build tag). If you build from source instead, `make help` lists every target with the exact artifact it produces.
 
-For headless arm64 servers whose distro lacks `libwebkit2gtk-4.1`, a fully static build without the GUI is available from source: `make build-arm64-headless` produces `bin/filelist-streaming-linux-arm64-headless`, and `make deploy-pi PI_HOST=user@host` builds and stages it onto a Raspberry Pi in one step.
+Headless arm64/amd64 servers whose distro lacks `libwebkit2gtk-4.1` should use the prebuilt `linux-arm64-headless` / `linux-amd64-headless` archives above. To build them from source instead, `make build-arm64-headless` produces `bin/filelist-streaming-linux-arm64-headless` and `make build-amd64-headless` produces `bin/filelist-streaming-linux-amd64-headless`; `make deploy-pi PI_HOST=user@host` builds and stages the arm64 one onto a Raspberry Pi in one step.
 
 ## First run
 

@@ -95,6 +95,26 @@ jobs:
             format: tar
             runner: ubuntu-latest
             method: pure
+          # Headless arm64/amd64 (Makefile build-arm64-headless /
+          # build-amd64-headless): CGO_ENABLED=0 plus -tags headless so
+          # internal/gui compiles to the ErrNoDisplay fallback on 64-bit
+          # arches too. Version ldflags match the armv7 pure build.
+          - target: linux-arm64-headless
+            goos: linux
+            goarch: arm64
+            suffix: ''
+            format: tar
+            runner: ubuntu-latest
+            method: pure
+            go_tags: headless
+          - target: linux-amd64-headless
+            goos: linux
+            goarch: amd64
+            suffix: ''
+            format: tar
+            runner: ubuntu-latest
+            method: pure
+            go_tags: headless
           # Windows: cgo-free on the ubuntu runner (CGO_ENABLED=0 in
           # build/windows/Taskfile.yml); icon/version .syso + -H windowsgui
           # come from the windows:build task (Makefile build-all windows lines).
@@ -233,8 +253,10 @@ jobs:
             -tags production,gtk3 -trimpath -buildvcs=false \
             -ldflags="-s -w -X github.com/mihaiflorentin88/filelist-streaming-service/internal/composition.Version=${version}" \
             -o staging/filelist-streaming ./cmd/server
-      # Pure headless (Makefile build-all last line): CGO_ENABLED=0 go build,
-      # no GUI toolchain.
+      # Pure headless (Makefile build-all last line plus
+      # build-arm64-headless / build-amd64-headless): CGO_ENABLED=0 go build,
+      # no GUI toolchain. Flavor identity: -tags headless when the matrix
+      # entry declares it; version identity: composition.Version ldflags.
       - name: Build ${{ matrix.target }} (pure CGO_ENABLED=0)
         if: matrix.method == 'pure'
         env:
@@ -242,10 +264,15 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           GOARM: ${{ matrix.goarm }}
           CGO_ENABLED: '0'
+          GO_TAGS: ${{ matrix.go_tags }}
         run: |
           version="$(tr -d '[:space:]' < VERSION)"
           mkdir -p staging
-          go build -trimpath -ldflags="-s -w -X github.com/mihaiflorentin88/filelist-streaming-service/internal/composition.Version=${version}" -o "staging/filelist-streaming${{ matrix.suffix }}" ./cmd/server
+          args=(build -trimpath)
+          if [[ -n "${GO_TAGS}" ]]; then args+=(-tags "${GO_TAGS}"); fi
+          args+=(-ldflags="-s -w -X github.com/mihaiflorentin88/filelist-streaming-service/internal/composition.Version=${version}")
+          args+=(-o "staging/filelist-streaming${{ matrix.suffix }}" ./cmd/server)
+          go "${args[@]}"
       - name: Stage release files
         run: cp README.md staging/
       - name: Create archive
@@ -360,8 +387,37 @@ jobs:
           format: spdx-json
           output-file: release/sbom-release.spdx.json
           upload-artifact: false
+      # SHA256SUMS covers exactly this run's payload: assert every required
+      # archive exists, drop anything else (stale prior-run artifacts must
+      # never enter the manifest), then checksum the payload minus the
+      # manifest itself.
       - name: Checksums
-        run: (cd release && sha256sum ./* > SHA256SUMS)
+        run: |
+          version="$(tr -d '[:space:]' < VERSION)"
+          cd release
+          payload=(
+            "filelist-streaming-${version}-linux-amd64.tar.gz"
+            "filelist-streaming-${version}-linux-arm64.tar.gz"
+            "filelist-streaming-${version}-linux-amd64-headless.tar.gz"
+            "filelist-streaming-${version}-linux-arm64-headless.tar.gz"
+            "filelist-streaming-${version}-linux-armv7.tar.gz"
+            "filelist-streaming-${version}-windows-amd64.zip"
+            "filelist-streaming-${version}-windows-arm64.zip"
+            "filelist-streaming-${version}-darwin-amd64.tar.gz"
+            "filelist-streaming-${version}-darwin-arm64.tar.gz"
+            "filelist-streaming-${version}-darwin-universal.zip"
+            "FileListTV-${version}.wgt"
+            sbom-go.cdx.json
+            sbom-npm.cdx.json
+            sbom-release.spdx.json
+          )
+          for f in "${payload[@]}"; do
+            test -s "$f" || { echo "missing release asset: $f" >&2; exit 1; }
+          done
+          for f in ./*; do
+            case " ${payload[*]} " in *" ${f#./} "*) ;; *) rm -f "$f" ;; esac
+          done
+          sha256sum "${payload[@]}" > SHA256SUMS
       - uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
         with:
           subject-path: release/*

@@ -1,4 +1,4 @@
-.PHONY: help check test build build-arm64 build-arm64-headless build-all desktop-assets package-darwin wails-cross web frontend tizen-wgt validate-tizen-wgt smoke-tizen-engine deploy-pi bootstrap-server-dry-run
+.PHONY: help check test build build-arm64 build-arm64-headless build-amd64-headless build-all desktop-assets package-darwin wails-cross web frontend tizen-wgt validate-tizen-wgt smoke-tizen-engine deploy-pi bootstrap-server-dry-run
 
 VERSION ?= $(shell tr -d '[:space:]' < VERSION)
 PI_HOST ?=
@@ -92,6 +92,16 @@ build-arm64-headless: web
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -tags headless -trimpath -buildvcs=false \
 		-ldflags="$(GO_LDFLAGS)" \
 		-o bin/filelist-streaming-linux-arm64-headless ./cmd/server
+
+# Pure headless amd64 build, same recipe as build-arm64-headless: no cgo,
+# no webkit2gtk; the `headless` tag compiles internal/gui down to the
+# ErrNoDisplay fallback so the binary is fully static. Matches the
+# linux-amd64-headless release matrix entry.
+## build-amd64-headless: pure headless linux/amd64 binary -> bin/filelist-streaming-linux-amd64-headless (no cgo)
+build-amd64-headless: web
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags headless -trimpath -buildvcs=false \
+		-ldflags="$(GO_LDFLAGS)" \
+		-o bin/filelist-streaming-linux-amd64-headless ./cmd/server
 
 # Seven release binaries, then the universal macOS .app (this file's own
 # host flow: on a macOS host the recipe ends by packaging
