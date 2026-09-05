@@ -19,21 +19,22 @@ type SchemaField struct {
 }
 
 // SettingsView is the GET /api/v1/settings body: the settings with the five
-// secrets blanked and one Configured flag per secret. The HTTP handler and
-// the desktop bindings both serve this shape.
+// secrets blanked, one Configured flag per secret, and the settings file
+// path. The HTTP handler and the desktop bindings both serve this shape.
 type SettingsView struct {
 	config.Settings
-	FileListPasskeyConfigured     bool `json:"fileListPasskeyConfigured"`
-	QBittorrentPasswordConfigured bool `json:"qbittorrentPasswordConfigured"`
-	TMDBAPIKeyConfigured          bool `json:"tmdbApiKeyConfigured"`
-	SubDLAPIKeyConfigured         bool `json:"subDLApiKeyConfigured"`
-	PortalAPIKeyConfigured        bool `json:"portalAPIKeyConfigured"`
+	FileListPasskeyConfigured     bool   `json:"fileListPasskeyConfigured"`
+	QBittorrentPasswordConfigured bool   `json:"qbittorrentPasswordConfigured"`
+	TMDBAPIKeyConfigured          bool   `json:"tmdbApiKeyConfigured"`
+	SubDLAPIKeyConfigured         bool   `json:"subDLApiKeyConfigured"`
+	PortalAPIKeyConfigured        bool   `json:"portalAPIKeyConfigured"`
+	SettingsPath                  string `json:"settingsPath"`
 }
 
 // RedactedSettings builds the view: secrets are blanked in the payload and
 // surfaced only as Configured flags, so responses never carry credentials.
 func RedactedSettings(v config.Settings, path string) SettingsView {
-	view := SettingsView{Settings: v, FileListPasskeyConfigured: v.FileListPasskey != "", QBittorrentPasswordConfigured: v.QBittorrentPassword != "", TMDBAPIKeyConfigured: v.TMDBAPIKey != "", SubDLAPIKeyConfigured: v.SubDLAPIKey != "", PortalAPIKeyConfigured: v.PortalAPIKey != ""}
+	view := SettingsView{Settings: v, FileListPasskeyConfigured: v.FileListPasskey != "", QBittorrentPasswordConfigured: v.QBittorrentPassword != "", TMDBAPIKeyConfigured: v.TMDBAPIKey != "", SubDLAPIKeyConfigured: v.SubDLAPIKey != "", PortalAPIKeyConfigured: v.PortalAPIKey != "", SettingsPath: path}
 	view.Settings.FileListPasskey = ""
 	view.Settings.QBittorrentPassword = ""
 	view.Settings.TMDBAPIKey = ""
@@ -67,6 +68,7 @@ func SettingsSchema(s *config.Store) []SchemaField {
 		{Key: "protectFavorites", Label: "Protect favorites", Help: "Keeps downloads whose canonical title is in the household favorites out of eviction."},
 		{Key: "protectNeverWatched", Label: "Protect never-watched downloads", Help: "Keeps downloads the household has never finished watching out of eviction."},
 		{Key: "subDLUrl", Label: "SubDL API URL", Help: "Official SubDL API base used for direct subtitle files.", Obtain: "Use https://api.subdl.com.", Sensitive: false},
+		{Key: "subDLApiKey", Label: "SubDL API key", Help: "Free SubDL API credential used to search and download direct subtitle files.", Obtain: "Create a free account and generate a key in the API section at https://subdl.com/panel.", Sensitive: true},
 		{Key: "portalApiKey", Label: "Supporter API key", Help: "Optional supporter credential that unlocks the supporter-only sections of the catalog. Stored like a password.", Sensitive: true},
 		{Key: "subtitleCachePath", Label: "Subtitle cache path", Help: "Server directory containing prepared WebVTT and SAMI subtitle files."},
 		{Key: "subtitleCacheMaxBytes", Label: "Subtitle cache maximum bytes", Help: "Maximum disk space used by prepared and downloaded subtitle files."},
