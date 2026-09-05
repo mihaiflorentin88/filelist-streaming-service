@@ -7,6 +7,7 @@ require (
 	github.com/anacrolix/torrent v1.61.0
 	github.com/spf13/cobra v1.10.2
 	github.com/wailsapp/wails/v3 v3.0.0-beta.16
+	golang.org/x/mod v0.37.0
 	golang.org/x/sys v0.47.0
 	golang.org/x/term v0.45.0
 	modernc.org/sqlite v1.44.3
