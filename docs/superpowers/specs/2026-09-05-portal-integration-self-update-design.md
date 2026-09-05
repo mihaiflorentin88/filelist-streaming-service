@@ -1,285 +1,122 @@
-# Portal Integration and Self-Update Design
+# Portal Integration, Self-Update, and Release Publication Design
 
 Date: 2026-09-05
-Status: Approved design, pending implementation plan
+Status: Revised written specification approved
 
-## Summary
+## Goal
 
-The server gains a self-update mechanism and a server-side integration hub
-for an external promotion and update service. One internal adapter talks to
-the external service; the hub it feeds re-exposes everything through neutral
-`/api/v1/portal/*` and `/api/v1/updates/*` endpoints and pushes changes over
-the existing SSE stream. The webapp and GUI webview share one frontend; the
-Tizen client gets its own surfaces. Every external feature degrades to
-invisible when the upstream is unreachable or switched off. The GUI also
-auto-starts the embedded server on launch, closing a gap left by the desktop
-GUI implementation (the 2026-09-04 GUI spec listed auto-update as a
-non-goal; this design supersedes that line).
+Provide server-side integration for accounts, household supporter status, promotions, project links, and server self-update. Publish new streaming-server releases to the external update feed automatically, without maintaining release notices by hand.
 
-The external platform is never named in the UI, in documentation, or in the
-client-visible API surface. Internals use the neutral umbrella "portal";
-promoted creatives are "promotions" in code paths.
+This revision preserves the previously approved product behavior and records the subsequently approved trust, release-publication, and macOS update decisions. It replaces the earlier specification's inaccurate claims about shared desktop frontend ownership, checksum filenames, container detection, and executable-only macOS bundle updates.
 
-## Goals
+## Product behavior
 
-- Feature gating from the upstream public settings: when accounts are
-  enabled, web and GUI show Login/Register and the API-key Settings field;
-  when promotions are enabled and the viewer is not a donor, the left nav
-  rail shows the promoted-content card; the main menu shows an Other
-  Projects section from the links feed. When disabled or unreachable, no
-  trace of the surface remains in any UI.
-- Self-update of the server binary: automatic at program start, hourly
-  check with notify-only messaging, and on-demand application via the
-  `--update` headless flag, the GUI button, or the webapp/TV update button.
-- Update-available messaging on GUI, webapp, and TV: version, notes,
-  an Update now control where application is possible, a link to the GitHub
-  releases page, and the standing note that this updates the server only —
-  TV apps are updated manually from the releases page.
-- The GUI starts the embedded server automatically on launch whenever the
-  required settings are complete; the setup window flow is unchanged.
-- Raspberry Pi / systemd layout adaptation so the service user can replace
-  its own binary in place.
+- The desktop GUI automatically starts its embedded server when required settings are complete. Incomplete setup remains in the setup flow; no manual Start click is required after a configured launch.
+- All clients call their configured streaming server. Only the server-side adapter calls the fixed external integration service. Its address is hardcoded, not configurable. UI copy and documentation do not name the external platform.
+- Web and desktop have login and registration. Tizen does not. JWT identity is separate from the supporter API key; JWTs expire according to the upstream response, currently after 24 hours. Clients support sign-out and remove expired sessions.
+- The household supporter API key is stored in the protected server settings file and redacted from all responses. The entire account Settings section, including the API-key field, disappears when accounts are disabled or unavailable. TV has no account settings controls.
+- Donor status is queried with the API key, not the JWT. A valid donor hides promotions across the household. Expiry must take effect without waiting for the next hourly check. Failed donor lookup never invents donor privileges.
+- Promotions occupy a compact area near the bottom of the left navigation. Their delivery remains live because delivery records an upstream impression. No background prefetching of unseen creatives. TV promotions are display-only.
+- Other Projects contains the ordered public links. Web and desktop can open safe external destinations; TV opens a remote-navigable URL dialog with reliable Back/focus restoration, not an assumption that text selection works on a television.
+- Feature failure is endpoint-specific: failed public settings disables accounts and promotions; failed links removes project links; failed update fetch clears update availability; failed promotion delivery removes the promotion surface. Failures produce no global warning or reserved empty panel. Subsequent successful probes restore the relevant capability.
+- Every update notice includes version, release notes, the server-only warning, and https://github.com/mihaiflorentin88/filelist-streaming-service/releases for manual TV-client updates. Updates interrupt active playback; explicit apply requires a warning/confirmation. Controls cover checking, current, available, applying, reconnecting, failed, and manual-only states.
 
-## Non-goals
+## Architecture and ownership
 
-- Changes to the external service itself (filelist-ads-server).
-- `supporter_plans.enabled` gating; the switch belongs to the external
-  service's own checkout flow.
-- Login/Register on the TV client (v1 ships web + GUI only).
-- Automatic installation on the hourly check; the hourly tick notifies only.
-- Configurability of the external base URL; it is a hardcoded constant.
-- Donor perks beyond hiding the promoted-content slot.
+`internal/application/portal` defines integration contracts and owns collapsed state. `internal/adapters/portalclient` implements the upstream HTTP boundary. `internal/application/updates` owns update selection and operations; platform installation and process handoff are separate from HTTP request handling. Composition injects build identity, settings access, events, and lifecycle dependencies. Application packages never import composition.
 
-## Decisions
+The web application and desktop shell are separate Preact entry points. Desktop lives in `desktop/src` and imports selected shared web components, including Settings, using the configured shared API origin. Both entry points require integration work. Tizen has its own navigation and presentation. Reuse common components where actual component ownership permits it; do not import the web App into the desktop shell.
 
-| Decision | Choice |
-| --- | --- |
-| Integration architecture | Server-side hub: only the Go server talks to the external service; web, GUI, and TV consume only their own server |
-| External base URL | Hardcoded constant in the Go adapter; not a setting |
-| API-key storage | Server settings file (existing store, mode 0600); the server polls account status and exposes donor state, so every client including the TV benefits |
-| Login session | JWT kept client-side (localStorage, 24 h upstream expiry); identity display only; TV excluded in v1 |
-| Donor signal | `donor: true` from account status hides the promotion slot household-wide |
-| Update feed | `GET /updates` upstream; per-platform binaries keyed `GOOS-GOARCH`; strict semver compare; newer-only |
-| `linux/armv7` builds | No feed entry exists; permanently notify-only |
-| Non-writable binary (Docker, root-owned installs) | Capability probe at startup; notify-only; apply endpoint answers 409 with the reason |
-| Restart strategy | systemd: graceful exit 0, `Restart=always` relaunches; plain headless: `syscall.Exec`; GUI: re-exec whole app; Windows: rename running exe, spawn new, exit |
-| Systemd layout | Binary moves to `/var/lib/filelist-streaming/bin/filelist-streaming` owned by the service user; unit becomes `Restart=always` |
-| Live updates to clients | SSE kinds `portal.state` and `updates.available` on the existing `/api/v1/events` stream |
-| Check cadence | On start (async, fail-open), hourly with jitter, plus on demand |
-| Naming | `portal` / `promotions` internally and on the wire; the external platform is never mentioned in UI or docs |
+The existing SSE journal and `domain.Event` envelope remain authoritative. Portal state and update notifications use it rather than a second event bus. Clients unwrap the event payload and refetch current snapshots on reconnect to avoid treating replayed historical state as current.
 
-## Architecture
+Hub refresh is cancellable and serialized. State starts inactive, including explicit absence of an update notice. Returned slices do not alias cached state. Credential changes invalidate in-flight donor responses. Settings access follows data-directory relocation rather than retaining an obsolete store.
 
-```
-internal/adapters/portalclient/  HTTP client for the external service
-internal/application/portal/     hub: cached flags/links, ad proxy, donor
-internal/application/updates/    orchestrator: identity, probe, check,
-                                 install, restart
-internal/adapters/httpapi/       new /api/v1/portal + /api/v1/updates
-                                 routes, SSE kinds
-internal/composition/            wiring in assemble(); App fields
-internal/gui/                    auto-start fix, tray items, bindings
-web/                             shared frontend surfaces (webapp + GUI)
-clients/tizen/, clients/shared/  TV surfaces
-deploy/systemd/, deploy/pi-deploy.sh
-```
+## Self-update policy
 
-### Portal hub (`internal/application/portal`)
+### Timing
 
-The adapter client (`portalclient`) performs five upstream calls with 5 s
-timeouts and tolerant JSON decoding (unknown fields ignored):
+Ordinary startup binds and serves first, then performs one bounded, asynchronous newer-version check and automatic installation. An unavailable upstream cannot prevent serving. There is no setting to disable startup auto-install.
 
-- `GET /api/v1/settings` — `accounts.enabled`, `ads.enabled`
-- `GET /api/v1/links` — ordered promoted links
-- `GET /api/v1/ads?count=N` — weighted-random creatives; each delivery
-  counts one impression upstream
-- `GET /api/v1/updates` — newest notice, 404 when none published; the hub
-  owns this fetch and the update orchestrator consumes it from the snapshot
-- `GET /api/v1/account/status` — donor flag, sent only when the user
-  configured an API key and accounts are enabled
+An hourly jittered check only notifies; it does not install. An explicit check performs a fresh fetch. An explicit apply refreshes before selecting an artifact. An already-current apply is a successful no-op.
 
-The hub holds a snapshot: account flag, promotion flag, donor state, links,
-update notice, and per-entry freshness. Refresh runs once shortly after
-start and then on an hourly jittered ticker. The failure rule is absolute:
-any fetch error, timeout, or non-2xx marks that feature inactive in the
-snapshot immediately — no stale serving under an active flag. Upstream
-`enabled: false` and fetch failure collapse to the same inactive state, so
-clients need not distinguish them.
+The headless `--update` flow is update-and-serve: perform the blocking check/install before normal serving, then run the new binary when applicable. It is not a check-only command. Preserve arguments/data-directory identity across handoff without repeatedly applying the same operation.
 
-Promoted creatives are not cached. `GET /api/v1/portal/promotions?count=N`
-proxies live to the upstream delivery endpoint (preserving its one-impression
-per delivery semantics) whenever the promotion flag is active in the
-snapshot, and answers 503 otherwise; the UI treats any failure as an empty
-slot.
+### Trusted artifacts
 
-### Update orchestrator (`internal/application/updates`)
+The user selected repository releases only. The external feed announces the version; it does not gain permission to choose arbitrary executable code.
 
-Build identity: version from the linker-injected `composition.Version`
-(falling back to the repo `VERSION` file for dev runs) plus a platform key
-from `runtime.GOOS`-`runtime.GOARCH` (`darwin-arm64`, `windows-amd64`, ...).
-`GOARCH=arm` maps to nothing in the feed's closed platform set; those builds
-run in notify-only mode permanently.
+Accept update artifacts only from the GitHub releases of `mihaiflorentin88/filelist-streaming-service`. Require the exact selected asset to have a valid entry in the same release's `SHA256SUMS`, and verify its bytes before extraction or installation. A missing manifest, missing entry, wrong repository/tag, malformed hash, or mismatch fails closed. HTTPS alone and a locally computed hash without an expected value are not verification. Build-provenance attestations are published by the existing workflow but are not required by the selected policy.
 
-The orchestrator never talks to the upstream service itself. It reads the
-update notice from the hub snapshot and asks the hub to refresh for each
-check: once shortly after start, on the hub's hourly tick, and immediately
-before an on-demand apply. The `--update` flag blocks on that refresh so a
-fresh notice backs the decision.
-Capability probe: at startup the orchestrator verifies it can rename and
-rewrite its own executable (temp file in the executable's directory). Docker
-images and root-owned installs fail the probe; the orchestrator then reports
-`selfUpdate: "notify-only"` and the apply endpoint returns 409 with the
-reason.
+Normalize valid release tags consistently and use proper semantic-version precedence. Do not strip prerelease suffixes to compare version triples. Unversioned development builds cannot safely auto-install based on a working-directory VERSION file.
 
-Check policy:
+### Platform and build flavor
 
-- At start: serve first; the first check runs a few seconds after boot with
-  a 5 s timeout and fails open. A newer version auto-installs immediately,
-  so an update at start needs no prompt while a slow upstream cannot delay
-  boot.
-- Hourly (jittered): check only. A newer version emits `updates.available`
-  over SSE and the UIs show the banner. No auto-install mid-run.
-- On demand: `filelist-streaming --update` (blocking check, install,
-  restart into the new binary, then serve — runs before binding the port),
-  the GUI button, or `POST /api/v1/updates/apply` from webapp or TV.
+Selection includes running version, OS, architecture, and build/install flavor. A GUI build cannot silently replace a headless build. Add a release artifact for the Pi's Linux ARM64 headless flavor, since the existing Linux ARM64 release artifact is a GUI build with dynamic WebKit dependencies.
 
-Version comparison parses loose `X.Y.Z` (pre-release suffixes tolerated) and
-treats only strictly greater versions as available.
+The current upstream platform set lacks ARMv7. Without a representable matching artifact it remains notification-only; do not bake permanent incapability into generic version comparison or pretend another architecture is compatible.
 
-Install: download over https, preferring `binaries[platform].download_url`;
-the generic `download_url` is a fallback only when it is a platform-appropriate
-archive (`.tar.gz` on Unix, `.zip` on Windows) the server can unpack to a
-single binary, otherwise the build stays notify-only. Downloads are verified
-for minimum size and sha256; when the download URL points into this
-project's GitHub releases, cross-check the digest against that release's
-`checksums.txt`. The payload lands in the data dir,
-then swaps atomically: the running binary renames to `<name>.old`, the new
-binary takes the original path. A successful boot of the new version removes
-`.old`; a failed boot keeps it for manual recovery. One apply runs at a
-time; concurrent attempts answer 409. An apply on an already-current
-install is a successful no-op that reports the current state.
+The user selected full macOS `.app` replacement. Install the complete released bundle with its signature intact, using an external restart helper and recovery procedure. Do not replace only `Contents/MacOS` or locally re-sign the bundle. Raw macOS executable distributions remain a separate install flavor. Verify real macOS signature, quarantine, relaunch, and recovery behavior before claiming support.
 
-Restart per mode:
+Containers are explicitly notification-only. Writability alone does not identify a container. Non-writable or unsupported installs show the manual-update route rather than attempt privilege escalation.
 
-- systemd (Pi, adapted layout): the server completes its normal graceful
-  shutdown and exits 0; `Restart=always` brings the new binary up within
-  seconds.
-- Plain headless (no systemd): `syscall.Exec` re-runs the same executable
-  and argv in place.
-- GUI: the GUI is the server binary — after the swap the whole app re-execs
-  (window closes, reopens on the new version).
-- Windows: a running exe cannot be overwritten but can be renamed; rename,
-  write the new binary at the original path, spawn it, exit.
+### Installation and process handoff
 
-`GET /api/v1/updates/current` reports `{currentVersion, available, latest,
-notes, releasedAt, releasesUrl, selfUpdate}` where `releasesUrl` is the
-project's GitHub releases page and `selfUpdate` distinguishes `capable`
-from `notify-only`.
+Stream downloads to bounded staging files; do not allocate or copy entire binaries in memory. Stage on the destination filesystem. Validate archive member paths, kinds, sizes, expected executable/bundle identity, OS, architecture, and flavor. An archive is never written directly to the executable path.
 
-### GUI auto-start fix
+Use platform-specific replacement primitives and durable recovery metadata. Preserve a usable previous installation until a new process confirms healthy startup. A failed download, verification, staging, or handoff must not be reported as a successful update. Rollback and backup cleanup follow confirmed health, not merely entering main.
 
-`internal/gui/runner.go` builds the supervisor but never starts it. `Run`
-gains a `sup.Start()` call after the state-event wiring and boot emit, just
-before `app.Run()`. The supervisor's `CanStart` already refuses when required
-settings are missing, so a wiped configuration still lands in the setup
-window; `--minimized` keeps its existing guard (`minimizedHides`).
+Applying is an operation owned by the process coordinator, not the initiating HTTP request. The accepted response reaches the client before shutdown drains handlers. Cancel and join background integration/application work before closing engine and repository resources. GUI teardown releases its single-instance lock before the new instance starts; Windows requires an old-process-exit handoff, not racing a new process against a still-held lock.
 
-## Client surfaces
+Systemd installations move to `/var/lib/filelist-streaming/bin/filelist-streaming`, with service-user ownership and `Restart=always`. One approved redeploy migrates existing installations. Both bootstrap and Pi deployment paths, saved historic defaults, custom paths, and rollback behavior must be updated consistently. No sudo/pkexec updater path is introduced. Plain headless and GUI processes use the appropriate platform-specific handoff; systemd exits cleanly for its supervisor to relaunch.
 
-Shared frontend (webapp + GUI webview; keying off `GET /api/v1/portal/state`
-at boot plus SSE for live changes):
+## Local API
 
-- Accounts (gate: accounts enabled): Sign in entry opening a login/register
-  dialog — email, password; register adds display name. JWT in localStorage;
-  on expiry the UI returns to signed-out. Signed-in state shows the display
-  name.
-- Settings gains an API-key field (same gate): masked input, stored
-  server-side through the existing settings pipeline, following the page's
-  existing field/test-button conventions.
-- Promoted content (gate: promotions enabled and not donor): compact card at
-  the bottom of the left nav rail — image, title, one-liner — rotating on
-  the creative's `screen_time`; activation opens the upstream click redirect
-  in a new tab. Hidden entirely otherwise.
-- Other Projects: section in the main menu listing links (title,
-  description); each opens in a new tab.
-- Update banner: top strip when a newer version exists — version, notes
-  excerpt, Update now button (posts apply, then shows an updating/restarting
-  state until the SSE stream reconnects), the releases-page link, and the
-  "server only — TV apps update manually" note. Settings gains an About row
-  with the running version and a check-now button.
+- `GET /api/v1/portal/state`: cached collapsed capabilities, donor state, ordered links; arrays are never null.
+- `GET /api/v1/portal/promotions?count=N`: gated live delivery, normalized `screenTime` on the local wire.
+- `GET /api/v1/portal/promotions/{provider}/{id}/click`: server resolves tracking and redirects to a validated destination without exposing the upstream platform URL.
+- `POST /api/v1/portal/session`, `POST /api/v1/portal/session/register`, `GET /api/v1/portal/session/me`: gated identity operations. Credential rejection is a form error; transport failure is capability unavailability.
+- `GET /api/v1/updates/current`: cached status, no hidden network or filesystem probes.
+- `POST /api/v1/updates/check`: fresh check, no installation.
+- `POST /api/v1/updates/apply`: 202 accepted operation, 200 current no-op, 409 busy/manual-only; neutral problem responses for failures.
 
-GUI extras: tray menu items "Check for updates" and "Update now"; on apply
-the app re-execs.
+OpenAPI and AsyncAPI must describe the actual DTOs and event envelope. Settings remain secret-redacted on both HTTP and native GUI bindings.
 
-Tizen client:
+## Automatic release publication
 
-- Sidebar bottom slot: promotion card, display-only (no browser to open),
-  same gates as web.
-- Other Projects rows in the sidebar; OK opens a small dialog showing the
-  URL as text.
-- Update strip: version, server-only/TV-manual note, the releases URL as
-  selectable text, and an Update server now button; after apply the TV shows
-  its reconnect state until the server returns.
+The user selected workflow push plus reconciliation. This explicitly expands the earlier non-goal that excluded changes to the external service.
 
-All surfaces follow DESIGN.md's visual language; implementation runs through
-the frontend design skills (frontend-design, ui-design, ui-radar,
-anti-ui-slop) agreed for this work.
+### Normal path
 
-## Degradation matrix
+1. The existing streaming repository release workflow builds and uploads all expected distribution assets and `SHA256SUMS`.
+2. Only after successful release publication/upload, it notifies a narrowly authenticated synchronization endpoint on the external service, identifying the release tag.
+3. The service fetches authoritative metadata from the fixed streaming GitHub repository. The caller cannot supply arbitrary download URLs, repository identities, release notes, or platform mappings.
+4. Validate a published, non-draft, non-prerelease semantic version, expected asset set, and checksum-manifest membership. Obtain notes and publication time from GitHub, then publish through the existing update domain service.
+5. The public update endpoint exposes the new notice immediately after the atomic save. Target latency is seconds after completed publication under normal network conditions, not a guarantee during outages.
 
-| Upstream condition | UI result (all surfaces) |
-| --- | --- |
-| public-settings unreachable | Accounts surfaces off; promotion slot off |
-| `accounts.enabled: false` | No Sign in, no API-key field |
-| `ads.enabled: false` | No promotion slot |
-| account status unreachable or key absent | Slot shown unless promotions off; donor hiding off |
-| links unreachable | Other Projects section absent |
-| ads delivery unreachable at display time | Slot renders empty/hidden for that cycle |
-| updates unreachable | No banner (never a false alarm) |
+Do not automate browser login or post an admin dashboard form. Add a machine-to-machine endpoint with a dedicated secret, independent of user JWTs and supporter API keys. Keep the secret in GitHub Actions secrets and the external service's server-side configuration; use constant-time comparison, bounded requests, and no secret logging. Missing credentials disable the endpoint rather than making it public.
 
-## Security
+### Recovery and ordering
 
-- The API key lives only in the server settings file (mode 0600) and is
-  proxied server-side; clients never see it. The UI masks the field.
-- JWTs stay client-side; the server never persists them.
-- Update downloads are https-only, size-checked, checksum-verified, and
-  swapped atomically; `.old` retention gives a manual rollback path.
-- New endpoints inherit the service's existing trusted-LAN posture; the
-  apply endpoint adds its own single-flight guard.
-- Upstream URLs are treated as untrusted content: absolute https enforced,
-  no redirects followed across schemes.
+Run reconciliation on service startup and every five minutes, with bounded GitHub requests and conditional fetching where useful. This recovers missed notifications, temporary outages, incomplete uploads, and releases created outside the workflow. Workflow notification failures get bounded retries and a visible CI failure; reconciliation prevents requiring a human rerun for eventual publication.
 
-## Deployment changes
+Use one serialized/idempotent publication path for notifications and reconciliation. Repeated delivery of the same release is harmless. Older events cannot replace a newer notice. Incomplete assets do not replace the last valid notice; retry on subsequent reconciliation. Synchronization failure preserves the last successfully published notice on the external service; this differs from a streaming client failing to fetch its current upstream snapshot.
 
-- `deploy/systemd/filelist-streaming.service`: `ExecStart` points at
-  `/var/lib/filelist-streaming/bin/filelist-streaming serve ...`;
-  `Restart=always`; `RestartSec=5`. `ReadWritePaths` already covers the data
-  dir, which now also holds the binary.
-- `deploy/pi-deploy.sh`: installs the binary at the new path (ownership
-  `filelist-streaming`), keeps the previous-binary rollback relative to it,
-  and migrates an existing `/usr/local/bin` install on the first run.
-  One-time redeploy required.
-- Docker: self-update stays notify-only by the capability probe; image
-  updates remain the deployment mechanism.
+The public notice's version, notes, timestamp, and asset mapping are GitHub-owned in automatic mode. Manual editing must not compete silently with the next reconciliation; make source ownership visible in the existing editor and prevent editing automatically managed fields. No additional manual promotion step is required per release.
 
-## Testing
+A release created using the workflow's `GITHUB_TOKEN` does not reliably trigger a second `release: published` Actions workflow. Put notification in the existing successful publication path, not in a dependent event workflow requiring a broader personal token.
 
-- Go: hub tests with a fake upstream client (flags on/off, fetch failure to
-  inactive, donor gating, injectable clock for the ticker); orchestrator
-  tests (version-compare table, capability probe in temp dirs, single-flight
-  guard, atomic swap, checksum-mismatch rejection, `.old` cleanup);
-  httpapi route tests; GUI supervisor auto-start test (Run starts the server
-  when configured; setup mode stays stopped — regression for the reported
-  bug).
-- Frontend (vitest, existing patterns): surfaces render when enabled, leave
-  zero trace when disabled; update banner state transitions.
-- Tizen: existing physical-TV verification flow extended with the new
-  focusables and the update strip.
+### Operating boundary
 
-## Risks
+One initial deployment/configuration of the external service and one secret installation are required. Do not deploy either service, set remote secrets, or change GitHub webhook/settings configuration during planning. The external service is not being given binary self-update or automatic redeployment by this feature; it synchronizes release notices only.
 
-- GUI re-exec must preserve argv and work inside the macOS .app bundle path.
-- Apply interrupts any active playback; the banner warns before it runs.
-- Upstream schema additions must not break decoding (tolerant fields).
-- First Pi redeploy after the layout change must migrate cleanly or fall
-  back to the old path with a warning.
+GitHub configuration supplied by the user: environment `prod`, secret `FL_ADS_APIKEY`. A separate notification job declares `environment: prod` and reads `${{ secrets.FL_ADS_APIKEY }}` only through its environment. Never embed the value in YAML, scripts, documentation, URLs, command arguments, or logs. Environment protection rules may delay notification; reconciliation remains the recovery path. Do not change those protection rules automatically. The external service must separately be configured with the matching release-sync credential.
+
+## Verification and acceptance
+
+Plan review must map every requirement above to a concrete task. Source implementation has not started.
+
+- Updater regressions exercise corrupt/missing checksums, wrong flavor/architecture, archive traversal, failed swaps, concurrent applies, current no-op, failed handoff, and recovery with real subprocess fixtures.
+- Release-publication scenarios exercise duplicate/out-of-order notices, stable versus draft/prerelease, incomplete upload followed by recovery, GitHub outage, wrong credentials, and push versus reconciliation racing. Observe the public GET endpoint after successful publication.
+- Run the real GUI to prove configured auto-start and setup behavior. Exercise all three UI surfaces for enabled, disabled, donor, endpoint-failure/recovery, applying/reconnect, and manual-only states. Browser verification does not substitute for native restart or physical-TV verification.
+- macOS bundle and Windows process-handoff claims require native runtime evidence. Do not claim them based only on cross-compilation. Physical TV/deployment access requires approval; record unavailable runtime evidence as a blocker, not a pass.
+- Documentation uses neutral naming. Apply the same server-only/manual-TV update notice everywhere.
