@@ -8,18 +8,12 @@ Version **0.3.0** adds the built-in torrent engine — no qBittorrent or Docker 
 
 ## Features
 
-- Browse the locally cached FileList catalog by dashboard, recent additions, category, filter, sort, pagination, or explicit tracker search without making routine pages depend on FileList availability.
-- Canonical movie and series pages group seasons and episodes instead of scattering duplicate episode cards across dashboards.
-- Complete-season releases expand before any action is taken. Download, pause, resume, retry, and protected deletion happen from explicit controls, while each downloaded pack file appears under its matching episode.
-- Download management shows accurate selected-file and complete-torrent sizes, live progress/speed/peer state, stable in-place updates, search, filters, sorting, and one action that removes the torrent and its files.
-- A playback strategy automatically chooses a completed local file or an in-progress download as a progressive stream. Existing local playback does not require another FileList lookup.
-- The built-in engine prioritizes the pieces playback needs first, so streams start before the download finishes. qBittorrent stays available as an optional external engine. No production or global download speed cap is configured.
-- Resume a movie or series at the saved episode and position, then automatically advance to the next episode. Favorites, history, progress, and watched state are shared between web and TV.
-- Prefer English audio and Romanian subtitles with English fallback. Track choices are remembered per file; embedded/torrent subtitles and cached SubDL downloads are reused.
-- Browser playback exposes audio selection and can convert audio to AAC while copying video unchanged. Tizen uses native AVPlay direct playback, so the Raspberry Pi never transcodes video.
-- TV-first spatial navigation covers dialogs, season packs, download controls, settings, and playback. First launch can discover compatible servers on the local subnet or retain a manually entered address.
-- The desktop app ships in the same binary as everything else: launched without arguments it opens a window with a system-tray icon (close-to-tray, start-at-login, server start/stop and status), while `filelist-streaming serve` keeps the headless behavior. Data defaults to the per-platform standard directory (`~/.local/share/filelist-streaming` on Linux, `%APPDATA%\FileList Streaming` on Windows, `~/Library/Application Support/FileList Streaming` on macOS) and can be relocated from the GUI.
-- Deploy from a precompiled GitHub release, from source, or through the Raspberry Pi deployment workflow. Normal builds install no packages on the workstation.
+- **Stream torrents while they download.** The built-in engine prioritizes the pieces playback needs, so playback starts before the download finishes — no qBittorrent or Docker required (qBittorrent stays available as an optional external engine).
+- **Subtitles handled end to end.** Embedded and torrent-packed subtitles are discovered automatically, SubDL downloads are cached and reused, and track preferences (English audio, Romanian subtitles with English fallback) are remembered per file.
+- **Automatic torrent eviction.** Finished downloads clean themselves up when storage runs low, by the rule you pick (default: oldest completed), with protection for incomplete, actively streaming, favorited, and never-watched items.
+- **Watch anywhere on your network.** A responsive web app, the Samsung Tizen TV with native direct playback, and a desktop app — with resume, auto-advance to the next episode, and watch state shared across all of them.
+- **The whole FileList catalog, fast.** Cached browsing, search, and filtering, with canonical movie and series pages that map every season-pack file to its episode.
+- **Precise download control.** Live progress, speed, and peer state, per-file selection inside season packs, and one action that removes a torrent together with its files.
 
 ## Screenshots
 
