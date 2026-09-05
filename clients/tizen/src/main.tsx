@@ -2,7 +2,7 @@ import { Fragment, render } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { API, canonicalHouseholdItems, canonicalLanguage, ControlsVisibility, subtitleRank, CatalogDetail, CatalogFacets, CatalogSource, CatalogTitle, Download, DownloadSort, downloadTransferActions, DownloadTransferAction, formatBytes, HouseholdItem, HouseholdState, Job, JobLog, LibraryCategory, MediaState, orderDownloadIDs, PlaybackPreferences, PortalPromotion, PortalState, promotionScreenTimeMs, reconcileDownloads, Release, resumeActionLabel, resumeForTitle, resumeSummary, seasonPackActionLabel, SettingsField, SubtitleCandidate, subtitleItemLabel, subtitleMenuGroups, UpdateStatus } from '@filelist/shared';
 import { chooseStructuredTarget, focusElement, remoteAction, useTVNavigation } from './navigation';
-import { PROJECTS_DIALOG_REGION, PROJECTS_MENU_ROW, UPDATE_APPLY_ROW, UPDATE_CHECK_ROW, UPDATE_DIALOG_REGION, dialogRestoreKey, promotionsVisible, snapshotEventAllowed, updateApplyDisabled, updateApplyOutcome, updateNoticeVisible } from './portal';
+import { PROJECTS_DIALOG_REGION, PROJECTS_MENU_ROW, UPDATE_APPLY_ROW, UPDATE_CHECK_ROW, UPDATE_DIALOG_REGION, confirmDialogStale, dialogRestoreKey, promotionsVisible, recoverySettles, snapshotEventAllowed, updateApplyDisabled, updateApplyOutcome, updateNoticeVisible } from './portal';
 import { AVTrack, clampSeek, formatTime, hiddenKeyRoute, isDownloadComplete, normalizeTrack, parseVTT, playerAction, preferredAudio, SubtitleCue, subtitleAt } from './player';
 import { householdSections, trackerCategories } from './catalog-data';
 import { discoverServers, DiscoveredServer, normalizeServerURL } from './discovery';
@@ -404,6 +404,7 @@ function Catalog({ api, status, titles, facets, household, downloads, jobs, rest
   const manageSeasonPack = async (source: CatalogSource, season: number, action: SeasonPackAction) => { setDetailMessage(action === 'download' ? `Starting season ${season}…` : `Updating season ${season} download…`); try { await onManageSeasonPack(source, season, action); if (detailRef.current) { const next = await api.title(detailRef.current.title.id); setDetail(next); setDetailTarget({ season }) } setDetailMessage(action === 'delete' ? `Season ${season} download deleted.` : action === 'pause' ? `Season ${season} download paused.` : action === 'resume' ? `Season ${season} download resumed.` : `Season ${season} is downloading. Episode tiles will update here.`) } catch (error) { setDetailMessage((error as Error).message); throw error } };
   const chooseRoute = (next: TVRoute) => { setRoute(next); setDetail(null); setMenuOpen(false); window.setTimeout(() => focusElement(document.querySelector<HTMLElement>('[data-focus-region="content"]')), 0); };
   useEffect(() => { if (projectsOpen && portal !== null && portal.links.length === 0) closeProjects(false) }, [projectsOpen, portal]);
+  useEffect(() => { if (confirmDialogStale(updateConfirm, updateStatus)) setUpdateConfirm(false) }, [updateConfirm, updateStatus]);
   useEffect(() => {
     if (document.activeElement instanceof HTMLElement && document.activeElement !== document.body) return;
     const timer = window.setTimeout(() => {
@@ -716,6 +717,7 @@ function App() {
     let stopped = false;
     let failures = 0;
     let recovering = false;
+    let recoveryGeneration = 0;
     const eventPayload = (event: MessageEvent) => { const envelope = JSON.parse(event.data); return typeof envelope.payload === 'string' ? JSON.parse(envelope.payload) : envelope.payload };
     const loadPortal = () => api.call<PortalState>('/portal/state').then(value => setPortal(value)).catch(() => setPortal(null));
     const loadUpdate = () => api.call<UpdateStatus>('/updates/current').then(value => setUpdateStatus(value)).catch(() => setUpdateStatus(null));
@@ -736,7 +738,8 @@ function App() {
         // portal/update events until the fresh state has landed, so a stale
         // replay can never override what the server reports now.
         recovering = true;
-        void Promise.all([loadPortal(), loadUpdate()]).then(() => { recovering = false });
+        const generation = ++recoveryGeneration;
+        void Promise.all([loadPortal(), loadUpdate()]).then(() => { if (recoverySettles(generation, recoveryGeneration)) recovering = false });
       };
       stream.addEventListener('catalog.updated', catalogUpdated as EventListener);
       stream.addEventListener('catalog.search.completed', searchCompleted as EventListener);

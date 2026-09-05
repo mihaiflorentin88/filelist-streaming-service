@@ -65,3 +65,18 @@ export function updateApplyOutcome(httpStatus: number | undefined): UpdateApplyO
 export function dialogRestoreKey(openerKey: string | null, fallbackKey: string): string {
   return openerKey || fallbackKey;
 }
+
+// The update confirmation dialog is bound to a live status: a reconnect
+// refetch can null the snapshot while the dialog is open. When the status is
+// gone the open flag is stale and must be cleared, so a later updates.status
+// event cannot resurrect an uninvited modal and Back reaches the page again.
+export function confirmDialogStale(confirmOpen: boolean, status: UpdateStatus | null): boolean {
+  return confirmOpen && status === null;
+}
+
+// Reconnect refetches are generational: a stale generation settling must not
+// end recovery while a newer refetch is still in flight, or replayed
+// snapshot events would apply before the fresh snapshots land.
+export function recoverySettles(generation: number, currentGeneration: number): boolean {
+  return generation === currentGeneration;
+}

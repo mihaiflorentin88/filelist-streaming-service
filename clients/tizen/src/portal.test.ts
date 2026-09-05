@@ -5,8 +5,10 @@ import {
   UPDATE_APPLY_ROW,
   UPDATE_CHECK_ROW,
   UPDATE_DIALOG_REGION,
+  confirmDialogStale,
   dialogRestoreKey,
   promotionsVisible,
+  recoverySettles,
   snapshotEventAllowed,
   updateApplyDisabled,
   updateApplyOutcome,
@@ -105,5 +107,33 @@ describe('focus identities', () => {
     expect(UPDATE_APPLY_ROW).toBe(17);
     expect(PROJECTS_DIALOG_REGION).toBe('projects-dialog');
     expect(UPDATE_DIALOG_REGION).toBe('update-dialog');
+  });
+});
+
+describe('update confirmation lifecycle', () => {
+  it('flags the open dialog stale once the status snapshot is gone', () => {
+    expect(confirmDialogStale(true, null)).toBe(true);
+    expect(confirmDialogStale(true, status({ available: true }))).toBe(false);
+    expect(confirmDialogStale(false, null)).toBe(false);
+  });
+
+  it('does not resurrect the dialog when a status event arrives after the flag cleared', () => {
+    // Recovery nulls the status, the guard clears the flag, and every later
+    // updates.status evaluation with a cleared flag stays closed.
+    expect(confirmDialogStale(true, null)).toBe(true);
+    expect(confirmDialogStale(false, null)).toBe(false);
+    expect(confirmDialogStale(false, status({ available: true, latest: '1.3.0' }))).toBe(false);
+  });
+});
+
+describe('reconnect recovery generations', () => {
+  it('settles recovery only for the newest refetch generation', () => {
+    expect(recoverySettles(1, 1)).toBe(true);
+    expect(recoverySettles(2, 2)).toBe(true);
+  });
+
+  it('keeps recovery running when a stale generation settles out of order', () => {
+    expect(recoverySettles(1, 2)).toBe(false);
+    expect(recoverySettles(3, 2)).toBe(false);
   });
 });
