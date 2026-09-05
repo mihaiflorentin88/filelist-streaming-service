@@ -100,7 +100,9 @@ func Load() (*Store, error) {
 }
 
 // LoadAt loads the store from an explicit settings file path. The data-dir
-// layer calls this after resolving the directory.
+// layer calls this after resolving the directory. Relative native paths
+// anchor to the settings file's directory (see anchorNativePaths), so the
+// effective store never depends on the process working directory.
 func LoadAt(path string) (*Store, error) {
 	base := Defaults()
 	s := &Store{path: path, envManaged: map[string]bool{}, fileProvided: map[string]bool{}}
@@ -173,6 +175,16 @@ func LoadAt(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Relative native paths — defaults and file-provided values alike — are
+	// CWD-relative in serve mode, where systemd pins WorkingDirectory next
+	// to the data dir. GUI and packaged launches have an arbitrary CWD, so
+	// the store pins them to the settings file's directory instead; without
+	// this a Finder-launched .app would mkdir "data" under / and die.
+	settingsDir, err := filepath.Abs(filepath.Dir(s.path))
+	if err != nil {
+		return nil, err
+	}
+	anchorNativePaths(&effective, managed, settingsDir)
 	s.base, s.value, s.envManaged = base, effective, managed
 	if err := s.validate(effective); err != nil {
 		return nil, err
@@ -181,6 +193,48 @@ func LoadAt(path string) (*Store, error) {
 		return nil, err
 	}
 	return s, nil
+}
+
+// anchorNativePaths pins the settings' filesystem paths to dir (the
+// settings file's directory) at load time. Historic defaults are relative
+// ("data/...") and resolve against the process CWD in serve mode, where
+// WorkingDirectory is the data dir's parent — so a leading "data" element
+// is the historic marker for the data dir itself and collapses onto dir.
+// That keeps a serve-mode settings file resolving to exactly the same
+// absolute paths as before while making CWD-arbitrary launches (GUI .app,
+// open, autostart) land inside the data dir. Absolute values and
+// environment-managed keys are the operator's explicit word and stay
+// untouched, mirroring the supervisor rule this load-time anchoring
+// replaces. The file itself is never rewritten: the anchoring recomputes
+// deterministically on every load.
+func anchorNativePaths(v *Settings, managed map[string]bool, dir string) {
+	anchor := func(path string) string {
+		if path == "" || filepath.IsAbs(path) {
+			return path
+		}
+		cleaned := filepath.Clean(path)
+		if rest, cut := strings.CutPrefix(cleaned, "data"+string(filepath.Separator)); cut {
+			cleaned = rest
+		} else if cleaned == "data" {
+			cleaned = "."
+		}
+		return filepath.Join(dir, cleaned)
+	}
+	if !managed["databasePath"] {
+		v.DatabasePath = anchor(v.DatabasePath)
+	}
+	if !managed["downloadRoot"] {
+		v.DownloadRoot = anchor(v.DownloadRoot)
+	}
+	if !managed["torrentSessionDir"] {
+		v.TorrentSessionDir = anchor(v.TorrentSessionDir)
+	}
+	if !managed["artworkCachePath"] {
+		v.ArtworkCachePath = anchor(v.ArtworkCachePath)
+	}
+	if !managed["subtitleCachePath"] {
+		v.SubtitleCachePath = anchor(v.SubtitleCachePath)
+	}
 }
 func (s *Store) Get() Settings { s.mu.RLock(); defer s.mu.RUnlock(); return s.value }
 func (s *Store) Path() string  { return s.path }

@@ -3,7 +3,6 @@
 package gui
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -156,11 +155,11 @@ func Run(opts Options) error {
 }
 
 // wireSupervisor builds the GUI supervisor: CanStart checks the bindings'
-// CURRENT store and the factory anchors the relative default paths against
-// the CURRENT data dir before composition.NewAt re-reads the settings file
-// at the store's path. Both closures consult the mutex-guarded holder on
-// every call, so a ChangeDataDir relocation is picked up by the very next
-// Start without rebuilding the supervisor (spec: Data directory).
+// CURRENT store and the factory composes NewAt against the CURRENT store's
+// settings path. Both closures consult the mutex-guarded holder on every
+// call, so a ChangeDataDir relocation is picked up by the very next Start
+// without rebuilding the supervisor (spec: Data directory). Relative native
+// paths need no start-time anchoring: LoadAt anchors them at load.
 func wireSupervisor(bind *Bindings, log *slog.Logger) *Supervisor {
 	sup := NewSupervisor(SupervisorDeps{
 		Log: log,
@@ -181,10 +180,7 @@ func wireSupervisor(bind *Bindings, log *slog.Logger) *Supervisor {
 	// The default appFactory reads deps.Settings, frozen at boot; this
 	// replacement is the one the supervisor ever uses.
 	sup.appFactory = func() (appLike, error) {
-		store, dir, _ := bind.snapshot()
-		if err := anchorDefaultPaths(store, dir); err != nil {
-			return nil, err
-		}
+		store, _, _ := bind.snapshot()
 		app, err := composition.NewAt(store.Path(), log)
 		if err != nil {
 			return nil, err
@@ -216,76 +212,4 @@ func newGUILogger(dir string) (*slog.Logger, func(), error) {
 		return nil, nil, fmt.Errorf("open gui log: %w", err)
 	}
 	return slog.New(slog.NewJSONHandler(f, nil)), func() { _ = f.Close() }, nil
-}
-
-// anchoredPaths are the settings keys whose default values are relative to
-// the process CWD in serve mode. In the GUI the process CWD is arbitrary
-// (launched from Finder/Dock/autostart), so a default-valued path must
-// anchor to the resolved data dir instead.
-var anchoredPaths = []struct {
-	jsonKey string
-}{
-	{jsonKey: "databasePath"},
-	{jsonKey: "artworkCachePath"},
-	{jsonKey: "torrentSessionDir"},
-}
-
-// anchorDefaultPaths rewrites the three relative default paths
-// (DatabasePath, ArtworkCachePath, TorrentSessionDir) to absolute paths
-// under dir, persisting via Save. Only true defaults are touched:
-// a value explicitly present in the settings file is the user's word and
-// stays untouched, and an env-managed key keeps its runtime value with the
-// file left to the store's managed-field restore. Serve mode is untouched:
-// it keeps today's CWD anchoring.
-func anchorDefaultPaths(settings *config.Store, dir string) error {
-	current := settings.Get()
-	defaults := config.Defaults()
-
-	// Keys explicitly present in the settings file. The store tracks
-	// file-provided state only for required keys, so this re-reads the raw
-	// file for the three anchored ones. json.Unmarshal matches object keys
-	// to struct fields case-insensitively, so the presence check must fold
-	// case the same way.
-	fileKeys := map[string]bool{}
-	if b, err := os.ReadFile(settings.Path()); err == nil {
-		var present map[string]json.RawMessage
-		if json.Unmarshal(b, &present) == nil {
-			for k := range present {
-				fileKeys[strings.ToLower(k)] = true
-			}
-		}
-	}
-
-	anchored := current
-	changed := false
-	for _, a := range anchoredPaths {
-		if fileKeys[strings.ToLower(a.jsonKey)] || settings.EnvironmentManaged(a.jsonKey) {
-			continue
-		}
-		switch a.jsonKey {
-		case "databasePath":
-			if current.DatabasePath != defaults.DatabasePath {
-				continue
-			}
-			anchored.DatabasePath = filepath.Join(dir, current.DatabasePath)
-		case "artworkCachePath":
-			if current.ArtworkCachePath != defaults.ArtworkCachePath {
-				continue
-			}
-			anchored.ArtworkCachePath = filepath.Join(dir, current.ArtworkCachePath)
-		case "torrentSessionDir":
-			if current.TorrentSessionDir != defaults.TorrentSessionDir {
-				continue
-			}
-			anchored.TorrentSessionDir = filepath.Join(dir, current.TorrentSessionDir)
-		}
-		changed = true
-	}
-	if !changed {
-		return nil
-	}
-	if err := settings.Save(anchored); err != nil {
-		return fmt.Errorf("anchor default paths to %s: %w", dir, err)
-	}
-	return nil
 }
