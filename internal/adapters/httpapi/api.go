@@ -1356,11 +1356,36 @@ func trusted(s *config.Store, next http.Handler) http.Handler {
 	})
 }
 
+// statusRecorder captures the response status for the access log without
+// disturbing the handler chain.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(status int) {
+	r.status = status
+	r.ResponseWriter.WriteHeader(status)
+}
+
+// Flush forwards so SSE and range-streaming handlers keep their direct
+// http.Flusher assertions working through the wrapper.
+func (r *statusRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// access logs one DEBUG line per request with method, path, status, and
+// duration. Per-request traffic is noise at Info — the GUI log viewer
+// renders the attributes pretty ("GET /api/v1/jobs 200 12ms") while the
+// file stays readable for everything that actually needs attention.
 func access(log *slog.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()
-		next.ServeHTTP(w, r)
-		log.Info("http request", "method", r.Method, "path", r.URL.Path, "durationMs", time.Since(started).Milliseconds())
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+		log.Debug("http request", "method", r.Method, "path", r.URL.Path, "status", rec.status, "durationMs", time.Since(started).Milliseconds())
 	})
 }
 

@@ -17,13 +17,24 @@ import {
 import { useServerState } from '../lib/state';
 
 // renderLogLine formats one JSONL log record as "time LEVEL message" —
-// the server's slog JSON handler keys — and renders anything unparsable
-// or foreign raw.
+// the server's slog JSON handler keys — with HTTP access records rendered
+// pretty as "time LEVEL GET /api/v1/jobs 200 12ms" from their attributes.
+// Anything unparsable, foreign, or missing an access attribute renders raw
+// or in the generic shape.
 function renderLogLine(line: string): string {
   try {
-    const parsed = JSON.parse(line) as { time?: unknown; level?: unknown; msg?: unknown };
+    const parsed = JSON.parse(line) as Record<string, unknown>;
     if (typeof parsed.time === 'string' || typeof parsed.msg === 'string') {
-      return [parsed.time, parsed.level, parsed.msg].filter(value => typeof value === 'string').join(' ');
+      const head = [parsed.time, parsed.level].filter(value => typeof value === 'string');
+      if (parsed.msg === 'http request') {
+        const attrs = [parsed.method, parsed.path, parsed.status, typeof parsed.durationMs === 'number' ? `${parsed.durationMs}ms` : undefined]
+          .filter(value => value !== undefined)
+          .map(value => String(value));
+        if (attrs.length === 4) {
+          return [...head, ...attrs].join(' ');
+        }
+      }
+      return [...head, parsed.msg].filter(value => typeof value === 'string').join(' ');
     }
   } catch { /* not JSON: raw */ }
   return line;

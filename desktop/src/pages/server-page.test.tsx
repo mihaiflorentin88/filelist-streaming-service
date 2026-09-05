@@ -210,6 +210,26 @@ describe('ServerPage log viewer', () => {
     expect(fakeBindings.readLogs.mock.calls.length).toBe(calls);
   });
 
+  it('renders http access records pretty and keeps the generic fallback', async () => {
+    fakeBindings.readLogs.mockResolvedValue({
+      lines: [
+        '{"time":"2026-09-05T10:00:02.000Z","level":"DEBUG","msg":"http request","method":"GET","path":"/api/v1/jobs","status":200,"durationMs":12}',
+        '{"time":"2026-09-05T10:00:03.000Z","level":"INFO","msg":"http request"}',
+        'still not json',
+      ],
+      nextOffset: 220,
+      size: 220,
+    });
+    const host = await mount();
+    await act(async () => { button('View logs').click() });
+    await act(async () => { });
+    const view = host.querySelector('.log-view')!.textContent!;
+    expect(view).toContain('2026-09-05T10:00:02.000Z DEBUG GET /api/v1/jobs 200 12ms');
+    // An access record missing its attributes keeps the generic shape.
+    expect(view).toContain('2026-09-05T10:00:03.000Z INFO http request');
+    expect(view).toContain('still not json');
+  });
+
   it('pauses the tail on scroll-up and resumes at the bottom', async () => {
     fakeBindings.readLogs.mockResolvedValue({
       lines: ['{"time":"t1","level":"INFO","msg":"one"}'],
