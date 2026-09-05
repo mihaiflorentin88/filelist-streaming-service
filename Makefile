@@ -93,7 +93,9 @@ build-arm64-headless: web
 		-ldflags="$(GO_LDFLAGS)" \
 		-o bin/filelist-streaming-linux-arm64-headless ./cmd/server
 
-# Seven release binaries. Per-target prerequisites:
+# Seven release binaries, then the universal macOS .app (this file's own
+# host flow: on a macOS host the recipe ends by packaging
+# bin/"FileList Streaming.app" from the two darwin slices via lipo).
 #   - all: web + desktop-assets once (embedded UIs), wails3 on PATH.
 #   - windows amd64/arm64: cgo-free; icon/version resources via
 #     cmd/server/wails_windows_<arch>.syso (wails3 generate syso, generated
@@ -105,7 +107,7 @@ build-arm64-headless: web
 #     arm64 hosts — expect a long build).
 #   - linux armv7: pure headless (CGO_ENABLED=0; internal/gui compiles to
 #     the ErrNoDisplay fallback via build tags, no webkit2gtk needed).
-## build-all: seven release binaries -> bin/filelist-streaming-<os>-<arch>[.exe] (Docker + wails3)
+## build-all: seven release binaries + universal macOS .app -> bin/ (Docker + wails3; macOS host for the .app)
 build-all: web desktop-assets | wails-cross
 	GOCACHE="$(GO_CACHE)" $(WAILS3) task windows:build ARCH=amd64 OUTPUT=bin/filelist-streaming-windows-amd64.exe GO_LDFLAGS="$(GO_LDFLAGS)"
 	GOCACHE="$(GO_CACHE)" $(WAILS3) task windows:build ARCH=arm64 OUTPUT=bin/filelist-streaming-windows-arm64.exe GO_LDFLAGS="$(GO_LDFLAGS)"
@@ -126,6 +128,7 @@ build-all: web desktop-assets | wails-cross
 		-ldflags="$(GO_LDFLAGS)" \
 		-o bin/filelist-streaming-linux-amd64 ./cmd/server
 	GOCACHE="$(GO_CACHE)" CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -trimpath -ldflags="$(GO_LDFLAGS)" -o bin/filelist-streaming-linux-armv7 ./cmd/server
+	$(MAKE) package-darwin
 
 # web refreshes the browser build that `go:embed static/*` freezes into the
 # server binary, so the build* targets never ship a stale UI. It runs the

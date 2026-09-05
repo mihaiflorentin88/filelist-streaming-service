@@ -37,7 +37,7 @@ make deploy-pi
 
 ## Desktop GUI
 
-The single binary embeds both UIs: the desktop shell (`internal/gui/static`, built from `desktop/` with Preact) and the browser UI (`internal/adapters/httpapi/static`). `make build` produces a host-native cgo GUI build (macOS/Linux hosts; Windows hosts stay cgo-free), and `make build-all` produces the seven release binaries through the Wails Docker cross toolchain.
+The single binary embeds both UIs: the desktop shell (`internal/gui/static`, built from `desktop/` with Preact) and the browser UI (`internal/adapters/httpapi/static`). `make build` produces a host-native cgo GUI build (macOS/Linux hosts; Windows hosts stay cgo-free), and `make build-all` produces the seven release binaries through the Wails Docker cross toolchain; on a macOS host it ends by packaging the universal `bin/FileList Streaming.app` from the two darwin slices.
 
 Tooling:
 
@@ -65,7 +65,7 @@ Cross-builds:
 
 ```sh
 make build-arm64    # linux/arm64 GUI binary via the wails-cross Docker image
-make build-all      # all seven release binaries (Docker required)
+make build-all      # all seven release binaries + universal macOS .app (Docker; .app needs a macOS host)
 ```
 
 `make wails-cross` builds the wails-cross container images used by the Linux GUI cross-builds (first run pulls/builds ~800 MB per platform). The Linux cross builds compile with cgo against gtk3/webkit2gtk-4.1 inside the container (`-tags production,gtk3`), so no host GTK packages are needed. `filelist-streaming-linux-armv7` stays a pure `CGO_ENABLED=0` headless build: the GUI is excluded by build tags on `linux/arm` (`internal/gui` compiles to the `ErrNoDisplay` fallback), which is why no webkit2gtk toolchain is required for that target.
