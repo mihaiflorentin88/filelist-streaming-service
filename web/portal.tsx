@@ -148,6 +148,7 @@ export function PortalAccountDialog({ client, storage, origin, identity, onIdent
     }
     const controller = new AbortController();
     pending.current = controller;
+    setBusy(true);
     setError('');
     try {
       if (mode === 'register') {

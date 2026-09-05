@@ -422,4 +422,26 @@ describe('update controls', () => {
     expect(onIdentity).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
   });
+  it('double-submit during an in-flight sign-in issues exactly one request', async () => {
+    const { promise } = Promise.withResolvers<PortalSession>();
+    const sessionSpy = vi.spyOn(API.prototype, 'portalSession').mockImplementation(() => promise);
+    function DialogHarness() {
+      return <PortalAccountDialog client={new API(location.origin)} storage={store} origin={location.origin} identity={null} onIdentity={vi.fn()} onClose={vi.fn()} />;
+    }
+    const mounted = mountComponent(<DialogHarness />);
+    await mounted.render();
+    await act(async () => {
+      const email = latestHost().querySelector<HTMLInputElement>('.portal-account-dialog input[type=email]')!;
+      email.value = 'ada@example.invalid';
+      email.dispatchEvent(new Event('input', { bubbles: true }));
+      const pw = latestHost().querySelector<HTMLInputElement>('.portal-account-dialog input[type=password]')!;
+      pw.value = 'correct-horse';
+      pw.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const submit = () => { latestHost().querySelector<HTMLButtonElement>('.portal-account-dialog button[type=submit]')!.click(); };
+    await act(async () => { submit() });
+    await act(async () => { submit() });
+    expect(sessionSpy).toHaveBeenCalledTimes(1);
+    expect(latestHost().querySelector<HTMLButtonElement>('.portal-account-dialog button[type=submit]')!.disabled).toBe(true);
+  });
 });
