@@ -65,6 +65,7 @@ type Settings struct {
 	WatchedThresholdPercent    int      `json:"watchedThresholdPercent"`
 	MaxConcurrentJobs          int      `json:"maxConcurrentJobs"`
 	TitleRefreshTimeoutMinutes int      `json:"titleRefreshTimeoutMinutes"`
+	PortalAPIKey               string   `json:"portalAPIKey,omitempty"`
 }
 
 func Defaults() Settings {
@@ -508,6 +509,9 @@ func mergeSecrets(next *Settings, old Settings) {
 	}
 	if next.SubDLAPIKey == "" {
 		next.SubDLAPIKey = old.SubDLAPIKey
+	}
+	if next.PortalAPIKey == "" {
+		next.PortalAPIKey = old.PortalAPIKey
 	}
 }
 

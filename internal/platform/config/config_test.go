@@ -387,3 +387,55 @@ func TestRestartRequiredTracksListenerAndEngine(t *testing.T) {
 		t.Fatal("instance name alone never requires restart")
 	}
 }
+
+func TestPortalAPIKeyPreservationAndRedaction(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+	store, err := LoadAt(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	next := store.Get()
+	next.PortalAPIKey = "portal-secret"
+	if err := store.Save(next); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("settings file permissions = %v, want 0600", perm)
+	}
+
+	reloaded, err := LoadAt(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := reloaded.Get().PortalAPIKey; got != "portal-secret" {
+		t.Fatalf("key did not persist: %q", got)
+	}
+
+	blank := reloaded.Get()
+	blank.PortalAPIKey = ""
+	if err := reloaded.Save(blank); err != nil {
+		t.Fatal(err)
+	}
+	after, err := LoadAt(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := after.Get().PortalAPIKey; got != "portal-secret" {
+		t.Fatalf("blank submission clobbered the stored key: %q", got)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"portalAPIKey"`) {
+		t.Fatalf("key missing from persisted settings: %s", data)
+	}
+}

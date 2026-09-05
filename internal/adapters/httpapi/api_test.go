@@ -98,8 +98,9 @@ func TestParseRange(t *testing.T) {
 	}
 }
 
-func TestSettingsResponseRedactsSecrets(t *testing.T) {
+func TestPortalAPIKeyRedactedAndSchemaSensitive(t *testing.T) {
 	v := config.Defaults()
+	v.PortalAPIKey = "portal-secret"
 	v.FileListPasskey = "filelist-secret"
 	v.QBittorrentPassword = "qb-secret"
 	v.TMDBAPIKey = "tmdb-secret"
@@ -108,14 +109,35 @@ func TestSettingsResponseRedactsSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(b)
-	for _, secret := range []string{"filelist-secret", "qb-secret", "tmdb-secret"} {
+	for _, secret := range []string{"portal-secret", "filelist-secret", "qb-secret", "tmdb-secret"} {
 		if strings.Contains(text, secret) {
-			t.Fatalf("response leaked %s", secret)
+			t.Fatal("response leaked " + secret)
 		}
 	}
-	if !strings.Contains(text, `"fileListPasskeyConfigured":true`) || !strings.Contains(text, `"qbittorrentPasswordConfigured":true`) {
+	if !strings.Contains(text, `"portalAPIKeyConfigured":true`) || !strings.Contains(text, `"fileListPasskeyConfigured":true`) || !strings.Contains(text, `"qbittorrentPasswordConfigured":true`) {
 		t.Fatal("configured indicators missing")
 	}
+	blank := RedactedSettings(config.Defaults(), "data/settings.json")
+	if blank.PortalAPIKeyConfigured {
+		t.Fatal("portalAPIKeyConfigured must be false for a blank key")
+	}
+
+	store, err := config.LoadAt(filepath.Join(t.TempDir(), "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range SettingsSchema(store) {
+		if field.Key == "portalApiKey" {
+			if !field.Sensitive {
+				t.Error("portalApiKey must be sensitive")
+			}
+			if field.RestartRequired {
+				t.Error("portalApiKey must not be restart-required")
+			}
+			return
+		}
+	}
+	t.Fatal("settings schema lost portalApiKey")
 }
 
 func TestContentTypeUsesBrowserMediaTypes(t *testing.T) {
