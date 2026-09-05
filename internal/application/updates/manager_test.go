@@ -437,6 +437,102 @@ func TestHourlyCheckNeverInstalls(t *testing.T) {
 	}
 }
 
+// TestRelaunchArgsRecordedBeforeHelperHandoff pins the plain-supervision
+// identity contract: the composed relaunch arguments are recorded in the
+// marker before the helper is spawned, and systemd's clean exit records
+// nothing (the service supervisor restarts with its own ExecStart).
+func TestRelaunchArgsRecordedBeforeHelperHandoff(t *testing.T) {
+	t.Run("plain supervision records the composed args", func(t *testing.T) {
+		t.Setenv(RelaunchArgsEnv, "")
+		fixture := newUpdateFixture(t, updateFixtureOptions{
+			current:   "0.3.0",
+			candidate: "0.4.0",
+			mutate: func(deps *ManagerDeps) {
+				deps.RelaunchArgs = []string{"serve", "--data-dir", "/srv/data"}
+			},
+		})
+		if _, err := fixture.manager.Apply(context.Background()); err != nil {
+			t.Fatalf("apply: %v", err)
+		}
+		waitFor(t, 5*time.Second, "handoff", func() bool { return fixture.life.handoffCount() == 1 })
+		got, ok := TakeRelaunchArgs()
+		if !ok {
+			t.Fatal("handoff recorded no relaunch arguments")
+		}
+		if strings.Join(got, " ") != "serve --data-dir /srv/data" {
+			t.Fatalf("recorded relaunch args = %v", got)
+		}
+	})
+
+	t.Run("systemd clean exit records nothing", func(t *testing.T) {
+		t.Setenv(RelaunchArgsEnv, "")
+		fixture := newUpdateFixture(t, updateFixtureOptions{
+			current:   "0.3.0",
+			candidate: "0.4.0",
+			mutate: func(deps *ManagerDeps) {
+				deps.Supervision = SupervisionSystemd
+				deps.RelaunchArgs = []string{"serve", "--data-dir", "/srv/data"}
+			},
+		})
+		if _, err := fixture.manager.Apply(context.Background()); err != nil {
+			t.Fatalf("apply: %v", err)
+		}
+		waitFor(t, 5*time.Second, "exit", func() bool { return len(fixture.life.exitCodes()) == 1 })
+		if _, ok := TakeRelaunchArgs(); ok {
+			t.Fatal("systemd handoff must not record relaunch arguments")
+		}
+	})
+}
+
+// TestCancelledApplyEmitsNoFailure pins finding 3: a request cancelled
+// during the pre-acceptance check journals nothing — no operation started
+// — while a real accepted-pipeline failure still journals updates.failed.
+func TestCancelledApplyEmitsNoFailure(t *testing.T) {
+	release := make(chan struct{})
+	fixture := newUpdateFixture(t, updateFixtureOptions{
+		current:   "0.3.0",
+		candidate: "0.4.0",
+		notice: func(ctx context.Context) (string, bool, error) {
+			select {
+			case <-release:
+				return "0.4.0", true, nil
+			case <-ctx.Done():
+				return "", false, ctx.Err()
+			}
+		},
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	applyDone := make(chan error, 1)
+	go func() {
+		_, err := fixture.manager.Apply(ctx)
+		applyDone <- err
+	}()
+	cancel()
+	if err := <-applyDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled pre-acceptance apply = %v", err)
+	}
+	if events := fixture.events.list(); len(events) != 0 {
+		t.Fatalf("cancelled pre-acceptance apply emitted %v", events)
+	}
+
+	// A real accepted-pipeline failure still journals.
+	failing := newUpdateFixture(t, updateFixtureOptions{
+		current:   "0.3.0",
+		candidate: "0.4.0",
+		assets: func(context.Context, Selection) (io.ReadCloser, error) {
+			return nil, errors.New("download failed")
+		},
+	})
+	result, err := failing.manager.Apply(context.Background())
+	if err != nil || !result.Accepted {
+		t.Fatalf("apply: accepted=%v err=%v", result.Accepted, err)
+	}
+	waitFor(t, 5*time.Second, "journaled failure", func() bool { return len(failing.events.failures()) == 1 })
+	if failing.manager.Current().Applying {
+		t.Error("status stays applying after a failed pipeline")
+	}
+}
+
 func TestAcceptedApplySurvivesRequestCancellation(t *testing.T) {
 	release := make(chan struct{})
 	fixture := newUpdateFixture(t, updateFixtureOptions{

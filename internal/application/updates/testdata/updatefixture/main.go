@@ -248,6 +248,9 @@ func managerApply() error {
 	if !result.Accepted {
 		return fmt.Errorf("apply not accepted: %+v", result.Status)
 	}
+	// No HTTP response is flushed in the fixture: release the accepted
+	// apply's handoff barrier immediately, like the real CLI path.
+	manager.ResponseFlushed()
 	if err := manager.WaitIdle(context.Background()); err != nil {
 		return err
 	}

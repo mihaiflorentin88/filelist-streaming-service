@@ -162,13 +162,21 @@ func runServe(dataDir string, update bool, log logger) error {
 // runUpdateStep performs the blocking --update transaction with the same
 // coordinator the running server uses. An accepted apply blocks until the
 // handoff exits the process; WaitIdle returning always means the operation
-// failed observably (the failure is journaled), and serving proceeds.
+// failed observably, and serving proceeds.
 func runUpdateStep(log logger) error {
 	coordinator, err := openUpdateCoordinator(log)
 	if err != nil {
 		log.Warn("update step unavailable; serving anyway", "error", err)
 		return nil
 	}
+	return applyUpdateBeforeServing(coordinator, log)
+}
+
+// applyUpdateBeforeServing runs one coordinator apply to its observable
+// end. An accepted apply blocks until the handoff exits the process;
+// WaitIdle returning always means the operation failed observably (the
+// failure is journaled), and serving proceeds.
+func applyUpdateBeforeServing(coordinator *updates.Manager, log logger) error {
 	result, err := coordinator.Apply(context.Background())
 	if err != nil {
 		log.Warn("update check failed; serving anyway", "error", err)
@@ -179,6 +187,10 @@ func runUpdateStep(log logger) error {
 		return nil
 	}
 	log.Info("update accepted; handing off to the new installation", "version", result.Status.Latest)
+	// No HTTP response is flushed on this path, so the accepted apply's
+	// handoff barrier is released right away — otherwise the pipeline
+	// would sit out the whole flush window before downloading.
+	coordinator.ResponseFlushed()
 	if err := coordinator.WaitIdle(context.Background()); err != nil {
 		log.Error("update operation failed", "error", err)
 	}

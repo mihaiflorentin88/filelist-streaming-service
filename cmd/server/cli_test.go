@@ -2,12 +2,19 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mihaiflorentin88/filelist-streaming-service/internal/application/updates"
 	"github.com/mihaiflorentin88/filelist-streaming-service/internal/platform/config"
@@ -121,4 +128,61 @@ func TestApplyRelaunchArgsAdoptsOriginalInvocation(t *testing.T) {
 	if os.Getenv(updates.RelaunchArgsEnv) != "" {
 		t.Fatal("relaunch marker must be consumed, not passed on")
 	}
+}
+
+// TestApplyUpdateBeforeServingReleasesFlushBarrier pins finding 2: the
+// CLI path releases the accepted apply's handoff barrier immediately, so
+// the pipeline never sits out the flush window before downloading. With a
+// 5s flush wait and a download that fails fast, the step returns promptly;
+// a missing release would stall for the whole window.
+func TestApplyUpdateBeforeServingReleasesFlushBarrier(t *testing.T) {
+	dir := t.TempDir()
+	identity := updates.Identity{Version: "0.3.0", GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Flavor: updates.FlavorGUI}
+	coordinator := updates.NewManager(updates.ManagerDeps{
+		Identity: identity,
+		Resolver: updates.NewResolver(identity, stubSource{}),
+		Notice: func(context.Context) (string, bool, error) {
+			return "0.4.0", true, nil
+		},
+		Assets: func(context.Context, updates.Selection) (io.ReadCloser, error) {
+			return nil, errors.New("download failed immediately")
+		},
+		Sink:             func(string, any) {},
+		InstallDir:       dir,
+		Executable:       filepath.Join(dir, "filelist-streaming"),
+		Exit:             func(int) {},
+		FlushWait:        5 * time.Second,
+		OperationTimeout: 30 * time.Second,
+	})
+	started := time.Now()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	if err := applyUpdateBeforeServing(coordinator, log); err != nil {
+		t.Fatalf("applyUpdateBeforeServing: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 3*time.Second {
+		t.Fatalf("accepted apply stalled %s before the pipeline ran: the flush barrier was not released", elapsed)
+	}
+}
+
+// stubSource serves the stable release the resolver validates against.
+type stubSource struct{}
+
+func (stubSource) LatestRelease(context.Context) (updates.Release, error) {
+	tag := "v0.4.0"
+	url := func(name string) string {
+		return "https://github.com/mihaiflorentin88/filelist-streaming-service/releases/download/" + tag + "/" + name
+	}
+	return updates.Release{
+		Tag: tag,
+		URL: "https://github.com/mihaiflorentin88/filelist-streaming-service/releases/tag/" + tag,
+		Assets: []updates.Asset{
+			{Name: "filelist-streaming-0.4.0-darwin-arm64.tar.gz", URL: url("filelist-streaming-0.4.0-darwin-arm64.tar.gz")},
+			{Name: "SHA256SUMS", URL: url("SHA256SUMS")},
+		},
+	}, nil
+}
+
+func (stubSource) ChecksumManifest(_ context.Context, _ string) (string, error) {
+	sum := sha256.Sum256([]byte("irrelevant"))
+	return hex.EncodeToString(sum[:]) + "  filelist-streaming-0.4.0-darwin-arm64.tar.gz\n", nil
 }

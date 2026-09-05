@@ -399,6 +399,13 @@ func (m *Manager) beginApply(ctx context.Context, barrier chan struct{}) (ApplyR
 	}
 	result, err := m.applyAccepted(ctx, barrier)
 	if err != nil {
+		// A request cancelled during the pre-acceptance check started no
+		// operation: release the token silently instead of journaling a
+		// failure for a plain context.Canceled.
+		if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+			m.finishOperation(nil)
+			return ApplyResult{}, err
+		}
 		m.finishOperation(err)
 		return ApplyResult{}, err
 	}
@@ -505,9 +512,20 @@ func (m *Manager) install(ctx context.Context, cancel context.CancelFunc, sel Se
 	}
 	if m.deps.Supervision == SupervisionSystemd {
 		// Clean exit for the service supervisor: Restart=always relaunches
-		// into the new installation, whose startup recovery acknowledges
-		// health (or rolls back past the deadline). No helper is involved.
+		// into the new installation with the unit's real ExecStart, and
+		// its startup recovery acknowledges health. No helper, no relaunch
+		// marker.
 		m.exitProcess()
+		return
+	}
+	// The S5 helper launches the new installation with no arguments, so
+	// the invocation this process served under — data-dir identity
+	// included, update markers stripped — must travel in the relaunch
+	// marker. A recording failure fails the operation: a headless relaunch
+	// without its arguments would die in the root command and roll the
+	// server down.
+	if err := SetRelaunchArgs(m.deps.RelaunchArgs); err != nil {
+		failure = fmt.Errorf("record relaunch arguments: %w", err)
 		return
 	}
 	if err := m.handoffFor(installer, op, payload); err != nil {
