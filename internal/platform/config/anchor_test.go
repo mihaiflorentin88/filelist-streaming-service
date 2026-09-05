@@ -19,7 +19,7 @@ func TestLoadAtAnchorsRelativeDefaultsToSettingsDir(t *testing.T) {
 	}
 	got := s.Get()
 	checks := map[string]struct{ got, want string }{
-		"databasePath":      {got.DatabasePath, filepath.Join(dir, "filelist.db")},
+		"downloadRoot":      {got.DownloadRoot, filepath.Join(dir, "downloads")},
 		"torrentSessionDir": {got.TorrentSessionDir, filepath.Join(dir, "torrent-session")},
 		"artworkCachePath":  {got.ArtworkCachePath, filepath.Join(dir, "artwork")},
 		"subtitleCachePath": {got.SubtitleCachePath, filepath.Join(dir, "subtitles")},

@@ -45,12 +45,12 @@ One binary runs two modes:
 The first headless start asks three questions:
 
 ```text
-Download root [/srv/filelist-downloads]: /home/you/media
+Download root [data/downloads]: /home/you/media
 FileList username: you
 FileList passkey:
 ```
 
-- **Download root** — where downloads are stored; must be writable. Enter accepts the default.
+- **Download root** — where downloads are stored; must be writable. Enter accepts the default. A relative root (like the default) resolves against the resolved data directory, not the working directory, and the same anchoring keeps the other default paths (`data/filelist.db`, `data/torrent-session`, `data/artwork`, `data/subtitles`) inside the data dir on every launch style.
 - **FileList username / passkey** — from your filelist.io profile; the passkey is typed hidden.
 - Answers are saved to `data/settings.json` (mode `0600`), and ffmpeg/ffprobe are auto-detected from PATH.
 
