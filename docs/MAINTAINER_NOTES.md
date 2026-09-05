@@ -37,6 +37,15 @@ This file records constraints and invariants that must survive context resets an
 - Pin GitHub Actions to the commit behind an annotated release tag (`refs/tags/<tag>^{}`), not the tag-object SHA. Trivy SARIF must set `limit-severities-for-sarif: true`; otherwise its exit code includes severities outside the configured HIGH/CRITICAL release gate.
 - CycloneDX Go application SBOM generation receives the repository module root (`.`) and identifies the executable with `-main cmd/server`; a package directory is not itself a Go module.
 - A master push builds the complete release matrix without publishing. Only an exact version tag publishes Linux amd64/arm64/armv7, Windows amd64, macOS amd64/arm64, the unsigned Apps2Samsung WGT, checksums, CycloneDX/SPDX SBOMs, and provenance attestations.
+- A tagged release additionally notifies the update feed service: the
+  `notify-update-feed` job runs `scripts/notify-release.mjs` after a
+  successful `publish` (GitHub environment `prod`, secret `FL_ADS_APIKEY` —
+  already configured by the user; never query or overwrite it). A failed
+  notification must never delete or recreate the release or rerun
+  `gh release create`; the service's five-minute reconciliation is the
+  automatic recovery. The matching receiver credential and endpoint
+  deployment on the update-feed service are still pending, and `prod`
+  environment approvals can delay the notification push.
 
 ## Next verification/implementation checkpoints
 
