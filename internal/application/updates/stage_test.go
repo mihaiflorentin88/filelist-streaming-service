@@ -467,6 +467,27 @@ func TestExtractHandlesDirectoryMembersAndNestedPaths(t *testing.T) {
 	if err != nil || string(data) != "guide\n" {
 		t.Errorf("nested member content = %q, err %v", data, err)
 	}
+
+	// The zip path must behave the same for nested regular members without
+	// explicit directory entries. (Symlinks are bundle-only; bundle fixtures
+	// cannot carry extra members past signing, so the symlink parent-dir guard
+	// is not pinned here — real ditto/zip -r output always emits directories.)
+	winDest := t.TempDir()
+	winPayload := fileBytes(t, fixtureBinary(t, "windows", "amd64", 0, nil, "0.4.0"))
+	winArchive := buildZip(t, []zipMember{
+		{name: "filelist-streaming.exe", data: winPayload},
+		{name: "docs/guide.md", data: []byte("guide\n")},
+	})
+	winSel := testSelection("filelist-streaming-0.4.0-windows-amd64.zip", "0.4.0", winArchive)
+	winStaged := stageData(t, winDest, winArchive, winSel, defaultTestLimits())
+	winResult, err := winStaged.Extract(winDest, Identity{GOOS: "windows", GOARCH: "amd64", Flavor: FlavorGUI}.Target(), defaultTestLimits())
+	if err != nil {
+		t.Fatalf("zip nested extraction: %v", err)
+	}
+	guide, err := os.ReadFile(filepath.Join(winResult.Dir, "docs", "guide.md"))
+	if err != nil || string(guide) != "guide\n" {
+		t.Errorf("zip nested member = %q, err %v", guide, err)
+	}
 }
 
 func TestExtractAcceptsZeroSizeMembers(t *testing.T) {

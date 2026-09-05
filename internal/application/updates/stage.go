@@ -450,6 +450,9 @@ func extractZip(archivePath, dir string, target Target, limits Limits) error {
 			if err := rules.checkLinkTarget(cleanArchiveName(name), linkName); err != nil {
 				return err
 			}
+			if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+				return fmt.Errorf("extract: create parent directory: %w", err)
+			}
 			if err := os.Symlink(linkName, dest); err != nil {
 				return fmt.Errorf("extract: create symlink: %w", err)
 			}
