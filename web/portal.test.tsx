@@ -5,7 +5,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { API, portalSessionKey, type PortalState, type PortalUser, type UpdateStatus } from '@filelist/shared';
 import { App } from './src';
-import { PortalPromotionSlot, UpdateApplyConfirm, UpdateSection, useUpdateController } from './portal';
+import { PortalAccountDialog, PortalPromotionSlot, UpdateApplyConfirm, UpdateSection, useUpdateController } from './portal';
 
 // Behavioral regression tests for the S9 portal and self-update surfaces.
 // The whole app mounts through the same seams as settings.test.tsx; SSE
@@ -154,6 +154,14 @@ describe('stored supporter identity', () => {
     expect(store.getItem(portalSessionKey(location.origin))).toBeNull();
   });
 
+  it('a plain network failure keeps the stored token for the next boot', async () => {
+    store.setItem(portalSessionKey(location.origin), JSON.stringify({ token: 'live', expiresAt: Date.now() + 60_000 }));
+    meStatus = 503;
+    await mountApp();
+    await settle();
+    expect(JSON.parse(store.getItem(portalSessionKey(location.origin))!).token).toBe('live');
+  });
+
   it('a valid session restores the display name while donor state stays a separate snapshot field', async () => {
     store.setItem(portalSessionKey(location.origin), JSON.stringify({ token: 'live', expiresAt: Date.now() + 60_000 }));
     portalStateValue = { ...enabledSnapshot, donor: true };
@@ -185,6 +193,22 @@ describe('account capability gating', () => {
     expect(latestHost().querySelector('.settings-panel')!.textContent).not.toContain('Supporter API key');
     // The stored server key survives: nothing erased it client-side.
     expect(storedSettings.portalAPIKeyConfigured).toBe(true);
+  });
+
+  it('capability loss drops the open-flag so a later re-enable does not re-open the dialog', async () => {
+    portalStateValue = enabledSnapshot;
+    await mountApp();
+    await settle();
+    await act(async () => { (document.querySelector('.portal-account') as HTMLElement).click() });
+    expect(document.querySelector('.overlay[aria-label="Account"]')).toBeTruthy();
+    portalStateSequence = [disabledSnapshot];
+    await act(async () => { stream().emit('portal.state', envelope('portal.state', disabledSnapshot, 2)) });
+    await settle();
+    expect(document.querySelector('.overlay[aria-label="Account"]')).toBeNull();
+    portalStateSequence = [{ ...enabledSnapshot }];
+    await act(async () => { stream().emit('portal.state', envelope('portal.state', enabledSnapshot, 3)) });
+    await settle();
+    expect(document.querySelector('.overlay[aria-label="Account"]')).toBeNull();
   });
 
   it('a hidden or failed portal surface renders no account, promotion, or project shell at all', async () => {
@@ -222,6 +246,7 @@ describe('promotion slot', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(8000) });
     expect(mounted.host.textContent).toContain('Second');
     expect(delivery).toHaveBeenCalledTimes(1);
+    // Clicks go through the local tracking route, never a direct upstream URL.
     await act(async () => { (mounted.host.querySelector('.portal-promo a') as HTMLElement).click() });
     expect(opened).toEqual([`${location.origin}/api/v1/portal/promotions/prov/p2/click`]);
     // A hidden document cancels the rotation timer: no advance, no refetch.
@@ -270,13 +295,13 @@ describe('SSE recovery', () => {
 // Test harness: the real controller hook plus the real section and confirm
 // overlay, with an internal status state so accepted applies and simulated
 // restarts flow through the same path as the app.
-function UpdateHarness({ status: initial, restarted, failApplyWith }: { status: UpdateStatus; restarted?: UpdateStatus; failApplyWith?: { status: number; detail: string } }) {
+function UpdateHarness({ status: initial, restarted, failApplyWith, failure = '' }: { status: UpdateStatus; restarted?: UpdateStatus; failApplyWith?: { status: number; detail: string }; failure?: string }) {
   const client = new API(location.origin);
   const [status, setStatus] = useState(initial);
   const controller = useUpdateController({ client, status, onStatus: setStatus });
   useEffect(() => { if (failApplyWith) applyOutcome = failApplyWith }, [failApplyWith]);
   return <div>
-    <UpdateSection client={client} status={status} connected controller={controller} openExternal={() => { }} />
+    <UpdateSection client={client} status={status} connected failure={failure} controller={controller} openExternal={() => { }} />
     <UpdateApplyConfirm controller={controller} />
     {restarted && <button onClick={() => setStatus(restarted)}>simulate-restart</button>}
   </div>;
@@ -325,6 +350,17 @@ describe('update controls', () => {
     expect(sectionText()).toContain('Update problem: the release could not be verified.');
   });
 
+  it('renders a server-reported failure and clears it with the next status', async () => {
+    const failing = mountComponent(<UpdateHarness status={availableStatus} failure='background apply failed' />);
+    await failing.render();
+    expect(sectionState()).toBe('failed');
+    expect(sectionText()).toContain('Update problem: background apply failed.');
+    const cleared = mountComponent(<UpdateHarness status={availableStatus} />);
+    await cleared.render();
+    expect(sectionState()).toBe('available');
+    expect(sectionText()).not.toContain('Update problem');
+  });
+
   it('surfaces a failed check as a neutral problem and confirms the restarted version after reconnect', async () => {
     checkOutcome = { status: 502, detail: 'repository unreachable' };
     const check = mountComponent(<UpdateHarness status={availableStatus} />);
@@ -348,11 +384,42 @@ describe('update controls', () => {
     function DisconnectedHarness() {
       const client = new API(location.origin);
       const controller = useUpdateController({ client, status: availableStatus, onStatus: () => { } });
-      return <UpdateSection client={client} status={availableStatus} connected={false} controller={controller} openExternal={() => { }} />;
+      return <UpdateSection client={client} status={availableStatus} connected={false} failure='' controller={controller} openExternal={() => { }} />;
     }
     const mounted = mountComponent(<DisconnectedHarness />);
     await mounted.render();
     expect(sectionState()).toBe('disconnected');
     expect(sectionText()).toContain('Server connection lost — reconnecting…');
+  });
+
+  it('unmount during an in-flight sign-in stores nothing and closes nothing', async () => {
+    const onIdentity = vi.fn();
+    const onClose = vi.fn();
+    vi.spyOn(API.prototype, 'portalSession').mockImplementation((email: string, password: string, signal?: AbortSignal) => {
+      const { promise, reject } = Promise.withResolvers<never>();
+      signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+      return promise;
+    });
+    function DialogHarness() {
+      return <PortalAccountDialog client={new API(location.origin)} storage={store} origin={location.origin} identity={null} onIdentity={onIdentity} onClose={onClose} />;
+    }
+    const mounted = mountComponent(<DialogHarness />);
+    await mounted.render();
+    await act(async () => {
+      const email = latestHost().querySelector<HTMLInputElement>('.portal-account-dialog input[type=email]')!;
+      email.value = 'ada@example.invalid';
+      email.dispatchEvent(new Event('input', { bubbles: true }));
+      const pw = latestHost().querySelector<HTMLInputElement>('.portal-account-dialog input[type=password]')!;
+      pw.value = 'correct-horse';
+      pw.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => { findButton('Sign in').click() });
+    // Unmount aborts the in-flight request; the AbortError path must not
+    // store the session, report identity, or close anything.
+    await mounted.unmount();
+    await settle();
+    expect(store.getItem(portalSessionKey(location.origin))).toBeNull();
+    expect(onIdentity).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
   });
 });

@@ -122,6 +122,11 @@ function usePortalDialogFocus(surface: { current: HTMLElement | null }, onClose:
 export function PortalAccountDialog({ client, storage, origin, identity, onIdentity, onClose }: { client: API; storage: PortalSessionStorage; origin: string; identity: PortalUser | null; onIdentity: (user: PortalUser | null) => void; onClose: () => void }) {
   const surface = useRef<HTMLElement | null>(null);
   usePortalDialogFocus(surface, onClose);
+  // An in-flight sign-in/register must not resolve after the dialog is
+  // gone: unmount aborts the request, and the AbortError guard keeps the
+  // late rejection from writing state into the unmounted component.
+  const pending = useRef<AbortController | null>(null);
+  useEffect(() => () => pending.current?.abort(), []);
   const [mode, setMode] = useState<'sign-in' | 'register'>('sign-in');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -142,7 +147,7 @@ export function PortalAccountDialog({ client, storage, origin, identity, onIdent
       if (password !== confirm) { setError('The passwords do not match.'); return }
     }
     const controller = new AbortController();
-    setBusy(true);
+    pending.current = controller;
     setError('');
     try {
       if (mode === 'register') {
@@ -155,10 +160,9 @@ export function PortalAccountDialog({ client, storage, origin, identity, onIdent
         const session = await client.portalSession(mail, password, controller.signal);
         savePortalSession(storage, origin, session);
         onIdentity(await client.portalMe(session.token, controller.signal));
-        onClose();
       }
     } catch (e) { if ((e as Error).name !== 'AbortError') setError((e as Error).message) }
-    finally { setBusy(false) }
+    finally { setBusy(false); pending.current = null }
   };
   return <div class="overlay" role="dialog" aria-modal="true" aria-label="Account">
     <section class="help-modal portal-account-dialog" ref={surface}>
@@ -261,20 +265,21 @@ export function UpdateWarning({ status, openExternal }: { status: UpdateStatus; 
 // Settings-side update surface: current version, live state line, check and
 // apply controls, and the mandatory warning block. Renders nothing when the
 // server does not expose the update surface.
-export function UpdateSection({ client, status, connected, controller, openExternal }: { client: API; status: UpdateStatus | null; connected: boolean; controller: UpdateController; openExternal: (url: string) => void }) {
+export function UpdateSection({ client, status, connected, failure, controller, openExternal }: { client: API; status: UpdateStatus | null; connected: boolean; failure: string; controller: UpdateController; openExternal: (url: string) => void }) {
   const { phase, outcome, reconnectedCurrent } = controller;
   if (!status) return null;
   const applying = phase === 'applying' || status.applying;
-  const state = applying ? 'applying' : outcome ? outcome.kind : !connected ? 'disconnected' : reconnectedCurrent ? 'reconnected' : status.available ? 'available' : 'current';
+  const state = applying ? 'applying' : outcome ? outcome.kind : !connected ? 'disconnected' : failure ? 'failed' : reconnectedCurrent ? 'reconnected' : status.available ? 'available' : 'current';
   const stateLine = phase === 'checking' ? 'Checking for updates…'
     : applying ? 'Applying the update — the server will restart.'
       : !connected ? 'Server connection lost — reconnecting…'
         : outcome?.kind === 'busy' ? 'An update is already in progress on the server.'
           : outcome?.kind === 'manual-only' ? 'This installation is manual-only: fetch and install a release yourself.'
             : outcome?.kind === 'failed' ? `Update problem: ${outcome.message || 'the operation did not succeed'}.`
-              : reconnectedCurrent ? `Connection restored — now running version ${status.currentVersion}.`
-                : status.available ? status.latest ? `Version ${status.latest} is available.` : 'A new version is available.'
-                  : `This server runs version ${status.currentVersion}. You are up to date.`;
+              : failure ? `Update problem: ${failure}.`
+                : reconnectedCurrent ? `Connection restored — now running version ${status.currentVersion}.`
+                  : status.available ? status.latest ? `Version ${status.latest} is available.` : 'A new version is available.'
+                    : `This server runs version ${status.currentVersion}. You are up to date.`;
   return <section class="update-section" aria-label="Server updates">
     <h2>Server updates</h2>
     <p class="update-state" data-state={state}>{stateLine}</p>

@@ -506,6 +506,7 @@ export function App() {
   const [portalConnected, setPortalConnected] = useState(true);
   const [identity, setIdentity] = useState<PortalUser | null>(null);
   const [accountOpen, setAccountOpen] = useState(false);
+  const [portalFailure, setPortalFailure] = useState('');
   const syncRef = useRef<PortalSync | null>(null);
   const openExternal = (url: string) => { window.open(url, '_blank', 'noopener,noreferrer') };
   const updates = useUpdateController({ client: api, status: updateStatus, onStatus: setUpdateStatus });
@@ -559,25 +560,29 @@ export function App() {
   useEffect(() => {
     const sync = new PortalSync({ loadState: () => api.portalState(), loadStatus: () => api.updatesCurrent() });
     syncRef.current = sync;
-    const render = () => { setPortal(sync.state); setUpdateStatus(sync.status); setPortalConnected(sync.connected) };
+    const render = () => { setPortal(sync.state); setUpdateStatus(sync.status); setPortalConnected(sync.connected); setPortalFailure(sync.failure) };
     render();
     const unsubscribe = sync.subscribe(render);
     void sync.recover();
     return () => unsubscribe();
   }, []);
   // Stored supporter identity: a stored token must prove itself against
-  // /session/me on boot; 401 or a locally expired record clears it. This is
-  // identity state only — the household donor flag lives in the snapshot.
+  // /session/me on boot; only a session-invalid answer (401) clears it — a
+  // plain network failure (server restarting, outage) keeps the token for
+  // the next boot. This is identity state only — the household donor flag
+  // lives in the snapshot.
   useEffect(() => {
     const storage = persistedStore();
     const origin = location.origin;
     const stored = loadPortalSession(storage, origin);
     if (!stored) return;
     const controller = new AbortController();
-    api.portalMe(stored.token, controller.signal).then(user => setIdentity(user)).catch(() => clearPortalSession(storage, origin));
+    api.portalMe(stored.token, controller.signal).then(user => setIdentity(user)).catch(error => { const status = (error as { status?: number }).status; if (status === 401) clearPortalSession(storage, origin) });
     return () => controller.abort();
   }, []);
-  // Deep links cold-load without navigation state: a /title URL fetches the
+  // A capability loss must also drop the open-flag: a later re-enable then
+  // does not spontaneously re-open the dialog the user lost.
+  useEffect(() => { if (accountOpen && portal && !portal.accountsEnabled) setAccountOpen(false) }, [accountOpen, portal]);
   // Detail through the same catalog call a tile uses; a /watch URL runs the
   // playDownload path honoring the URL's Source index and resume position.
   useEffect(() => {
@@ -659,7 +664,7 @@ export function App() {
     }
     {view === 'events' && <><CacheCoverage /><Events onError={setError} /></>
     }
-    {view === 'settings' && settings && <Settings value={settings} fields={settingsFields} onSaved={setSettings} onError={setError} onDirtyChange={value => { settingsDirty.current = value }} accountsEnabled={portal?.accountsEnabled === true} updateSection={updateStatus ? <UpdateSection client={api} status={updateStatus} connected={portalConnected} controller={updates} openExternal={openExternal} /> : null} />
+    {view === 'settings' && settings && <Settings value={settings} fields={settingsFields} onSaved={setSettings} onError={setError} onDirtyChange={value => { settingsDirty.current = value }} accountsEnabled={portal?.accountsEnabled === true} updateSection={updateStatus ? <UpdateSection client={api} status={updateStatus} connected={portalConnected} failure={portalFailure} controller={updates} openExternal={openExternal} /> : null} />
     }
   </main>{detail && <Detail key={`${detail.title.id}:${detailTarget.season || 0}:${detailTarget.episode || 0}`} detail={detail} target={detailTarget} resume={resumeForTitle(household.continueWatching, detail.title.id)} favorite={household.favorites.some(item => item.titleId === detail.title.id || item.catalog?.id === detail.title.id)} onClose={closeDetail} onPlay={() => playDetail(detail)} onResume={playLegacy} onSource={s => void prepare(s)} onPackAction={manageSeasonPack} onFavorite={async value => { await api.titleFavorite(detail.title.id, value); await loadState(); }} />}{picker && <SourcePicker sources={picker} onClose={() => setPicker(null)} onChoose={s => void prepare(s)} />} {player && <BrowserPlayer key={player.download.id} active={player} onClose={closePlayer} onStateChanged={loadState} onAdvance={advanceEpisode} />}{pendingLeave !== null && <div class="overlay" role="dialog" aria-modal="true" aria-label="Unsaved changes"><section class="help-modal"><h2>Leave with unsaved changes?</h2><p>Changes on the Settings page have not been saved yet.</p><div class="confirm-actions"><button type="button" onClick={() => setPendingLeave(null)}>Keep editing</button><button type="button" class="primary" onClick={confirmLeave}>Discard and leave</button></div></section></div>}{error && <div class="overlay error-overlay" role="alertdialog" aria-modal="true" aria-label="Something needs attention"><section class="error-modal"><h2>Something needs attention</h2><p>{error}</p><div class="confirm-actions"><button type="button" onClick={() => setError('')}>Dismiss</button></div></section></div>}{accountOpen && portal?.accountsEnabled && <PortalAccountDialog client={api} storage={persistedStore()} origin={location.origin} identity={identity} onIdentity={setIdentity} onClose={() => setAccountOpen(false)} />}{updates.phase === 'confirming' && <UpdateApplyConfirm controller={updates} />}</div>;
 }
