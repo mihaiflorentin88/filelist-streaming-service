@@ -69,7 +69,7 @@ func SettingsSchema(s *config.Store) []SchemaField {
 		{Key: "protectNeverWatched", Label: "Protect never-watched downloads", Help: "Keeps downloads the household has never finished watching out of eviction."},
 		{Key: "subDLUrl", Label: "SubDL API URL", Help: "Official SubDL API base used for direct subtitle files.", Obtain: "Use https://api.subdl.com.", Sensitive: false},
 		{Key: "subDLApiKey", Label: "SubDL API key", Help: "Free SubDL API credential used to search and download direct subtitle files.", Obtain: "Create a free account and generate a key in the API section at https://subdl.com/panel.", Sensitive: true},
-		{Key: "portalApiKey", Label: "Supporter API key", Help: "Optional supporter credential that unlocks the supporter-only sections of the catalog. Stored like a password.", Sensitive: true},
+		{Key: "portalAPIKey", Label: "Supporter API key", Help: "Optional supporter credential that unlocks the supporter-only sections of the catalog. Stored like a password.", Sensitive: true},
 		{Key: "subtitleCachePath", Label: "Subtitle cache path", Help: "Server directory containing prepared WebVTT and SAMI subtitle files."},
 		{Key: "subtitleCacheMaxBytes", Label: "Subtitle cache maximum bytes", Help: "Maximum disk space used by prepared and downloaded subtitle files."},
 		{Key: "ffprobePath", Label: "ffprobe path", Help: "Absolute path to ffprobe. It reads embedded subtitle language, title, codec and disposition metadata without transcoding.", Obtain: "Detected automatically on PATH at first start. Install FFmpeg with brew install ffmpeg (macOS), apt/dnf install ffmpeg (Linux), or winget install Gyan.FFmpeg (Windows); set a path manually only if auto-detection fails."},

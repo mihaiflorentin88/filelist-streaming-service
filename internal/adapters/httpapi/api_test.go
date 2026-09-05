@@ -127,17 +127,17 @@ func TestPortalAPIKeyRedactedAndSchemaSensitive(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, field := range SettingsSchema(store) {
-		if field.Key == "portalApiKey" {
+		if field.Key == "portalAPIKey" {
 			if !field.Sensitive {
-				t.Error("portalApiKey must be sensitive")
+				t.Error("portalAPIKey must be sensitive")
 			}
 			if field.RestartRequired {
-				t.Error("portalApiKey must not be restart-required")
+				t.Error("portalAPIKey must not be restart-required")
 			}
 			return
 		}
 	}
-	t.Fatal("settings schema lost portalApiKey")
+	t.Fatal("settings schema lost portalAPIKey")
 }
 
 func TestContentTypeUsesBrowserMediaTypes(t *testing.T) {
