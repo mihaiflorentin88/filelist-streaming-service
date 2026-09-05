@@ -15,6 +15,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/mihaiflorentin88/filelist-streaming-service/internal/application/updates"
 	"github.com/mihaiflorentin88/filelist-streaming-service/internal/composition"
 	"github.com/mihaiflorentin88/filelist-streaming-service/internal/gui"
 	"github.com/mihaiflorentin88/filelist-streaming-service/internal/platform/datadir"
@@ -44,8 +45,9 @@ func runGUI(opts guiOptions) error {
 }
 
 // newRootCommand separates command wiring from effects so tests can inject
-// the GUI and serve runners.
-func newRootCommand(runGUI func(guiOptions) error, runServe func(string, logger) error) *cobra.Command {
+// the GUI and serve runners. The serve runner receives the --update flag:
+// update-and-serve, never check-only.
+func newRootCommand(runGUI func(guiOptions) error, runServe func(string, bool, logger) error) *cobra.Command {
 	var dataDir string
 	var minimized bool
 	root := &cobra.Command{
@@ -62,6 +64,7 @@ func newRootCommand(runGUI func(guiOptions) error, runServe func(string, logger)
 	}
 	root.PersistentFlags().StringVar(&dataDir, "data-dir", "", "data directory (default: data/ next to the executable)")
 	root.Flags().BoolVar(&minimized, "minimized", false, "start minimized to the system tray")
+	var update bool
 	serve := &cobra.Command{
 		Use:   "serve",
 		Short: "run the headless streaming server",
@@ -73,9 +76,10 @@ func newRootCommand(runGUI func(guiOptions) error, runServe func(string, logger)
 			}
 			log, closeLog := newLogger(os.Stdout, isTerminal(os.Stdout), logFilePath(dir))
 			defer closeLog()
-			return runServe(dir, log)
+			return runServe(dir, update, log)
 		},
 	}
+	serve.Flags().BoolVar(&update, "update", false, "check for and install an update before serving, then continue from the new installation")
 	root.AddCommand(serve)
 	return root
 }
@@ -112,19 +116,29 @@ func versionString() string {
 	return composition.Version
 }
 
-// runServe is the headless server — settings resolution, composition, signal
-// handling, and ListenAndServe — the former main() body, parameterized.
-func runServe(dataDir string, log logger) error {
+// runServe is the headless server — optional update-and-serve step,
+// settings resolution, composition, signal handling, startup update
+// trigger after listener readiness, and ListenAndServe.
+func runServe(dataDir string, update bool, log logger) error {
 	settingsPath := os.Getenv(settingsPathEnv)
 	if settingsPath == "" {
 		settingsPath = filepath.Join(dataDir, "settings.json")
+	}
+	if update {
+		// The CLI update step owns the restart: a successful apply exits
+		// the process through the handoff, and the relaunched installation
+		// serves without --update. Any failure is reported and serving
+		// proceeds — an update failure never takes the server down.
+		if err := runUpdateStep(log); err != nil {
+			return err
+		}
 	}
 	app, err := openComposition(settingsPath, log)
 	if err != nil {
 		log.Error("startup failed", "error", err)
 		return err
 	}
-	defer app.Close()
+	defer func() { _ = app.Close(context.Background()) }()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -145,6 +159,52 @@ func runServe(dataDir string, log logger) error {
 	return nil
 }
 
+// runUpdateStep performs the blocking --update transaction with the same
+// coordinator the running server uses. An accepted apply blocks until the
+// handoff exits the process; WaitIdle returning always means the operation
+// failed observably (the failure is journaled), and serving proceeds.
+func runUpdateStep(log logger) error {
+	coordinator, err := openUpdateCoordinator(log)
+	if err != nil {
+		log.Warn("update step unavailable; serving anyway", "error", err)
+		return nil
+	}
+	result, err := coordinator.Apply(context.Background())
+	if err != nil {
+		log.Warn("update check failed; serving anyway", "error", err)
+		return nil
+	}
+	if !result.Accepted {
+		log.Info("update check: already current", "version", result.Status.CurrentVersion)
+		return nil
+	}
+	log.Info("update accepted; handing off to the new installation", "version", result.Status.Latest)
+	if err := coordinator.WaitIdle(context.Background()); err != nil {
+		log.Error("update operation failed", "error", err)
+	}
+	return nil
+}
+
+// openUpdateCoordinator builds the standalone --update coordinator, which
+// needs the process *slog.Logger for its degradation warnings.
+func openUpdateCoordinator(log logger) (*updates.Manager, error) {
+	sl, ok := log.(*slog.Logger)
+	if !ok {
+		return nil, fmt.Errorf("openUpdateCoordinator needs the process *slog.Logger, got %T", log)
+	}
+	return composition.NewUpdateCoordinator(sl), nil
+}
+
+// applyRelaunchArgs adopts the invocation an update handoff carried over:
+// the relaunched installation resumes the original command line (data-dir
+// identity included, --update stripped), and the marker is consumed — the
+// only update plumbing that survives the restart.
+func applyRelaunchArgs() {
+	if args, ok := updates.TakeRelaunchArgs(); ok {
+		os.Args = append([]string{os.Args[0]}, args...)
+	}
+}
+
 // openComposition assembles the application against settingsPath, keeping
 // the settings path explicit: the env bridge (os.Setenv) is gone —
 // composition.NewAt takes the path directly, and runServe passes
@@ -158,6 +218,9 @@ func openComposition(settingsPath string, log logger) (*composition.App, error) 
 }
 
 func main() {
+	// Adopt a helper-carried invocation before any command wiring: the
+	// relaunched installation resumes as if started with those arguments.
+	applyRelaunchArgs()
 	root := newRootCommand(runGUI, runServe)
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)

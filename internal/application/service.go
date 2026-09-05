@@ -219,6 +219,16 @@ func (s *Service) publish(kind string, payload any) {
 	}
 }
 
+// PublishEvent is the exported event-sink boundary (plan S3/S6):
+// composition bridges the integration hubs — the portal hub and the
+// self-update coordinator — onto the exact same journal-plus-fan-out path
+// as internal publishers, so integration events reach both the event
+// journal (SSE replay) and connected SSE subscribers (live delivery).
+// It is the private publish verbatim; there is no second bus.
+func (s *Service) PublishEvent(kind string, payload any) {
+	s.publish(kind, payload)
+}
+
 func (s *Service) SubscribeEvents() (<-chan domain.Event, func()) {
 	ch := make(chan domain.Event, 32)
 	s.eventMu.Lock()

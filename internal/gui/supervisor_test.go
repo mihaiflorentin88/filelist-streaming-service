@@ -20,8 +20,8 @@ import (
 // fakeApp is a controllable stand-in for composition.App. A nil serve
 // channel means ListenAndServe returns serveErr immediately; a non-nil
 // serve channel blocks until a value is sent, simulating a running
-// server. closeCalls counts Close() invocations (exactly one per app);
-// closed reports the first Close.
+// server. closeCalls counts Close invocations (exactly one per app);
+// closed reports the first Close; startups records StartupUpdate triggers.
 type fakeApp struct {
 	addr       string
 	serveErr   error
@@ -39,10 +39,11 @@ func (f *fakeApp) ListenAndServe() error {
 
 func (f *fakeApp) Shutdown(ctx context.Context) error { return ctx.Err() }
 
-func (f *fakeApp) Close() {
+func (f *fakeApp) Close(context.Context) error {
 	if f.closeCalls.Add(1) == 1 {
 		close(f.closed)
 	}
+	return nil
 }
 
 func (f *fakeApp) ListenAddress() string { return f.addr }
@@ -175,7 +176,7 @@ func TestSupervisorStopFromRunning(t *testing.T) {
 	select {
 	case <-app.closed:
 	default:
-		t.Fatal("Stop must call app.Close()")
+		t.Fatal("Stop must call app.Close")
 	}
 
 	mu.Lock()

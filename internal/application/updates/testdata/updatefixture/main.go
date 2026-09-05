@@ -1,8 +1,9 @@
 // Command updatefixture stands in for the real installation binary in
 // update transaction tests. Apply mode drives one installation transaction
-// and exits; helper mode runs the updates helper; normal mode performs the
-// readiness health acknowledgement and then idles like a serving
-// installation.
+// and exits; manager mode drives the coordinator's full Apply pipeline and
+// exits through the handoff like the real installing process; helper mode
+// runs the updates helper; normal mode performs the readiness health
+// acknowledgement and then idles like a serving installation.
 package main
 
 import (
@@ -12,6 +13,8 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -26,6 +29,20 @@ func main() {
 	// exit so the helper — which waits for this process — can take over.
 	if os.Getenv("FIXTURE_APPLY") == "1" {
 		if err := applyErr(); err != nil {
+			writeNamed("FIXTURE_APPLY_RESULT", err.Error())
+			os.Exit(1)
+		}
+		writeNamed("FIXTURE_APPLY_RESULT", "")
+		return
+	}
+
+	// Manager mode: drive the coordinator's Apply — fresh check, accept,
+	// barrier, staging, activation, handoff — and exit the process exactly
+	// like the real installing binary. A failed operation returns here and
+	// is reported through FIXTURE_APPLY_RESULT.
+	if os.Getenv("FIXTURE_MANAGER") == "1" {
+		os.Unsetenv("FIXTURE_MANAGER")
+		if err := managerApply(); err != nil {
 			writeNamed("FIXTURE_APPLY_RESULT", err.Error())
 			os.Exit(1)
 		}
@@ -190,6 +207,115 @@ func envMillis(name string) int64 {
 	var value int64
 	fmt.Sscanf(text, "%d", &value)
 	return value
+}
+
+// managerApply drives the coordinator's full Apply pipeline from the
+// FIXTURE_* environment. A successful handoff exits the process from
+// inside the pipeline (the default Exit), so WaitIdle returning on this
+// path always means the operation finished without a handoff: the event
+// journal carries the neutral updates.failed message.
+func managerApply() error {
+	sel := updates.Selection{
+		Version:   os.Getenv("FIXTURE_ASSET_VERSION"),
+		AssetName: os.Getenv("FIXTURE_ASSET_NAME"),
+		SHA256:    os.Getenv("FIXTURE_ASSET_SHA"),
+	}
+	identity := updates.Identity{
+		Version: os.Getenv("FIXTURE_IDENTITY_VERSION"),
+		GOOS:    os.Getenv("FIXTURE_TARGET_GOOS"),
+		GOARCH:  os.Getenv("FIXTURE_TARGET_GOARCH"),
+		Flavor:  os.Getenv("FIXTURE_TARGET_FLAVOR"),
+	}
+	events := &eventFile{path: os.Getenv("FIXTURE_MANAGER_EVENTS")}
+	manager := updates.NewManager(updates.ManagerDeps{
+		Identity: identity,
+		Resolver: updates.NewResolver(identity, fixtureSource{sel: sel}),
+		Notice: func(context.Context) (string, bool, error) {
+			return sel.Version, true, nil
+		},
+		Assets: func(_ context.Context, selection updates.Selection) (io.ReadCloser, error) {
+			return os.Open(os.Getenv("FIXTURE_ASSET_FILE"))
+		},
+		Sink:         events.emit,
+		InstallDir:   os.Getenv("FIXTURE_INSTALL_DIR"),
+		Executable:   os.Getenv("FIXTURE_LIVE_PATH"),
+		RelaunchArgs: nil,
+	})
+	result, err := manager.Apply(context.Background())
+	if err != nil {
+		return err
+	}
+	if !result.Accepted {
+		return fmt.Errorf("apply not accepted: %+v", result.Status)
+	}
+	if err := manager.WaitIdle(context.Background()); err != nil {
+		return err
+	}
+	return fmt.Errorf("operation finished without a handoff: %s", events.lastFailure())
+}
+
+// fixtureSource serves one fixed selection from memory, shaped like the
+// repository feed the resolver validates against.
+type fixtureSource struct {
+	sel updates.Selection
+}
+
+func (s fixtureSource) LatestRelease(context.Context) (updates.Release, error) {
+	return updates.Release{
+		Tag: "v" + s.sel.Version,
+		URL: "https://github.com/mihaiflorentin88/filelist-streaming-service/releases/tag/v" + s.sel.Version,
+		Assets: []updates.Asset{
+			{Name: s.sel.AssetName, URL: "https://github.com/mihaiflorentin88/filelist-streaming-service/releases/download/v" + s.sel.Version + "/" + s.sel.AssetName},
+			{Name: "SHA256SUMS", URL: "https://github.com/mihaiflorentin88/filelist-streaming-service/releases/download/v" + s.sel.Version + "/SHA256SUMS"},
+		},
+	}, nil
+}
+
+func (s fixtureSource) ChecksumManifest(_ context.Context, _ string) (string, error) {
+	return s.sel.SHA256 + "  " + s.sel.AssetName + "\n", nil
+}
+
+// eventFile journals emitted events as JSON lines so a test can read the
+// coordinator's updates.failed message out of a subprocess.
+type eventFile struct {
+	mu   sync.Mutex
+	path string
+}
+
+func (e *eventFile) emit(kind string, payload any) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	f, err := os.OpenFile(e.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "%s %s\n", kind, body)
+}
+
+func (e *eventFile) lastFailure() string {
+	data, err := os.ReadFile(e.path)
+	if err != nil {
+		return ""
+	}
+	message := ""
+	for _, line := range strings.Split(string(data), "\n") {
+		kind, body, ok := strings.Cut(line, " ")
+		if !ok || kind != updates.EventFailed {
+			continue
+		}
+		var payload struct {
+			Message string `json:"message"`
+		}
+		if json.Unmarshal([]byte(body), &payload) == nil && payload.Message != "" {
+			message = payload.Message
+		}
+	}
+	return message
 }
 
 type sliceReader struct {

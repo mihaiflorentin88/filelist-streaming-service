@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mihaiflorentin88/filelist-streaming-service/internal/composition"
 	"github.com/mihaiflorentin88/filelist-streaming-service/internal/platform/config"
 )
 
@@ -185,6 +186,44 @@ func TestCanStartRefusesWhileRelocating(t *testing.T) {
 	}
 	if sup.State() != StateStopped {
 		t.Fatalf("refusal must leave the state untouched, got %s", sup.State())
+	}
+}
+
+// TestWireSupervisorRunsConfigureAppOnConstructedApp pins the update
+// handoff wiring: the supervisor's factory runs the registered configure
+// hook on every freshly constructed app, so the runner can register the
+// single-instance lock release (BeforeHandoffExit) before serving.
+func TestWireSupervisorRunsConfigureAppOnConstructedApp(t *testing.T) {
+	t.Chdir(t.TempDir())
+	dir := t.TempDir()
+	downloads := filepath.Join(dir, "downloads")
+	body := `{` +
+		`"listenAddress": "127.0.0.1:0",` +
+		`"databasePath": "data/filelist.db",` +
+		`"downloadRoot": "` + downloads + `",` +
+		`"fileListUsername": "user",` +
+		`"fileListPasskey": "pass"` +
+		`}`
+	settingsPath := filepath.Join(dir, "settings.json")
+	if err := os.WriteFile(settingsPath, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bind := &Bindings{settings: newRunnerStore(t, settingsPath), dataDir: dir, dataDirSource: "default"}
+	sup := wireSupervisor(bind, testLogger())
+	configured := make(chan struct{}, 1)
+	sup.configureApp = func(app *composition.App) {
+		app.BeforeHandoffExit = func() {}
+		configured <- struct{}{}
+	}
+	t.Cleanup(func() { _ = sup.Stop() })
+	if err := sup.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	waitRunning(t, sup)
+	select {
+	case <-configured:
+	case <-time.After(2 * time.Second):
+		t.Fatal("factory never ran the configure hook on the constructed app")
 	}
 }
 

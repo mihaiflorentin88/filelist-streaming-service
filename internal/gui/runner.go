@@ -80,7 +80,13 @@ func Run(opts Options) error {
 
 	bind := &Bindings{settings: settings, dataDir: dir, dataDirSource: source}
 	sup := wireSupervisor(bind, log)
-	bind.sup = sup
+	// Update handoff: the helper relaunches the whole application, so the
+	// single-instance lock must be released before this process exits —
+	// otherwise the relaunched instance cannot acquire it.
+	sup.configureApp = func(app *composition.App) {
+		app.BeforeHandoffExit = func() { _ = lock.Close() }
+	}
+	bind.setSupervisor(sup)
 	app := application.New(application.Options{
 		Name: "FileList Streaming",
 		// Dock/taskbar icon for raw runs (make package-darwin stamps the
@@ -149,6 +155,12 @@ func Run(opts Options) error {
 	// Boot emit: arrives before the webview loads, so the frontend also
 	// seeds from the ServerState binding at startup (desktop/src/main.tsx).
 	app.Event.Emit("server:state", newStateEvent(sup.State(), sup.Error(), listenaddr.DisplayAddress(sup.Address())))
+	// Configured launches auto-start the embedded server exactly once
+	// through the supervisor's own Start path; incomplete settings stay in
+	// the setup flow (the completing-save auto-start handles those).
+	if len(settings.MissingRequired()) == 0 {
+		_ = sup.Start()
+	}
 
 	app.Run()
 	return nil
@@ -184,6 +196,9 @@ func wireSupervisor(bind *Bindings, log *slog.Logger) *Supervisor {
 		app, err := composition.NewAt(store.Path(), log)
 		if err != nil {
 			return nil, err
+		}
+		if sup.configureApp != nil {
+			sup.configureApp(app)
 		}
 		return appAdapter{app: app}, nil
 	}

@@ -62,9 +62,13 @@ type Bindings struct {
 	mu sync.Mutex
 
 	settings      *config.Store
-	sup           *Supervisor
 	dataDir       string
 	dataDirSource string
+	// sup is the server supervisor. The runner installs it once after
+	// wireSupervisor and every binding reads it, so access goes through
+	// the same holder mutex as the settings trio — desktop supervisor
+	// access is synchronized, never a bare field read.
+	sup *Supervisor
 	// relocating guards the move window of ChangeDataDir: wireSupervisor's
 	// CanStart refuses and the SaveSettings completing-save auto-start
 	// defers while it is set, so no Start can race the move (see
@@ -87,22 +91,37 @@ type Bindings struct {
 // ServerState reports the current lifecycle state for page mounts that miss
 // the last 'server:state' event.
 func (b *Bindings) ServerState() StateEvent {
-	ev := StateEvent{State: b.sup.State(), Address: b.sup.Address()}
-	if err := b.sup.Error(); err != nil {
+	sup := b.supervisor()
+	ev := StateEvent{State: sup.State(), Address: sup.Address()}
+	if err := sup.Error(); err != nil {
 		ev.Error = err.Error()
 	}
 	return ev
 }
 
+// setSupervisor installs the supervisor after wiring; supervisor returns
+// it under the holder mutex.
+func (b *Bindings) setSupervisor(sup *Supervisor) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.sup = sup
+}
+
+func (b *Bindings) supervisor() *Supervisor {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.sup
+}
+
 // StartServer brings the server up (refused while required settings are
 // missing; that shows setup, not failure).
-func (b *Bindings) StartServer() error { return b.sup.Start() }
+func (b *Bindings) StartServer() error { return b.supervisor().Start() }
 
 // StopServer gracefully shuts the running server down.
-func (b *Bindings) StopServer() error { return b.sup.Stop() }
+func (b *Bindings) StopServer() error { return b.supervisor().Stop() }
 
 // RestartServer applies restart-required settings: Stop then Start.
-func (b *Bindings) RestartServer() error { return b.sup.Restart() }
+func (b *Bindings) RestartServer() error { return b.supervisor().Restart() }
 
 // LoadSettings returns the settings exactly as GET /api/v1/settings serves
 // them: secrets blanked, Configured flags, settings file path.
@@ -131,8 +150,9 @@ func (b *Bindings) SaveSettings(next config.Settings) (SaveResult, error) {
 	}
 	current := store.Get()
 	result := SaveResult{Saved: true, RestartRequired: config.RestartRequired(old, current)}
-	if wasIncomplete && len(store.MissingRequired()) == 0 && b.sup.State() == StateStopped && !b.relocatingServer() {
-		go func() { _ = b.sup.Start() }()
+	sup := b.supervisor()
+	if wasIncomplete && len(store.MissingRequired()) == 0 && sup.State() == StateStopped && !b.relocatingServer() {
+		go func() { _ = sup.Start() }()
 		result.AutoStarted = true
 	}
 	return result, nil
@@ -227,7 +247,7 @@ func (b *Bindings) OpenPath(kind string) error {
 // follows the running (or most recently run) server; the loopback host is
 // fixed: the web UI is this machine's window onto the same server.
 func (b *Bindings) OpenWebUI() error {
-	address := b.sup.Address()
+	address := b.supervisor().Address()
 	if address == "" {
 		store, _, _ := b.snapshot()
 		address = store.Get().ListenAddress
@@ -279,7 +299,7 @@ func (b *Bindings) Quit() error {
 		b.quitFn()
 		return nil
 	}
-	_ = b.sup.Stop()
+	_ = b.supervisor().Stop()
 	os.Exit(0)
 	return nil
 }
@@ -405,11 +425,12 @@ func (b *Bindings) ChangeDataDir(target string) error {
 		b.mu.Unlock()
 	}()
 
+	sup := b.supervisor()
 	wasRunning := false
-	switch b.sup.State() {
+	switch sup.State() {
 	case StateRunning:
 		wasRunning = true
-		if err := b.sup.Stop(); err != nil {
+		if err := sup.Stop(); err != nil {
 			return err
 		}
 	case StateStarting, StateStopping:
@@ -428,7 +449,7 @@ func (b *Bindings) ChangeDataDir(target string) error {
 			if _, statErr := os.Stat(from); os.IsNotExist(statErr) {
 				return fail
 			}
-			if err := b.sup.Start(); err != nil {
+			if err := b.supervisor().Start(); err != nil {
 				return errors.Join(fail, err)
 			}
 		}
@@ -492,7 +513,7 @@ func (b *Bindings) ChangeDataDir(target string) error {
 	b.mu.Unlock()
 
 	if wasRunning {
-		return b.sup.Start()
+		return b.supervisor().Start()
 	}
 	return nil
 }

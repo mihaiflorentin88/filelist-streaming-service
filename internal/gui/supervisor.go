@@ -36,11 +36,14 @@ var ErrNotRunning = errors.New("server is not running")
 const shutdownTimeout = 15 * time.Second
 
 // appLike is the server surface the supervisor drives. composition.App
-// satisfies it via appAdapter; tests substitute fakes.
+// satisfies it via appAdapter; tests substitute fakes. Close carries the
+// shutdown context so the S3 service join can bound its wait, and
+// ListenAndServe itself schedules the post-readiness startup update via
+// the app's listener hook.
 type appLike interface {
 	ListenAndServe() error
 	Shutdown(ctx context.Context) error
-	Close()
+	Close(ctx context.Context) error
 	ListenAddress() string
 }
 
@@ -50,7 +53,7 @@ type appAdapter struct{ app *composition.App }
 
 func (w appAdapter) ListenAndServe() error              { return w.app.ListenAndServe() }
 func (w appAdapter) Shutdown(ctx context.Context) error { return w.app.Server.Shutdown(ctx) }
-func (w appAdapter) Close()                             { w.app.Close() }
+func (w appAdapter) Close(ctx context.Context) error    { return w.app.Close(ctx) }
 func (w appAdapter) ListenAddress() string              { return w.app.ListenAddress }
 
 var _ appLike = appAdapter{}
@@ -81,6 +84,11 @@ type Supervisor struct {
 	onChange func(State, error)
 	// appFactory is a test seam; the default wraps composition.New.
 	appFactory func() (appLike, error)
+	// configureApp runs on every freshly constructed composition.App
+	// before it serves. The GUI runner registers the single-instance lock
+	// release here so an update handoff never relaunches into a still-
+	// held lock.
+	configureApp func(*composition.App)
 }
 
 // NewSupervisor returns a supervisor in the stopped state.
@@ -216,7 +224,7 @@ func (s *Supervisor) run() {
 			s.app = nil
 			onChange := s.transition(StateFailed, err)
 			s.mu.Unlock()
-			app.Close()
+			app.Close(context.Background()) //nolint:errcheck // failed state already carries the failure
 			s.fire(onChange, StateFailed, err)
 			return
 		}
@@ -240,7 +248,12 @@ func (s *Supervisor) Stop() error {
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	_ = app.Shutdown(ctx)
-	app.Close()
+	if err := app.Close(ctx); err != nil && s.deps.Log != nil {
+		// A join timeout leaves engine and repository open rather than
+		// closing them under active writers; the server is down either
+		// way, and the error stays observable in the GUI log.
+		s.deps.Log.Warn("server close did not finish cleanly", "error", err.Error())
+	}
 
 	s.mu.Lock()
 	onChange = s.transition(StateStopped, nil)
