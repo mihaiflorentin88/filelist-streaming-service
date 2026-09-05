@@ -128,7 +128,7 @@ build-all: web desktop-assets | wails-cross
 		-ldflags="$(GO_LDFLAGS)" \
 		-o bin/filelist-streaming-linux-amd64 ./cmd/server
 	GOCACHE="$(GO_CACHE)" CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -trimpath -ldflags="$(GO_LDFLAGS)" -o bin/filelist-streaming-linux-armv7 ./cmd/server
-	$(MAKE) package-darwin
+	@if [ "$$(uname -s)" = "Darwin" ]; then $(MAKE) package-darwin; fi
 
 # web refreshes the browser build that `go:embed static/*` freezes into the
 # server binary, so the build* targets never ship a stale UI. It runs the
