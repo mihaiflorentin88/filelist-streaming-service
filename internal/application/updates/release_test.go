@@ -498,7 +498,7 @@ func TestVersionDetectFlavorForcesHeadlessFallback(t *testing.T) {
 		want          string
 	}{
 		{"linux ARM is headless without the build tag", "linux", "arm", false, FlavorHeadless},
-		{"linux ARM stays headless with a bundle input", "linux", "arm", true, FlavorBundle},
+		{"linux ARM bundle shape wins over the headless fallback", "linux", "arm", true, FlavorBundle},
 		{"macOS .app install shape is bundle", "darwin", "arm64", true, FlavorBundle},
 		{"macOS raw install follows the build tag", "darwin", "arm64", false, buildFlavor},
 		{"windows install follows the build tag", "windows", "amd64", false, buildFlavor},
