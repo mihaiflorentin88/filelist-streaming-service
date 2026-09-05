@@ -210,6 +210,19 @@ describe('ServerPage log viewer', () => {
     expect(fakeBindings.readLogs.mock.calls.length).toBe(calls);
   });
 
+  it('surfaces a failed poll as a visible alert and clears it on the next success', async () => {
+    fakeBindings.readLogs.mockRejectedValue(new Error('data directory is not resolvable yet'));
+    const host = await mount();
+    await act(async () => { button('View logs').click() });
+    await act(async () => { });
+    expect(host.querySelector('[role="alert"]')!.textContent).toContain('Log read failed: data directory is not resolvable yet');
+    expect(host.querySelector('.log-view')!.textContent).toContain('No log lines yet.');
+    fakeBindings.readLogs.mockResolvedValue({ lines: ['{"time":"t1","level":"INFO","msg":"one"}'], nextOffset: 30, size: 30 });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500) });
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    expect(host.querySelector('.log-view')!.textContent).toContain('one');
+  });
+
   it('renders http access records pretty and keeps the generic fallback', async () => {
     fakeBindings.readLogs.mockResolvedValue({
       lines: [

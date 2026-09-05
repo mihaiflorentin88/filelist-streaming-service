@@ -65,9 +65,20 @@ export function ServerPage() {
   // the tail (auto-scroll) or the user scrolled up to read history.
   const [logsOpen, setLogsOpen] = useState(false);
   const [logLines, setLogLines] = useState<string[]>([]);
+  // Set when a poll fails so the panel says so instead of sitting there
+  // silently empty; cleared by the next successful read.
+  const [logError, setLogError] = useState('');
   const logOffset = useRef(0);
   const logPinned = useRef(true);
   const logView = useRef<HTMLPreElement>(null);
+
+  // Opening the panel renders it below the fold (the Details fieldset ends
+  // the page); bring it into view once it exists. requestAnimationFrame
+  // waits one frame so the pre has layout to scroll to.
+  useEffect(() => {
+    if (!logsOpen) return;
+    const raf = requestAnimationFrame(() => logView.current?.scrollIntoView?.({ block: 'nearest' }));
+  }, [logsOpen]);
 
   useEffect(() => {
     let alive = true;
@@ -97,8 +108,11 @@ export function ServerPage() {
         const reset = logOffset.current > tail.size;
         logOffset.current = tail.nextOffset;
         if (reset) logPinned.current = true;
+        setLogError('');
         setLogLines(lines => reset ? tail.lines : [...lines, ...tail.lines]);
-      } catch { /* keep the tail; the next tick retries */ }
+      } catch (e) {
+        setLogError(`Log read failed: ${(e as Error)?.message ?? e}`);
+      }
     };
     void poll();
     const timer = setInterval(() => void poll(), 1500);
@@ -230,6 +244,7 @@ export function ServerPage() {
           {' '}
           <button type="button" disabled={!dataDir} onClick={openChange}>Change…</button>
         </p>
+        {logError && <p class="settings-status" role="alert">{logError}</p>}
         {logsOpen && (
           <pre class="log-view" ref={logView} onScroll={onLogScroll} aria-label="Server log tail">
             {logLines.length ? logLines.map(line => renderLogLine(line) + '\n') : 'No log lines yet.'}
