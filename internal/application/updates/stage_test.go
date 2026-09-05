@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -435,17 +436,100 @@ func TestExtractRejectsExcessiveEntriesAndExpandedOverflow(t *testing.T) {
 	}
 }
 
-func TestCountingLimitReaderRejectsUndeclaredBytes(t *testing.T) {
-	reader := &countingLimitReader{r: bytes.NewReader([]byte(strings.Repeat("x", 100))), remaining: 10}
-	if _, err := io_LimitReadAll(reader); !errors.Is(err, ErrArchiveInvalid) {
-		t.Fatalf("countingLimitReader error = %v, want ErrArchiveInvalid", err)
+func TestExtractHandlesDirectoryMembersAndNestedPaths(t *testing.T) {
+	dest := t.TempDir()
+	payload := fileBytes(t, fixtureBinary(t, "linux", "amd64", 0, nil, "0.4.0"))
+	members := []tarMember{
+		{name: "./filelist-streaming", data: payload, mode: 0o755},
+		// Nested regular member without an explicit directory entry.
+		{name: "./docs/guide.md", data: []byte("guide\n"), mode: 0o644},
+		// Explicit directory member plus content beneath it.
+		{name: "./share", typ: tar.TypeDir, mode: 0o755},
+		{name: "./share/example.txt", data: []byte("example\n"), mode: 0o644},
+	}
+	archive := buildTarGz(t, members)
+	sel := testSelection(tarAssetName("0.4.0", "amd64"), "0.4.0", archive)
+	staged := stageData(t, dest, archive, sel, defaultTestLimits())
+	payloadResult, err := staged.Extract(dest, Identity{GOOS: "linux", GOARCH: "amd64", Flavor: FlavorGUI}.Target(), defaultTestLimits())
+	if err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	for _, path := range []string{
+		filepath.Join(payloadResult.Dir, "docs", "guide.md"),
+		filepath.Join(payloadResult.Dir, "share"),
+		filepath.Join(payloadResult.Dir, "share", "example.txt"),
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("member %s missing after extraction: %v", path, err)
+		}
+	}
+	data, err := os.ReadFile(filepath.Join(payloadResult.Dir, "docs", "guide.md"))
+	if err != nil || string(data) != "guide\n" {
+		t.Errorf("nested member content = %q, err %v", data, err)
 	}
 }
 
-func io_LimitReadAll(reader *countingLimitReader) ([]byte, error) {
+func TestExtractAcceptsZeroSizeMembers(t *testing.T) {
+	dest := t.TempDir()
+	payload := fileBytes(t, fixtureBinary(t, "linux", "amd64", 0, nil, "0.4.0"))
+	archive := buildTarGz(t, []tarMember{
+		{name: "./filelist-streaming", data: payload, mode: 0o755},
+		{name: "./empty-marker", data: nil, mode: 0o644},
+	})
+	sel := testSelection(tarAssetName("0.4.0", "amd64"), "0.4.0", archive)
+	staged := stageData(t, dest, archive, sel, defaultTestLimits())
+	payloadResult, err := staged.Extract(dest, Identity{GOOS: "linux", GOARCH: "amd64", Flavor: FlavorGUI}.Target(), defaultTestLimits())
+	if err != nil {
+		t.Fatalf("tar zero-size member: %v", err)
+	}
+	info, err := os.Stat(filepath.Join(payloadResult.Dir, "empty-marker"))
+	if err != nil {
+		t.Fatalf("zero-size member missing: %v", err)
+	}
+	if info.Size() != 0 {
+		t.Errorf("zero-size member size = %d, want 0", info.Size())
+	}
+
+	// The zip path shares the counting reader: a zero-size member must
+	// extract there too.
+	winDest := t.TempDir()
+	winPayload := fileBytes(t, fixtureBinary(t, "windows", "amd64", 0, nil, "0.4.0"))
+	winArchive := buildZip(t, []zipMember{
+		{name: "filelist-streaming.exe", data: winPayload},
+		{name: "empty.txt", data: nil},
+	})
+	winSel := testSelection("filelist-streaming-0.4.0-windows-amd64.zip", "0.4.0", winArchive)
+	winStaged := stageData(t, winDest, winArchive, winSel, defaultTestLimits())
+	winResult, err := winStaged.Extract(winDest, Identity{GOOS: "windows", GOARCH: "amd64", Flavor: FlavorGUI}.Target(), defaultTestLimits())
+	if err != nil {
+		t.Fatalf("zip zero-size member: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(winResult.Dir, "empty.txt")); err != nil {
+		t.Errorf("zip zero-size member missing: %v", err)
+	}
+}
+
+func TestCountingLimitReaderStopsAtDeclaredSize(t *testing.T) {
+	// A zero-size declaration ends immediately: zero-size members extract.
+	empty := &countingLimitReader{r: bytes.NewReader(nil), remaining: 0}
+	var sink [1]byte
+	if n, err := empty.Read(sink[:]); !errors.Is(err, io.EOF) || n != 0 {
+		t.Fatalf("zero declared size: Read = %d, %v; want 0, io.EOF", n, err)
+	}
+
+	// Delivery stops at the declared size even when the source offers more;
+	// the member checks compare written bytes against the declaration.
+	reader := &countingLimitReader{r: bytes.NewReader([]byte(strings.Repeat("x", 100))), remaining: 10}
 	var out bytes.Buffer
-	_, err := out.ReadFrom(reader)
-	return out.Bytes(), err
+	if _, err := out.ReadFrom(reader); err != nil {
+		t.Fatalf("ReadFrom: %v", err)
+	}
+	if out.Len() != 10 {
+		t.Errorf("delivered %d bytes, want exactly the declared 10", out.Len())
+	}
+	if _, err := reader.Read(sink[:]); !errors.Is(err, io.EOF) {
+		t.Fatalf("Read past declared size = %v, want io.EOF", err)
+	}
 }
 
 func TestExtractVerifiesExecutableIdentity(t *testing.T) {

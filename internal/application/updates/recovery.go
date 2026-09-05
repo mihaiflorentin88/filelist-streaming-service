@@ -71,12 +71,17 @@ var (
 
 // Operation is the durable update transaction record. Every field is
 // persisted before the state it describes can be observed on disk.
+// PriorState carries the pre-mutation live content reference — the SHA-256
+// of the live executable for file payloads — recorded in Prepare, so a
+// crash inside the pre-mutation window of the activated phase is provably
+// harmless instead of demanding manual repair.
 type Operation struct {
 	ID           string    `json:"id"`
 	Version      string    `json:"version"`
 	Flavor       string    `json:"flavor"`
 	Phase        string    `json:"phase"`
 	Backup       string    `json:"backup,omitempty"`       // path holding the previous installation
+	PriorState   string    `json:"priorState,omitempty"`   // live content before any mutation
 	StagedPaths  []string  `json:"stagedPaths,omitempty"`  // archive, extraction dir, helper copies
 	Deadline     time.Time `json:"deadline,omitempty"`     // health acknowledgement deadline
 	SuppressNext bool      `json:"suppressNext,omitempty"` // skip automatic update on next startup only
@@ -116,6 +121,7 @@ type InstallState struct {
 	CurrentVersion string    // running build identity version
 	Now            time.Time // evaluation clock
 	Activated      bool      // live content is the operation's new content
+	Pristine       bool      // live content provably matches the recorded pre-mutation state
 }
 
 // EvaluateRecovery decides the startup action for a persisted operation.
@@ -128,8 +134,9 @@ type InstallState struct {
 //   - activated: past the deadline there is no healthy acknowledgement, so
 //     roll back. Before it, the new version starting up acknowledges; the
 //     old version starting up means the helper died mid-transaction, so
-//     roll back. Live content equal to the backup means the swap never
-//     landed: pure cleanup.
+//     roll back. When the live content provably still matches the recorded
+//     pre-mutation state — including the crash window before any mutation
+//     on platforms that activate first — the phase is pure cleanup.
 //   - confirmed: cleanup only. rolled-back: suppression only. A recorded
 //     rollback failure demands manual repair and preserves every artifact.
 func EvaluateRecovery(op Operation, st InstallState) Recovery {
@@ -147,7 +154,12 @@ func EvaluateRecovery(op Operation, st InstallState) Recovery {
 		if st.Activated && st.CurrentVersion == op.Version && st.Now.Before(op.Deadline) {
 			return Recovery{Action: RecoveryAcknowledge, Operation: op}
 		}
-		return Recovery{Action: RecoveryRollback, Operation: op}
+		if st.Activated || !st.Pristine {
+			return Recovery{Action: RecoveryRollback, Operation: op}
+		}
+		// The live content still matches the state recorded before any
+		// mutation: the swap provably never landed, so only debris remains.
+		return Recovery{Action: RecoveryCleanup, Operation: op}
 	case PhaseConfirmed:
 		return Recovery{Action: RecoveryCleanup, Operation: op}
 	case PhaseRolledBack:
@@ -393,6 +405,14 @@ func (i *Installer) Prepare(payload *Payload, sel Selection, target Target, stag
 		return Operation{}, fmt.Errorf("%w: operation %s in phase %q", ErrPendingOperation, op.ID, op.Phase)
 	}
 	op = newOperation(i.journal.dir, sel, target, stagedArchive, payload.Dir)
+	if payload.Kind == PayloadFile {
+		// Record the pre-mutation live content so a crash inside the
+		// pre-mutation window (the activated phase persists before the
+		// helper mutates on some platforms) is provably harmless.
+		if digest, err := digestFile(i.Executable); err == nil {
+			op.PriorState = hex.EncodeToString(digest)
+		}
+	}
 	if payload.Kind == PayloadBundle {
 		// The exchange counterpart is the backup: after activation the
 		// previous bundle lives at the staged bundle path.
@@ -545,32 +565,48 @@ func (i *Installer) now() time.Time {
 }
 
 // installState observes what recovery evaluation needs: whether the live
-// content already carries the operation's new content.
+// content carries the operation's new content, and whether it provably
+// still matches the recorded pre-mutation state.
 func (i *Installer) installState(op Operation, currentVersion string) InstallState {
+	activated, pristine := i.liveState(op)
 	return InstallState{
 		CurrentVersion: currentVersion,
 		Now:            i.now(),
-		Activated:      i.liveIsActivated(op),
+		Activated:      activated,
+		Pristine:       pristine,
 	}
 }
 
-// liveIsActivated reports whether the live path already carries the new
-// content. For file payloads the backup digest is the pre-mutation
-// reference: identical content means the swap never landed. For bundles the
-// live Info.plist version is the marker; a missing backup likewise means no
-// mutation happened.
-func (i *Installer) liveIsActivated(op Operation) bool {
+// liveState reports whether the live path carries the new content and
+// whether it matches the recorded pre-mutation state. For file payloads the
+// backup digest is the pre-mutation reference while a backup exists; once
+// the backup is missing, the digest recorded at Prepare decides: identical
+// live content means the swap never landed (pristine), different content
+// means the new installation is live with its backup lost (fail closed).
+// For bundles the live Info.plist version is the activation marker.
+func (i *Installer) liveState(op Operation) (activated, pristine bool) {
 	if i.Kind == PayloadBundle {
-		return bundlePlatform != nil && bundlePlatform.liveIsNew(i, op)
+		activated := bundlePlatform != nil && bundlePlatform.liveIsNew(i, op)
+		return activated, false
 	}
 	liveDigest, liveErr := digestFile(i.Executable)
-	backupDigest, backupErr := digestFile(op.Backup)
-	if liveErr != nil || backupErr != nil {
-		// A missing backup means the mutation never landed; a missing live
-		// path cannot be activated either.
-		return false
+	if liveErr != nil {
+		// A missing live path cannot be activated or proven pristine.
+		return false, false
 	}
-	return !equalDigests(liveDigest, backupDigest)
+	if backupDigest, backupErr := digestFile(op.Backup); backupErr == nil {
+		if equalDigests(liveDigest, backupDigest) {
+			// Identical content: nothing was mutated, only debris remains.
+			return false, true
+		}
+		return true, false
+	}
+	// The backup is missing. The digest recorded at Prepare decides.
+	prior, err := hex.DecodeString(op.PriorState)
+	if err != nil || len(prior) != sha256.Size {
+		return false, false
+	}
+	return !equalDigests(liveDigest, prior), equalDigests(liveDigest, prior)
 }
 
 // digestFile streams a file through SHA-256 without buffering it whole.

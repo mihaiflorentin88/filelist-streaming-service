@@ -86,13 +86,15 @@ func (windowsFilePlatform) rollback(i *Installer, op Operation, reason string) e
 	return nil
 }
 
-// runHelper waits for the old process to exit, then backs up the old
-// executable, renames the staged executable into place, launches the new
-// installation, and waits a bounded time for its health acknowledgement. On
-// replacement or launch failure it restores the old executable; on
-// acknowledgement timeout or early death it restores the backup and
-// relaunches the previous installation with startup-update suppression for
-// this recovery only.
+// runHelper waits for the old process to exit, preserves the previous
+// executable as a same-volume hard link — the live path is never renamed
+// away, so there is never a moment without an executable at the live path —
+// then moves the staged executable into place with a single rename, launches
+// the new installation, and waits a bounded time for its health
+// acknowledgement. On launch failure or acknowledgement timeout or early
+// death it restores the backup over the live path and relaunches the
+// previous installation with startup-update suppression for this recovery
+// only.
 func (windowsFilePlatform) runHelper(ctx context.Context, installer *Installer, journal *Journal, op Operation, parentPID int) error {
 	if err := waitProcessExit(ctx, parentPID, parentExitTimeout); err != nil {
 		return fmt.Errorf("helper: %w", err)
@@ -101,19 +103,18 @@ func (windowsFilePlatform) runHelper(ctx context.Context, installer *Installer, 
 	if stagedPath == "" {
 		return errors.New("helper: missing staged executable path")
 	}
-	// Swap: back the old executable up, then move the staged one in. The old
-	// process has exited, so the image lock is gone.
-	if err := os.Rename(installer.Executable, op.Backup); err != nil {
+	// The old process has exited, so the image lock is gone and the live
+	// path can be linked and replaced without ever disappearing.
+	if err := backupFile(installer.Executable, op.Backup); err != nil {
 		return fmt.Errorf("helper: back up previous executable: %w", err)
 	}
 	if err := syncDir(installer.journal.dir); err != nil {
 		return fmt.Errorf("helper: flush install directory: %w", err)
 	}
 	if err := os.Rename(stagedPath, installer.Executable); err != nil {
-		// Replacement failed: restore the old executable.
-		if restoreErr := os.Rename(op.Backup, installer.Executable); restoreErr != nil {
-			return errors.Join(err, fmt.Errorf("helper: restore old executable: %w", restoreErr))
-		}
+		// The rename failed without touching the live path: the previous
+		// installation is intact and the hard-link backup is mere debris
+		// that the next startup recovery cleans up.
 		return fmt.Errorf("helper: install staged executable: %w", err)
 	}
 	if err := syncDir(installer.journal.dir); err != nil {
@@ -144,6 +145,37 @@ func (windowsFilePlatform) runHelper(ctx context.Context, installer *Installer, 
 		return errors.Join(err, rollbackErr)
 	}
 	return installer.Cleanup(op)
+}
+
+// backupFile preserves the previous executable content at backupPath
+// without moving the live path. A hard link keeps it instant and atomic
+// even while the image is locked; filesystems without links fall back to a
+// streamed copy.
+func backupFile(livePath, backupPath string) error {
+	if err := os.Link(livePath, backupPath); err == nil {
+		return syncDir(filepath.Dir(livePath))
+	}
+	src, err := os.Open(livePath)
+	if err != nil {
+		return fmt.Errorf("copy backup: %w", err)
+	}
+	defer src.Close()
+	dst, err := os.OpenFile(backupPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o700)
+	if err != nil {
+		return fmt.Errorf("copy backup: %w", err)
+	}
+	_, copyErr := io.Copy(dst, src)
+	if copyErr == nil {
+		copyErr = dst.Sync()
+	}
+	if closeErr := dst.Close(); copyErr == nil {
+		copyErr = closeErr
+	}
+	if copyErr != nil {
+		os.Remove(backupPath)
+		return fmt.Errorf("copy backup: %w", copyErr)
+	}
+	return syncDir(filepath.Dir(livePath))
 }
 
 // copyExecutable copies a verified executable for helper use, preserving

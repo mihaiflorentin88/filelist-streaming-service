@@ -1,6 +1,7 @@
 package updates
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -273,9 +274,14 @@ func TestEvaluateRecoveryDecidesStartupActions(t *testing.T) {
 			wantAction: RecoveryRollback,
 		},
 		{
-			name: "activated without swap rolls back",
+			name: "activated without provable pristineness rolls back",
 			op:   op(PhaseActivated), state: InstallState{CurrentVersion: "0.3.0", Now: now},
 			wantAction: RecoveryRollback,
+		},
+		{
+			name: "activated with pristine live content cleans up",
+			op:   op(PhaseActivated), state: InstallState{CurrentVersion: "0.3.0", Now: now, Pristine: true},
+			wantAction: RecoveryCleanup,
 		},
 		{
 			name: "confirmed cleans up",
@@ -430,6 +436,74 @@ func TestRecoverExecutesCleanupRollbackAndSuppression(t *testing.T) {
 		}
 		if !equalDigests(mustDigest(t, livePath), mustDigest(t, oldFixture)) {
 			t.Error("live content changed during staged cleanup")
+		}
+	})
+
+	t.Run("pre-mutation crash with recorded prior state cleans up", func(t *testing.T) {
+		installDir := t.TempDir()
+		livePath := writeLiveExecutable(t, installDir, oldFixture)
+		journal, err := OpenJournal(installDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Windows-shaped window: activated persisted before the helper took
+		// the backup, so no backup exists and the live path is untouched.
+		installer := NewInstaller(journal, PayloadFile, livePath, "", DefaultHealthTimeout)
+		if err := journal.Save(Operation{
+			ID: "op-1", Version: "0.4.0", Phase: PhaseActivated,
+			PriorState: hex.EncodeToString(mustDigest(t, livePath)),
+			Backup:     filepath.Join(installDir, ".filelist-backup-absent"),
+			Deadline:   time.Now().Add(time.Minute),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		recovery, err := installer.Recover("0.3.0")
+		if err != nil {
+			t.Fatalf("Recover: %v", err)
+		}
+		if recovery.Action != RecoveryCleanup {
+			t.Fatalf("action = %q, want cleanup", recovery.Action)
+		}
+		if !equalDigests(mustDigest(t, livePath), mustDigest(t, oldFixture)) {
+			t.Error("pre-mutation cleanup disturbed the live path")
+		}
+		if _, err := os.Stat(journalPath(installDir)); !errors.Is(err, os.ErrNotExist) {
+			t.Error("journal survived pre-mutation cleanup")
+		}
+	})
+
+	t.Run("crash between backup and rename-in leaves live intact", func(t *testing.T) {
+		installDir := t.TempDir()
+		livePath := writeLiveExecutable(t, installDir, oldFixture)
+		backup := filepath.Join(installDir, ".filelist-backup-linked")
+		if err := os.Link(livePath, backup); err != nil {
+			t.Fatalf("hard-link backup: %v", err)
+		}
+		journal, err := OpenJournal(installDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		installer := NewInstaller(journal, PayloadFile, livePath, "", DefaultHealthTimeout)
+		if err := journal.Save(Operation{
+			ID: "op-1", Version: "0.4.0", Phase: PhaseActivated,
+			PriorState: hex.EncodeToString(mustDigest(t, livePath)),
+			Backup:     backup,
+			Deadline:   time.Now().Add(time.Minute),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		recovery, err := installer.Recover("0.3.0")
+		if err != nil {
+			t.Fatalf("Recover: %v", err)
+		}
+		if recovery.Action != RecoveryCleanup {
+			t.Fatalf("action = %q, want cleanup", recovery.Action)
+		}
+		if !equalDigests(mustDigest(t, livePath), mustDigest(t, oldFixture)) {
+			t.Error("crash between backup and rename-in disturbed the live path")
+		}
+		if _, err := os.Stat(backup); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("backup survived cleanup: %v", err)
 		}
 	})
 

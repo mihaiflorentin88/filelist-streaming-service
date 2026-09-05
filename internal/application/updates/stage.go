@@ -396,9 +396,17 @@ func extractTarGz(archivePath, dir string, target Target, limits Limits) error {
 			continue // archive root entry
 		}
 		switch header.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(dest, os.FileMode(header.Mode)&0o777|0o700); err != nil {
+				return fmt.Errorf("extract: create directory: %w", err)
+			}
 		case tar.TypeReg:
 			if err := rules.accountSize(header.Size, header.Name); err != nil {
 				return err
+			}
+			// Nested members may arrive without explicit directory entries.
+			if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+				return fmt.Errorf("extract: create member directory: %w", err)
 			}
 			if err := writeFileVerified(dest, reader, header.Size, os.FileMode(header.Mode)&0o777); err != nil {
 				return err
@@ -406,6 +414,9 @@ func extractTarGz(archivePath, dir string, target Target, limits Limits) error {
 		case tar.TypeSymlink:
 			if err := rules.checkLinkTarget(cleanArchiveName(header.Name), header.Linkname); err != nil {
 				return err
+			}
+			if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+				return fmt.Errorf("extract: create symlink directory: %w", err)
 			}
 			if err := os.Symlink(header.Linkname, dest); err != nil {
 				return fmt.Errorf("extract: create symlink: %w", err)
@@ -455,6 +466,10 @@ func extractZip(archivePath, dir string, target Target, limits Limits) error {
 		}
 		if err := rules.accountSize(int64(entry.UncompressedSize64), entry.Name); err != nil {
 			return err
+		}
+		// Nested members may arrive without explicit directory entries.
+		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+			return fmt.Errorf("extract: create member directory: %w", err)
 		}
 		src, err := entry.Open()
 		if err != nil {
@@ -520,8 +535,14 @@ type countingLimitReader struct {
 }
 
 func (c *countingLimitReader) Read(p []byte) (int, error) {
-	if c.remaining <= 0 {
+	if c.remaining < 0 {
 		return 0, fmt.Errorf("%w: member exceeds its declared size", ErrArchiveInvalid)
+	}
+	if c.remaining == 0 {
+		// Exactly the declared size was delivered: zero-size members end
+		// here, and over-delivery beyond a non-zero declaration is caught
+		// by the reader itself and the written!=declared check.
+		return 0, io.EOF
 	}
 	if int64(len(p)) > c.remaining {
 		p = p[:c.remaining]
