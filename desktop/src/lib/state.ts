@@ -96,8 +96,16 @@ export function sessionStore(): PortalSessionStorage {
 }
 
 // A stored token must prove itself against /session/me before it becomes
-// identity; 401, expiry, or any failure clears it (same contract as web).
-// A late answer from a replaced origin is discarded.
+// identity; only an invalid session (401) clears it, matching web: a plain
+// network failure (server restarting, outage) keeps the token for the next
+// boot. A late answer from a replaced origin is discarded.
+// call() attaches the numeric HTTP status to thrown fetch failures.
+function failureStatus(error: unknown): number | undefined {
+  if (typeof error !== 'object' || error === null || !('status' in error)) return undefined;
+  const status: unknown = (error as { status: unknown }).status; // shape guarded by 'in' above
+  return typeof status === 'number' ? status : undefined;
+}
+
 function revalidateIdentity(origin: string): void {
   const stored = loadPortalSession(sessionStore(), origin);
   if (!stored) {
@@ -110,8 +118,8 @@ function revalidateIdentity(origin: string): void {
     if (portalOrigin !== origin) return;
     identityValue = user;
     notifyPortal();
-  }).catch(() => {
-    clearPortalSession(sessionStore(), origin);
+  }).catch((error: unknown) => {
+    if (failureStatus(error) === 401) clearPortalSession(sessionStore(), origin);
     if (portalOrigin !== origin) return;
     identityValue = null;
     notifyPortal();

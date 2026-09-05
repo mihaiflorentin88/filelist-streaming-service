@@ -297,6 +297,24 @@ describe('portal origin change', () => {
   });
 });
 
+// A stored token that fails revalidation keeps or loses its session by
+// failure kind: only a 401 (session invalid) clears it — a transient
+// network failure at boot must not silently sign the household out.
+describe.each([
+  ["network failure keeps the stored session", Object.assign(new Error("connect refused"), { status: 503 }), true],
+  ["plain network failure keeps the stored session", new Error("connect refused"), true],
+  ["401 clears the stored session", Object.assign(new Error("session invalid"), { status: 401 }), false],
+])("revalidateIdentity: %s", (_name, rejection, keepsSession) => {
+  it(`rejection ${keepsSession ? "keeps" : "clears"} the token`, async () => {
+    savePortalSession(localStorageStub, "http://localhost:3000", { token: "token-boot", expires_at: "2027-01-01T00:00:00Z" });
+    fakeApi.portalMe.mockRejectedValue(rejection);
+    const host = await mount(<PortalProbe />);
+    await settle();
+    expect(localStorageStub.data.has(portalSessionKey("http://localhost:3000"))).toBe(keepsSession);
+    expect(host.querySelector("[data-identity]")?.getAttribute("data-identity")).toBe("");
+  });
+});
+
 // The shell mounts the shared dock, notice, and dialogs: the account entry
 // only exists while the snapshot grants the capability, the availability
 // notice only while THIS server runs, and external links route through the
