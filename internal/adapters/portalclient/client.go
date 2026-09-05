@@ -39,12 +39,12 @@ const (
 var (
 	// ErrCredentials marks rejected or missing credentials (401/403): a form
 	// error, never a service outage.
-	ErrCredentials = errors.New("credentials rejected")
+	ErrCredentials = portal.ErrCredentials
 	// ErrUnavailable marks transport outages and upstream 5xx responses.
-	ErrUnavailable = errors.New("integration service unavailable")
+	ErrUnavailable = portal.ErrUnavailable
 	// ErrNoticeAbsent marks a 404 from the update feed: nothing published
 	// yet, distinct from a failure to fetch.
-	ErrNoticeAbsent = errors.New("no update notice published")
+	ErrNoticeAbsent = portal.ErrNoticeAbsent
 )
 
 // Compile-time proof the adapter satisfies the application contract.

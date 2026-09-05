@@ -44,6 +44,12 @@ type Service struct {
 	pendingMetadata   map[string]bool
 	mediaInfoMu       sync.Mutex
 	mediaInfoCache    map[string]cachedMediaInfo
+	baseCtx           context.Context
+	cancelBase        context.CancelFunc
+	stopping          chan struct{}
+	closeOnce         sync.Once
+	closeErr          error
+	wg                sync.WaitGroup
 }
 
 type cachedMediaInfo struct {
@@ -67,7 +73,9 @@ func NewService(c TrackerCatalog, e TorrentEngine, r Repository, s *config.Store
 	if limit < 1 {
 		limit = 10
 	}
-	service := &Service{catalog: c, engine: e, repo: r, settings: s, subtitles: subtitles, eventSubscribers: map[chan domain.Event]struct{}{}, refreshQueue: make(chan titleRefreshRequest, 256), searchQueue: make(chan trackerSearchRequest, 256), jobSlots: make(chan struct{}, limit), trackerSlots: make(chan struct{}, 1), pendingMetadata: map[string]bool{}, mediaInfoCache: map[string]cachedMediaInfo{}, freeSpace: freeDiskBytes}
+	base, cancel := context.WithCancel(context.Background())
+	service := &Service{catalog: c, engine: e, repo: r, settings: s, subtitles: subtitles, eventSubscribers: map[chan domain.Event]struct{}{}, refreshQueue: make(chan titleRefreshRequest, 256), searchQueue: make(chan trackerSearchRequest, 256), jobSlots: make(chan struct{}, limit), trackerSlots: make(chan struct{}, 1), pendingMetadata: map[string]bool{}, mediaInfoCache: map[string]cachedMediaInfo{}, freeSpace: freeDiskBytes, baseCtx: base, cancelBase: cancel, stopping: make(chan struct{})}
+	service.wg.Add(2)
 	go service.titleRefreshWorker()
 	go service.trackerSearchWorker()
 	return service
@@ -80,6 +88,7 @@ func (s *Service) SetMetadataProvider(provider MetadataProvider) {
 	s.metadata = provider
 	s.metaQueue = make(chan metadataRequest, 256)
 	for i := 0; i < cap(s.jobSlots); i++ {
+		s.wg.Add(1)
 		go s.metadataWorker()
 	}
 }
@@ -113,63 +122,86 @@ func (s *Service) release(tracker bool) {
 }
 
 func (s *Service) jobLog(job domain.Job, level, phase, message string, fields map[string]any) {
-	entry, err := s.repo.AppendJobLog(context.Background(), domain.JobLog{JobID: job.ID, Attempt: job.Attempt, Level: level, Phase: phase, Message: message, Context: fields})
+	select {
+	case <-s.stopping:
+		return
+	default:
+	}
+	entry, err := s.repo.AppendJobLog(s.baseCtx, domain.JobLog{JobID: job.ID, Attempt: job.Attempt, Level: level, Phase: phase, Message: message, Context: fields})
 	if err == nil {
 		s.publish("job.log", entry)
 	}
 }
 
 func (s *Service) metadataWorker() {
-	for request := range s.metaQueue {
-		if err := s.acquire(context.Background(), false); err != nil {
-			continue
+	defer s.wg.Done()
+	for {
+		select {
+		case <-s.stopping:
+			return
+		case request, ok := <-s.metaQueue:
+			if !ok {
+				return
+			}
+			s.runMetadataRequest(request)
 		}
-		job, _ := s.repo.GetJob(context.Background(), "metadata:"+request.TitleID)
-		job.State = "running"
-		job.Progress = .1
-		job.Error = ""
-		job.NextAttemptAt = nil
-		job.UpdatedAt = time.Now().UTC()
-		if job.Attempt < 1 {
-			job.Attempt = 1
-		}
-		_ = s.repo.SaveJob(context.Background(), job)
-		s.publish("job.updated", job)
-		s.jobLog(job, "info", "metadata", "Metadata lookup started", map[string]any{"provider": "tmdb", "imdbId": request.IMDbID, "requestedKind": request.Kind})
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		settings := s.settings.Get()
-		metadata, err := s.metadata.Lookup(ctx, request.IMDbID, request.Kind, settings.MetadataLanguage, settings.MetadataFallbackLanguage)
-		now := time.Now().UTC()
-		metadata.TitleID = request.TitleID
-		if err != nil {
-			metadata = domain.CatalogMetadata{TitleID: request.TitleID, Provider: "tmdb", FetchedAt: now, ExpiresAt: now.Add(10 * time.Minute), LastError: err.Error()}
-			s.jobLog(job, "error", "metadata-match", "TMDB metadata lookup did not produce a usable media match", map[string]any{"provider": "tmdb", "imdbId": request.IMDbID, "requestedKind": request.Kind, "error": err.Error()})
-			s.failOrWait(&job, err, "metadata")
-		} else {
-			job.State, job.Progress, job.Retryable, job.NextAttemptAt = "completed", 1, false, nil
-		}
-		_ = s.repo.SaveCatalogMetadata(ctx, metadata)
-		job.UpdatedAt = time.Now().UTC()
-		_ = s.repo.SaveJob(context.Background(), job)
-		if err == nil {
-			s.jobLog(job, "info", "complete", "Metadata lookup completed", nil)
-		}
-		payload := map[string]any{"titleId": request.TitleID, "job": job}
-		if sources, sourceErr := s.repo.ListCatalogSourcesByTitleIDs(ctx, []string{request.TitleID}); sourceErr == nil && len(sources) > 0 {
-			title := groupCatalog(sources, false)[0]
-			applyMetadata(&title, metadata)
-			payload["title"] = title
-		}
-		s.publish("metadata.updated", payload)
-		cancel()
-		s.pendingMu.Lock()
-		delete(s.pendingMetadata, request.TitleID)
-		s.pendingMu.Unlock()
-		s.release(false)
 	}
 }
 
+func (s *Service) runMetadataRequest(request metadataRequest) {
+	if err := s.acquire(s.baseCtx, false); err != nil {
+		return
+	}
+	job, _ := s.repo.GetJob(context.Background(), "metadata:"+request.TitleID)
+	job.State = "running"
+	job.Progress = .1
+	job.Error = ""
+	job.NextAttemptAt = nil
+	job.UpdatedAt = time.Now().UTC()
+	if job.Attempt < 1 {
+		job.Attempt = 1
+	}
+	_ = s.repo.SaveJob(context.Background(), job)
+	s.publish("job.updated", job)
+	s.jobLog(job, "info", "metadata", "Metadata lookup started", map[string]any{"provider": "tmdb", "imdbId": request.IMDbID, "requestedKind": request.Kind})
+	ctx, cancel := context.WithTimeout(s.baseCtx, 30*time.Second)
+	settings := s.settings.Get()
+	metadata, err := s.metadata.Lookup(ctx, request.IMDbID, request.Kind, settings.MetadataLanguage, settings.MetadataFallbackLanguage)
+	now := time.Now().UTC()
+	metadata.TitleID = request.TitleID
+	if err != nil {
+		metadata = domain.CatalogMetadata{TitleID: request.TitleID, Provider: "tmdb", FetchedAt: now, ExpiresAt: now.Add(10 * time.Minute), LastError: err.Error()}
+		s.jobLog(job, "error", "metadata-match", "TMDB metadata lookup did not produce a usable media match", map[string]any{"provider": "tmdb", "imdbId": request.IMDbID, "requestedKind": request.Kind, "error": err.Error()})
+		s.failOrWait(&job, err, "metadata")
+	} else {
+		job.State, job.Progress, job.Retryable, job.NextAttemptAt = "completed", 1, false, nil
+	}
+	_ = s.repo.SaveCatalogMetadata(ctx, metadata)
+	job.UpdatedAt = time.Now().UTC()
+	_ = s.repo.SaveJob(context.Background(), job)
+	if err == nil {
+		s.jobLog(job, "info", "complete", "Metadata lookup completed", nil)
+	}
+	payload := map[string]any{"titleId": request.TitleID, "job": job}
+	if sources, sourceErr := s.repo.ListCatalogSourcesByTitleIDs(ctx, []string{request.TitleID}); sourceErr == nil && len(sources) > 0 {
+		title := groupCatalog(sources, false)[0]
+		applyMetadata(&title, metadata)
+		payload["title"] = title
+	}
+	s.publish("metadata.updated", payload)
+	cancel()
+	s.pendingMu.Lock()
+	delete(s.pendingMetadata, request.TitleID)
+	s.pendingMu.Unlock()
+	s.release(false)
+}
+
 func (s *Service) publish(kind string, payload any) {
+	select {
+	case <-s.stopping:
+		return
+	default:
+	}
 	b, _ := json.Marshal(payload)
 	event, err := s.repo.AppendEvent(context.Background(), kind, string(b))
 	if err != nil {
@@ -291,18 +323,22 @@ func (s *Service) SyncCatalog(mode string) (domain.Job, error) {
 		return domain.Job{}, err
 	}
 	s.publish("job.updated", job)
-	go s.runCatalogSync(job, mode)
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		s.runCatalogSync(job, mode)
+	}()
 	return job, nil
 }
 
 func (s *Service) runCatalogSync(job domain.Job, mode string) {
 	s.syncMu.Lock()
 	defer s.syncMu.Unlock()
-	if err := s.acquire(context.Background(), true); err != nil {
+	if err := s.acquire(s.baseCtx, true); err != nil {
 		return
 	}
 	defer s.release(true)
-	ctx := context.Background()
+	ctx := s.baseCtx
 	job.State = "running"
 	job.Progress = .02
 	job.UpdatedAt = time.Now().UTC()
@@ -433,7 +469,9 @@ func isTransient(err error) bool {
 }
 
 func (s *Service) StartScheduler() {
+	s.wg.Add(1)
 	go func() {
+		defer s.wg.Done()
 		s.recoverInterruptedJobs()
 		s.retryDueJobs(true)
 		s.retryDueJobs(false)
@@ -457,9 +495,58 @@ func (s *Service) StartScheduler() {
 				_, _ = s.SyncCatalog("rebuild")
 			case <-due.C:
 				s.retryDueJobs(true)
+			case <-s.stopping:
+				return
 			}
 		}
 	}()
+}
+
+// Close stops the title-refresh, tracker-search, and metadata workers, the
+// scheduler, and every in-flight catalog/job goroutine, then closes the
+// engine and finally the repository — in that order. It is idempotent: the
+// first call performs the shutdown and later calls return its result. When
+// the workers do not join before the context deadline (or a bounded default),
+// Close aborts the handoff with an error and leaves the engine and database
+// open rather than closing them under active writers. The stopping flag also
+// keeps journal writes (publish, jobLog) from ever reaching a closed
+// repository.
+func (s *Service) Close(ctx context.Context) error {
+	s.closeOnce.Do(func() {
+		s.cancelBase()
+		close(s.stopping)
+		s.closeErr = s.joinAndClose(ctx)
+	})
+	return s.closeErr
+}
+
+func (s *Service) joinAndClose(ctx context.Context) error {
+	joinCtx := ctx
+	cancel := func() {}
+	if _, deadline := ctx.Deadline(); !deadline {
+		joinCtx, cancel = context.WithTimeout(ctx, 10*time.Second)
+	}
+	defer cancel()
+	joined := make(chan struct{})
+	go func() {
+		s.wg.Wait()
+		close(joined)
+	}()
+	select {
+	case <-joined:
+	case <-joinCtx.Done():
+		return fmt.Errorf("service shutdown aborted: workers did not stop: %w", joinCtx.Err())
+	}
+	var firstErr error
+	if closer, ok := s.engine.(io.Closer); ok {
+		if err := closer.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if err := s.repo.Close(); err != nil && firstErr == nil {
+		firstErr = err
+	}
+	return firstErr
 }
 
 func (s *Service) retryDueJobs(waitingOnly bool) {
@@ -658,38 +745,51 @@ func (s *Service) QueueTrackerSearch(ctx context.Context, q string, force bool) 
 }
 
 func (s *Service) trackerSearchWorker() {
-	for request := range s.searchQueue {
-		sum := sha256.Sum256([]byte(strings.ToLower(request.Query)))
-		key := "tracker-search:" + base64.RawURLEncoding.EncodeToString(sum[:12])
-		if err := s.acquire(context.Background(), true); err != nil {
-			continue
+	defer s.wg.Done()
+	for {
+		select {
+		case <-s.stopping:
+			return
+		case request, ok := <-s.searchQueue:
+			if !ok {
+				return
+			}
+			s.runTrackerSearch(request)
 		}
-		job, _ := s.repo.GetJob(context.Background(), key)
-		job.State = "running"
-		job.Progress = .1
-		job.Error = ""
-		job.NextAttemptAt = nil
-		job.UpdatedAt = time.Now().UTC()
-		_ = s.repo.SaveJob(context.Background(), job)
-		s.publish("job.updated", job)
-		s.jobLog(job, "info", "tracker-search", "Submitted FileList search started", map[string]any{"query": request.Query})
-		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(s.settings.Get().TitleRefreshTimeoutMinutes)*time.Minute)
-		page, err := s.Search(ctx, request.Query)
-		job.UpdatedAt = time.Now().UTC()
-		if err != nil {
-			s.failOrWait(&job, err, "tracker-search")
-		} else {
-			job.State = "completed"
-			job.Progress = 1
-			job.Retryable = false
-			job.NextAttemptAt = nil
-			s.jobLog(job, "info", "complete", "Tracker search completed", map[string]any{"releases": len(page.Items)})
-		}
-		_ = s.repo.SaveJob(context.Background(), job)
-		s.publish("job.updated", job)
-		cancel()
-		s.release(true)
 	}
+}
+
+func (s *Service) runTrackerSearch(request trackerSearchRequest) {
+	sum := sha256.Sum256([]byte(strings.ToLower(request.Query)))
+	key := "tracker-search:" + base64.RawURLEncoding.EncodeToString(sum[:12])
+	if err := s.acquire(s.baseCtx, true); err != nil {
+		return
+	}
+	job, _ := s.repo.GetJob(context.Background(), key)
+	job.State = "running"
+	job.Progress = .1
+	job.Error = ""
+	job.NextAttemptAt = nil
+	job.UpdatedAt = time.Now().UTC()
+	_ = s.repo.SaveJob(context.Background(), job)
+	s.publish("job.updated", job)
+	s.jobLog(job, "info", "tracker-search", "Submitted FileList search started", map[string]any{"query": request.Query})
+	ctx, cancel := context.WithTimeout(s.baseCtx, time.Duration(s.settings.Get().TitleRefreshTimeoutMinutes)*time.Minute)
+	page, err := s.Search(ctx, request.Query)
+	job.UpdatedAt = time.Now().UTC()
+	if err != nil {
+		s.failOrWait(&job, err, "tracker-search")
+	} else {
+		job.State = "completed"
+		job.Progress = 1
+		job.Retryable = false
+		job.NextAttemptAt = nil
+		s.jobLog(job, "info", "complete", "Tracker search completed", map[string]any{"releases": len(page.Items)})
+	}
+	_ = s.repo.SaveJob(context.Background(), job)
+	s.publish("job.updated", job)
+	cancel()
+	s.release(true)
 }
 
 func (s *Service) QueueTitleRefresh(ctx context.Context, titleID, query string, force bool) (domain.Job, error) {
@@ -737,71 +837,84 @@ func (s *Service) QueueTitleRefresh(ctx context.Context, titleID, query string, 
 }
 
 func (s *Service) titleRefreshWorker() {
-	for request := range s.refreshQueue {
-		key := "catalog-title-refresh:" + request.TitleID
-		if err := s.acquire(context.Background(), true); err != nil {
-			continue
+	defer s.wg.Done()
+	for {
+		select {
+		case <-s.stopping:
+			return
+		case request, ok := <-s.refreshQueue:
+			if !ok {
+				return
+			}
+			s.runTitleRefresh(request)
 		}
-		job, _ := s.repo.GetJob(context.Background(), key)
-		job.State = "running"
-		job.Progress = .05
-		job.Error = ""
-		job.NextAttemptAt = nil
+	}
+}
+
+func (s *Service) runTitleRefresh(request titleRefreshRequest) {
+	key := "catalog-title-refresh:" + request.TitleID
+	if err := s.acquire(s.baseCtx, true); err != nil {
+		return
+	}
+	job, _ := s.repo.GetJob(context.Background(), key)
+	job.State = "running"
+	job.Progress = .05
+	job.Error = ""
+	job.NextAttemptAt = nil
+	job.UpdatedAt = time.Now().UTC()
+	_ = s.repo.SaveJob(context.Background(), job)
+	s.publish("job.updated", job)
+	s.jobLog(job, "info", "tracker-search", "Searching FileList for title versions", map[string]any{"query": request.Query})
+	timeout := time.Duration(s.settings.Get().TitleRefreshTimeoutMinutes) * time.Minute
+	ctx, cancel := context.WithTimeout(s.baseCtx, timeout)
+	items, err := s.catalog.Search(ctx, request.Query)
+	if err == nil {
+		s.jobLog(job, "info", "tracker-search", "FileList title search completed", map[string]any{"releases": len(items)})
+		job.Progress = .2
 		job.UpdatedAt = time.Now().UTC()
 		_ = s.repo.SaveJob(context.Background(), job)
 		s.publish("job.updated", job)
-		s.jobLog(job, "info", "tracker-search", "Searching FileList for title versions", map[string]any{"query": request.Query})
-		timeout := time.Duration(s.settings.Get().TitleRefreshTimeoutMinutes) * time.Minute
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
-		items, err := s.catalog.Search(ctx, request.Query)
-		if err == nil {
-			s.jobLog(job, "info", "tracker-search", "FileList title search completed", map[string]any{"releases": len(items)})
-			job.Progress = .2
-			job.UpdatedAt = time.Now().UTC()
-			_ = s.repo.SaveJob(context.Background(), job)
-			s.publish("job.updated", job)
-		}
-		if err == nil {
-			err = s.repo.UpsertReleases(ctx, items)
-		}
-		if err == nil {
-			for index, release := range items {
-				parsed := domain.ParseRelease(release)
-				if release.FileCount > 1 && (domain.CatalogTitleID(release, parsed) == request.TitleID) {
-					if _, manifestErr := s.torrentManifest(ctx, release); manifestErr != nil {
-						s.jobLog(job, "warn", "torrent-manifest", "Could not inspect a multi-file torrent", map[string]any{"releaseId": release.ID, "release": release.Name, "error": manifestErr.Error()})
-						if errors.Is(manifestErr, context.DeadlineExceeded) || errors.Is(manifestErr, context.Canceled) {
-							err = manifestErr
-							break
-						}
+	}
+	if err == nil {
+		err = s.repo.UpsertReleases(ctx, items)
+	}
+	if err == nil {
+		for index, release := range items {
+			parsed := domain.ParseRelease(release)
+			if release.FileCount > 1 && (domain.CatalogTitleID(release, parsed) == request.TitleID) {
+				if _, manifestErr := s.torrentManifest(ctx, release); manifestErr != nil {
+					s.jobLog(job, "warn", "torrent-manifest", "Could not inspect a multi-file torrent", map[string]any{"releaseId": release.ID, "release": release.Name, "error": manifestErr.Error()})
+					if errors.Is(manifestErr, context.DeadlineExceeded) || errors.Is(manifestErr, context.Canceled) {
+						err = manifestErr
+						break
 					}
 				}
-				job.Progress = .2 + .7*float64(index+1)/float64(max(1, len(items)))
-				job.UpdatedAt = time.Now().UTC()
-				_ = s.repo.SaveJob(context.Background(), job)
 			}
+			job.Progress = .2 + .7*float64(index+1)/float64(max(1, len(items)))
+			job.UpdatedAt = time.Now().UTC()
+			_ = s.repo.SaveJob(context.Background(), job)
 		}
-		_ = s.repo.RecordSync(context.Background(), key, len(items), err)
-		job.UpdatedAt = time.Now().UTC()
-		if err != nil {
-			s.failOrWait(&job, err, "title-refresh")
-		} else {
-			job.State = "completed"
-			job.Retryable = false
-			job.NextAttemptAt = nil
-			job.Progress = 1
-			job.Label = fmt.Sprintf("Refreshed %s · %d releases", request.Query, len(items))
-			_ = s.EnsureMetadata(context.Background(), []string{request.TitleID})
-		}
-		_ = s.repo.SaveJob(context.Background(), job)
-		if err == nil {
-			s.jobLog(job, "info", "complete", "Title refresh completed", map[string]any{"releases": len(items)})
-		}
-		s.publish("job.updated", job)
-		s.publish("catalog.updated", map[string]any{"mode": "title", "titleId": request.TitleID, "items": len(items), "job": job})
-		cancel()
-		s.release(true)
 	}
+	_ = s.repo.RecordSync(context.Background(), key, len(items), err)
+	job.UpdatedAt = time.Now().UTC()
+	if err != nil {
+		s.failOrWait(&job, err, "title-refresh")
+	} else {
+		job.State = "completed"
+		job.Retryable = false
+		job.NextAttemptAt = nil
+		job.Progress = 1
+		job.Label = fmt.Sprintf("Refreshed %s · %d releases", request.Query, len(items))
+		_ = s.EnsureMetadata(context.Background(), []string{request.TitleID})
+	}
+	_ = s.repo.SaveJob(context.Background(), job)
+	if err == nil {
+		s.jobLog(job, "info", "complete", "Title refresh completed", map[string]any{"releases": len(items)})
+	}
+	s.publish("job.updated", job)
+	s.publish("catalog.updated", map[string]any{"mode": "title", "titleId": request.TitleID, "items": len(items), "job": job})
+	cancel()
+	s.release(true)
 }
 
 func (s *Service) TestFileList(ctx context.Context) (int, error) {
