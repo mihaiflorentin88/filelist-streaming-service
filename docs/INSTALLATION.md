@@ -14,21 +14,28 @@ The server listens on `8097` (web) and `42069` (torrent peers). Both are configu
 
 ## Download
 
-Binaries for every supported platform are on the [releases page](https://github.com/mihaiflorentin88/filelist-streaming-service/releases). Each release ships an archive per platform; the binary is inside.
+Prebuilt archives for every supported platform are on the [releases page](https://github.com/mihaiflorentin88/filelist-streaming-service/releases), named `filelist-streaming-<version>-<target>.zip` (Windows) or `.tar.gz` (everything else). Each archive contains the binary plus a `README.md`.
 
-| Binary | Platform |
-| --- | --- |
-| `filelist-streaming-linux-amd64` | Linux, 64-bit x86 |
-| `filelist-streaming-linux-arm64` | Linux, 64-bit ARM (Raspberry Pi 4/5) |
-| `filelist-streaming-linux-armv7` | Linux, 32-bit ARM |
-| `filelist-streaming-darwin-arm64` | Mac with Apple Silicon |
-| `filelist-streaming-darwin-amd64` | Intel Mac |
-| `filelist-streaming-windows-amd64.exe` | Windows, 64-bit x86 |
-| `filelist-streaming-windows-arm64.exe` | Windows, 64-bit ARM |
+| Release asset | What it is | Use it when |
+| --- | --- | --- |
+| `filelist-streaming-<version>-darwin-universal.zip` | The universal **FileList Streaming.app** (Apple Silicon + Intel), zipped with `ditto` so the ad-hoc signature survives | **Recommended download on macOS.** Unzip and drag the app to Applications — you get the desktop app and the `serve` server in one bundle. |
+| `filelist-streaming-<version>-darwin-arm64.tar.gz` | Raw `filelist-streaming-darwin-arm64` binary | macOS CLI / `serve` setups on Apple Silicon without the .app bundle. |
+| `filelist-streaming-<version>-darwin-amd64.tar.gz` | Raw `filelist-streaming-darwin-amd64` binary | macOS CLI / `serve` setups on Intel Macs. |
+| `filelist-streaming-<version>-linux-amd64.tar.gz` | `filelist-streaming-linux-amd64` with desktop app + server | 64-bit x86 Linux desktops/servers with WebKitGTK 4.1 installed (see [Linux runtime packages](#linux-runtime-packages)). |
+| `filelist-streaming-<version>-linux-arm64.tar.gz` | `filelist-streaming-linux-arm64` with desktop app + server | 64-bit ARM desktop distros (Raspberry Pi OS Bookworm, Ubuntu 24.04) with WebKitGTK 4.1 — GUI-capable. |
+| `filelist-streaming-<version>-linux-armv7.tar.gz` | Pure headless `filelist-streaming-linux-armv7` (GUI excluded at build time) | Older 32-bit ARM boards (e.g. Raspberry Pi 2/3 on 32-bit OS). Server only. |
+| `filelist-streaming-<version>-windows-amd64.zip` | `filelist-streaming-windows-amd64.exe` with desktop app + server | 64-bit x86 Windows. SmartScreen warns on first run — choose **More info → Run anyway**. |
+| `filelist-streaming-<version>-windows-arm64.zip` | `filelist-streaming-windows-arm64.exe` with desktop app + server | Windows on ARM (e.g. Snapdragon laptops). |
 
-Releases also contain `SHA256SUMS` (`sha256sum -c SHA256SUMS --ignore-missing`), SBOMs, and the unsigned Tizen `FileListTV-<version>.wgt`.
+Every release also ships:
 
-The archives follow the `filelist-streaming-<os>-<arch>[.exe]` naming scheme. Every binary except `filelist-streaming-linux-armv7` contains both the desktop app and the headless server. macOS releases additionally ship a universal (Apple Silicon + Intel) `FileList Streaming.app` bundle; `filelist-streaming-linux-armv7` is a pure headless build with the GUI excluded.
+- `SHA256SUMS` — verify with `sha256sum -c SHA256SUMS --ignore-missing`.
+- CycloneDX/SPDX SBOMs for the Go and npm dependencies.
+- The unsigned Tizen `FileListTV-<version>.wgt` (see [Samsung Tizen application](#samsung-tizen-application)).
+
+Every binary except `filelist-streaming-linux-armv7` contains both the desktop app and the headless server; `filelist-streaming-linux-armv7` is a pure headless build with the GUI excluded. If you build from source instead, `make help` lists every target with the exact artifact it produces.
+
+For headless arm64 servers whose distro lacks `libwebkit2gtk-4.1`, a fully static build without the GUI is available from source: `make build-arm64-headless` produces `bin/filelist-streaming-linux-arm64-headless`, and `make deploy-pi PI_HOST=user@host` builds and stages it onto a Raspberry Pi in one step.
 
 ## First run
 

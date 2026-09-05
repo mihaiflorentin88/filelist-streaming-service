@@ -1,4 +1,4 @@
-.PHONY: check test build build-arm64 build-arm64-headless build-all desktop-assets package-darwin wails-cross web frontend tizen-wgt validate-tizen-wgt smoke-tizen-engine deploy-pi bootstrap-server-dry-run
+.PHONY: help check test build build-arm64 build-arm64-headless build-all desktop-assets package-darwin wails-cross web frontend tizen-wgt validate-tizen-wgt smoke-tizen-engine deploy-pi bootstrap-server-dry-run
 
 VERSION ?= $(shell tr -d '[:space:]' < VERSION)
 PI_HOST ?=
@@ -15,12 +15,14 @@ WAILS3 ?= wails3
 # docker-mounts); keeps the cross builds off the network for vendored modules.
 WAILS_DOCKER_MOUNTS := $(shell $(WAILS3) tool docker-mounts)
 
+## check: run Go tests, Python tools tests, go vet, and whitespace checks
 check:
 	GOCACHE="$(GO_CACHE)" go test ./...
 	python3 -m unittest discover -s tools/tests -p 'test_*.py'
 	GOCACHE="$(GO_CACHE)" go vet ./...
 	git diff --check
 
+## test: run Go tests with the race detector and Python tools tests
 test:
 	GOCACHE="$(GO_CACHE)" go test -race ./...
 	python3 -m unittest discover -s tools/tests -p 'test_*.py'
@@ -29,11 +31,13 @@ test:
 # (icons + build task) and Docker (web + desktop-assets prerequisites).
 # The binary embeds both UIs: internal/gui/static (desktop) and
 # internal/adapters/httpapi/static (browser), so both asset builds run first.
+## build: host darwin/arm64 cgo GUI binary -> bin/filelist-streaming (both UIs embedded)
 build: web desktop-assets
 	GOCACHE="$(GO_CACHE)" $(WAILS3) build GO_LDFLAGS="$(GO_LDFLAGS)"
 
 # Desktop GUI frontend (Preact) -> internal/gui/static, dockerized exactly
 # like `web` (same image, workspace-scoped npm script). Requires Docker.
+## desktop-assets: build the desktop GUI frontend -> internal/gui/static (Docker required)
 desktop-assets:
 	docker build -f deploy/docker/Dockerfile.frontend -t filelist-frontend-build .
 	docker run --rm --user "$(shell id -u):$(shell id -g)" -v "$(CURDIR):/src" -v /src/node_modules -v /src/clients/tizen/node_modules filelist-frontend-build npm run build:desktop
@@ -41,6 +45,7 @@ desktop-assets:
 # macOS .app bundle (make build-all first => universal arm64+amd64 via lipo).
 # With only one slice present it rebuilds and bundles the host-arch binary.
 # Output: bin/FileList Streaming.app (build/darwin/Info.plist metadata).
+## package-darwin: macOS .app bundle -> bin/FileList Streaming.app (make build-all first for universal)
 package-darwin: web desktop-assets
 	@if [ -f bin/filelist-streaming-darwin-arm64 ] && [ -f bin/filelist-streaming-darwin-amd64 ]; then \
 		echo ">> Universal .app: both darwin arch slices present, merging with lipo"; \
@@ -55,6 +60,7 @@ package-darwin: web desktop-assets
 # First run pulls/builds ~800MB+ per platform; afterwards Docker's layer
 # cache makes this a no-op. Equivalent to running `wails3 task setup:docker`
 # once (host arch) plus an amd64-variant image for the emulated amd64 slice.
+## wails-cross: build the wails-cross Docker images used by the linux GUI cross-builds
 wails-cross:
 	$(WAILS3) task setup:docker
 	docker build --platform linux/amd64 -t wails-cross:amd64 -f build/docker/Dockerfile.cross build/docker/
@@ -66,6 +72,7 @@ wails-cross:
 # wails3 (docker-mounts), and an arm64-capable Docker host. The container
 # compiles natively with gcc against gtk3/webkit2gtk-4.1 (the `gtk3` tag —
 # what Raspberry Pi OS ships); production drops the wails dev tools.
+## build-arm64: linux/arm64 GUI binary -> bin/filelist-streaming-linux-arm64 (Docker wails-cross)
 build-arm64: web desktop-assets | wails-cross
 	docker run --rm -v "$(CURDIR):/app" -w /app $(WAILS_DOCKER_MOUNTS) \
 		-v filelist-go-build-linux-arm64:/root/.cache/go-build \
@@ -80,6 +87,7 @@ build-arm64: web desktop-assets | wails-cross
 # window — the `headless` tag compiles internal/gui down to the
 # ErrNoDisplay fallback, so the binary is fully static. Use with
 # deploy/systemd/filelist-streaming.service (serve mode).
+## build-arm64-headless: pure headless linux/arm64 binary -> bin/filelist-streaming-linux-arm64-headless (no cgo)
 build-arm64-headless: web
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -tags headless -trimpath -buildvcs=false \
 		-ldflags="$(GO_LDFLAGS)" \
@@ -97,6 +105,7 @@ build-arm64-headless: web
 #     arm64 hosts — expect a long build).
 #   - linux armv7: pure headless (CGO_ENABLED=0; internal/gui compiles to
 #     the ErrNoDisplay fallback via build tags, no webkit2gtk needed).
+## build-all: seven release binaries -> bin/filelist-streaming-<os>-<arch>[.exe] (Docker + wails3)
 build-all: web desktop-assets | wails-cross
 	GOCACHE="$(GO_CACHE)" $(WAILS3) task windows:build ARCH=amd64 OUTPUT=bin/filelist-streaming-windows-amd64.exe GO_LDFLAGS="$(GO_LDFLAGS)"
 	GOCACHE="$(GO_CACHE)" $(WAILS3) task windows:build ARCH=arm64 OUTPUT=bin/filelist-streaming-windows-arm64.exe GO_LDFLAGS="$(GO_LDFLAGS)"
@@ -122,15 +131,18 @@ build-all: web desktop-assets | wails-cross
 # server binary, so the build* targets never ship a stale UI. It runs the
 # same pinned node:24 image as `frontend` but only builds @filelist/web; the
 # Tizen client and WGT packing stay in `frontend`. static/ is git-ignored.
+## web: build the browser UI -> internal/adapters/httpapi/static (Docker required)
 web:
 	docker build -f deploy/docker/Dockerfile.frontend -t filelist-frontend-build .
 	docker run --rm --user "$(shell id -u):$(shell id -g)" -v "$(CURDIR):/src" -v /src/node_modules -v /src/clients/tizen/node_modules filelist-frontend-build npm run build:web
 
+## frontend: build browser + Tizen clients, then pack the WGT (Docker required)
 frontend:
 	docker build -f deploy/docker/Dockerfile.frontend -t filelist-frontend-build .
 	docker run --rm --user "$(shell id -u):$(shell id -g)" -v "$(CURDIR):/src" -v /src/node_modules -v /src/clients/tizen/node_modules filelist-frontend-build
 	$(MAKE) tizen-wgt
 
+## tizen-wgt: pack the unsigned Tizen TV app -> clients/tizen/.build/artifacts/FileListTV-$(TIZEN_VERSION).wgt
 tizen-wgt:
 	python3 tools/tizen_wgt.py pack \
 		--source clients/tizen/dist \
@@ -139,6 +151,7 @@ tizen-wgt:
 		--output "$(TIZEN_WGT)" \
 		--target-tizen "$(TIZEN_TARGET)"
 
+## validate-tizen-wgt: validate the packed WGT against the Tizen support floor
 validate-tizen-wgt:
 	python3 tools/tizen_wgt.py validate \
 		--file "$(TIZEN_WGT)" \
@@ -153,6 +166,7 @@ validate-tizen-wgt:
 # Node >= 22 (CI provides Node 24); uses --network host, so no ports are
 # published. The third case intentionally runs a broken-bundle fixture and
 # must exit 3; any other outcome fails the target.
+## smoke-tizen-engine: boot the TV bundle in pinned Chromium 63 (selenoid/chrome:63.0, Docker required)
 smoke-tizen-engine:
 	@echo "smoke-tizen-engine: pinned engine selenoid/chrome:63.0 (Google Chrome 63.0.3239.84) — oldest reliably obtainable Chromium at the Tizen 5.0 floor; ceiling of this guarantee"
 	node tools/smoke_tizen_engine/smoke.mjs --cases clean,fatal
@@ -165,9 +179,15 @@ smoke-tizen-engine:
 	fi
 	@echo "smoke-tizen-engine: PASS — clean boot and injected-error panel verified on Google Chrome 63.0.3239.84; broken fixture rejected."
 
+## deploy-pi: build-arm64-headless, then stage binary + systemd units to PI_HOST (make deploy-pi PI_HOST=user@host)
 deploy-pi: build-arm64-headless
 	PI_HOST="$(PI_HOST)" sh deploy/pi-deploy.sh "$(CURDIR)/bin/filelist-streaming-linux-arm64-headless" "$(CURDIR)/deploy/systemd/filelist-streaming.service" "$(CURDIR)/deploy/systemd/filelist-streaming.logrotate"
 
+## bootstrap-server-dry-run: preview deploy/bootstrap-server.sh server setup without installing anything
 bootstrap-server-dry-run:
 	@echo "Review only; this target does not install packages."
 	sudo sh deploy/bootstrap-server.sh --confirm-server-install --dry-run
+
+## help: list available targets
+help:
+	@grep -E '^## ' $(MAKEFILE_LIST) | sed 's/^## //'
