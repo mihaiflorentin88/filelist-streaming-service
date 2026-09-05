@@ -27,18 +27,32 @@ type InstanceLock struct {
 	closed bool
 }
 
+// pidAlive decides whether a lock-owner pid still runs. It is a package
+// seam so tests can inject dead owners without spawning real processes.
+var pidAlive = defaultPidAlive
+
+// ownerIsDead reports whether a lock's recorded pid is provably gone. A
+// dead owner breaks the lock outright — no dial, no takeover delay, and no
+// false "already running" when an unrelated process has since reused the
+// recorded NotifyURL port.
+func ownerIsDead(c lockContents) bool {
+	return c.PID > 0 && !pidAlive(c.PID)
+}
+
 func Acquire(dataDir string) (*InstanceLock, error) {
 	path := filepath.Join(dataDir, "gui.lock")
 	if b, err := os.ReadFile(path); err == nil {
 		var c lockContents
-		if json.Unmarshal(b, &c) == nil && c.NotifyURL != "" {
-			if conn, derr := net.DialTimeout("tcp", c.NotifyURL, time.Second); derr == nil {
-				fmt.Fprintln(conn, "show")
-				conn.Close()
-				return nil, ErrAlreadyRunning
+		if json.Unmarshal(b, &c) == nil && !ownerIsDead(c) {
+			if c.NotifyURL != "" {
+				if conn, derr := net.DialTimeout("tcp", c.NotifyURL, time.Second); derr == nil {
+					fmt.Fprintln(conn, "show")
+					conn.Close()
+					return nil, ErrAlreadyRunning
+				}
 			}
 		}
-		// Stale lock (owner dead or unreadable): take over.
+		// Stale lock (owner dead, port gone, or unreadable): take over.
 	}
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return nil, err
