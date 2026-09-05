@@ -24,7 +24,7 @@ import (
 )
 
 // baseURL is the fixed upstream address. It is deliberately not configurable.
-const baseURL = "https://ads-integration.example.invalid"
+const baseURL = "https://filelist-ads.ffxivbard.com"
 
 // errNotFound marks an upstream 404: callers translate it per endpoint
 // (an absent notice is not an outage; an empty promotion pool is not an
