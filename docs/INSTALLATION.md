@@ -132,29 +132,30 @@ The desktop app renders through the platform webview: WKWebView on macOS, WebVie
 For an always-on server, install the reviewed systemd and logrotate files from `deploy/systemd/`:
 
 ```bash
-sudo install -m 0755 filelist-streaming /usr/local/bin/filelist-streaming
+sudo install -d -m 0755 -o filelist-streaming -g filelist-streaming /var/lib/filelist-streaming/bin
+sudo install -m 0755 -o filelist-streaming -g filelist-streaming filelist-streaming /var/lib/filelist-streaming/bin/filelist-streaming
 sudo install -m 0644 deploy/systemd/filelist-streaming.service /etc/systemd/system/
 sudo install -m 0644 deploy/systemd/filelist-streaming.logrotate /etc/logrotate.d/filelist-streaming
 sudo systemctl daemon-reload
 sudo systemctl enable --now filelist-streaming.service
 ```
 
-Adjust the download root in the unit file first if it is not `/srv/filelist-downloads`. The unit runs the binary in headless mode — `filelist-streaming serve --data-dir /var/lib/filelist-streaming/data` — so a bare launch on the server never opens a GUI. Because services run without a terminal, provide the required settings through environment variables (see the headless note above) or a prepared settings file.
+Adjust the download root in the unit file first if it is not `/srv/filelist-downloads`. The unit runs the binary in headless mode — `filelist-streaming serve --data-dir /var/lib/filelist-streaming/data` — from the service-owned `/var/lib/filelist-streaming/bin/filelist-streaming` path, so the service can update its own binary and a bare launch on the server never opens a GUI. Because services run without a terminal, provide the required settings through environment variables (see the headless note above) or a prepared settings file.
 
 ### Upgrading
 
-Older service files ran a bare `ExecStart=/usr/local/bin/filelist-streaming` with no `serve` argument. Copying a new binary over the old one onto such a unit breaks the service: with no arguments the binary now attempts the desktop app, and on a headless server it prints the `serve` direction and exits 1 — which `Restart=on-failure` turns into a permanent restart loop. Re-run `make deploy-pi` (it stages the corrected unit), or fix the unit by hand:
+Older service files ran a bare `ExecStart=/usr/local/bin/filelist-streaming` (with or without the `serve` argument). Re-run `make deploy-pi` once: it stages the corrected unit and migrates the binary from `/usr/local/bin` to the service-owned `/var/lib/filelist-streaming/bin/filelist-streaming`, which `Restart=always` keeps alive and the in-application updater can replace without root. To fix the unit by hand instead:
 
 ```bash
 sudo systemctl edit --full filelist-streaming.service
-# ExecStart=/usr/local/bin/filelist-streaming serve --data-dir /var/lib/filelist-streaming/data
+# ExecStart=/var/lib/filelist-streaming/bin/filelist-streaming serve --data-dir /var/lib/filelist-streaming/data
 sudo systemctl daemon-reload
 sudo systemctl restart filelist-streaming
 ```
 
 ### Fresh-server bootstrap
 
-On a new dedicated Linux server, `deploy/bootstrap-server.sh` installs packages, creates service users, verifies and installs the exact Go toolchain, builds the server, and enables the services:
+On a new dedicated Linux server, `deploy/bootstrap-server.sh` installs packages, creates service users, verifies and installs the exact Go toolchain, builds the versioned headless server (`-tags headless`, `composition.Version` from `VERSION`), installs it under the service-owned `/var/lib/filelist-streaming/bin` directory, and enables the services:
 
 ```bash
 git clone https://github.com/mihaiflorentin88/filelist-streaming-service.git
@@ -172,7 +173,7 @@ To update an existing ARM64 Raspberry Pi from a development machine:
 make deploy-pi PI_HOST=user@server.lan
 ```
 
-The command cross-compiles the server, stages binary and service files, creates protected configuration backups, and rolls back automatically if startup fails. Answers are remembered in ignored `deploy/.deploy.local.conf`.
+The command cross-compiles the headless server, stages binary and service files, creates protected configuration backups, and rolls back automatically if startup fails. Installs that still live in `/usr/local/bin` migrate to the service-owned `/var/lib/filelist-streaming/bin/filelist-streaming` so the in-application updater works without root; an explicitly configured custom path is kept, and reported as manual-update-only when its directory cannot be owned by the service user. Answers are remembered in ignored `deploy/.deploy.local.conf`.
 
 ## qBittorrent engine (optional)
 

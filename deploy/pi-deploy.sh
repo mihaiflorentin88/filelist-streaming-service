@@ -50,7 +50,16 @@ saved_qb_backup=$(configured QB_BACKUP_DIR || true)
 prompt "qBittorrent config backup directory" "${saved_qb_backup:-/var/backups/filelist-streaming/qbittorrent}"
 qb_backup=$REPLY
 saved_app_target=$(configured APP_TARGET || true)
-prompt "Application binary path" "${saved_app_target:-/usr/local/bin/filelist-streaming}"
+# S7: the service-owned bin directory replaced /usr/local/bin. Fresh
+# installs and installs whose saved path is an old default migrate to it;
+# an explicitly configured custom path is preserved.
+app_bin_default=/var/lib/filelist-streaming/bin/filelist-streaming
+app_bin_legacy=/usr/local/bin/filelist-streaming
+case "$saved_app_target" in
+"" | "$app_bin_legacy") prompt_default=$app_bin_default ;;
+*) prompt_default=$saved_app_target ;;
+esac
+prompt "Application binary path" "$prompt_default"
 app_target=$REPLY
 
 valid_atom "$host" || {
@@ -141,11 +150,29 @@ qb_temp=$5
 qb_backup=$6
 target=$7
 service=filelist-streaming.service
+service_user=filelist-streaming
+service_group=filelist-streaming
+app_bin_dir=/var/lib/filelist-streaming/bin
+owned_target=$app_bin_dir/filelist-streaming
+legacy_target=/usr/local/bin/filelist-streaming
+unit_path=/etc/systemd/system/$service
+# Fresh installs and both historic defaults move to the service-owned bin
+# directory; an explicitly configured custom path is preserved as-is.
+legacy_present=false
+if [ "$target" = "$legacy_target" ] || [ "$target" = "$owned_target" ]; then
+	if [ -e "$legacy_target" ]; then
+		legacy_present=true
+	fi
+	target=$owned_target
+fi
 previous=${target}.previous
+previous_unit=
 backup_file=
 qb_owner=
 qb_group=
 qb_mode=
+app_phase=false
+had_unit=false
 had_binary=false
 success=false
 
@@ -157,9 +184,21 @@ rollback() {
 		[ -z "$qb_mode" ] || chmod "$qb_mode" "$qb_config" || true
 		systemctl restart "$qb_service" || true
 	fi
-	if [ "$had_binary" = true ] && [ -f "$previous" ]; then
-		mv -f "$previous" "$target"
-		systemctl restart "$service" || true
+	if [ "$app_phase" = true ]; then
+		if [ "$had_unit" = true ]; then
+			cp -p -- "$previous_unit" "$unit_path"
+		else
+			rm -f -- "$unit_path"
+		fi
+		if [ "$had_binary" = true ] && [ -f "$previous" ]; then
+			mv -f -- "$previous" "$target"
+		else
+			rm -f -- "$target"
+		fi
+		if [ "$had_unit" = true ]; then
+			systemctl daemon-reload || true
+			systemctl restart "$service" || true
+		fi
 	fi
 }
 trap rollback EXIT INT TERM
@@ -203,31 +242,69 @@ mv -f "$merged" "$qb_config"
 systemctl start "$qb_service"
 systemctl is-active --quiet "$qb_service"
 
-if ! id filelist-streaming >/dev/null 2>&1; then
-	useradd --system --home-dir /var/lib/filelist-streaming --no-create-home --shell /usr/sbin/nologin filelist-streaming
+if ! id "$service_user" >/dev/null 2>&1; then
+	useradd --system --home-dir /var/lib/filelist-streaming --no-create-home --shell /usr/sbin/nologin "$service_user"
 fi
-usermod -a -G qbittorrent filelist-streaming
-install -d -m 0750 -o filelist-streaming -g filelist-streaming /var/lib/filelist-streaming /var/lib/filelist-streaming/data /var/lib/filelist-streaming/data/logs
+usermod -a -G qbittorrent "$service_user"
+install -d -m 0750 -o "$service_user" -g "$service_group" /var/lib/filelist-streaming /var/lib/filelist-streaming/data /var/lib/filelist-streaming/data/logs
+install -d -m 0755 -o "$service_user" -g "$service_group" "$app_bin_dir"
 
+app_phase=true
+if [ -f "$unit_path" ]; then
+	previous_unit=$(mktemp /tmp/filelist-unit-previous.XXXXXX)
+	cp -p -- "$unit_path" "$previous_unit"
+	had_unit=true
+fi
 if [ -f "$target" ]; then
-	cp -a "$target" "$previous"
+	cp -a -- "$target" "$previous"
 	had_binary=true
 fi
+
+# Stage the new binary and validate it, and only then touch the unit: an
+# unusable payload must never deactivate the current installation.
 install -m 0755 "$stage/filelist-streaming" "${target}.new"
+test -x "${target}.new"
+test -s "${target}.new"
+
 # The native engine writes media and session state under the download
-# root; ProtectSystem=strict must whitelist it inside the unit.
+# root; ProtectSystem=strict must whitelist it inside the unit. The
+# shipped ExecStart already points at the service-owned bin directory; a
+# custom target is substituted so the unit keeps matching the binary.
 sed -i "s|@DOWNLOAD_ROOT@|$download_root|" "$stage/filelist-streaming.service"
-mv -f "${target}.new" "$target"
-install -m 0644 "$stage/filelist-streaming.service" /etc/systemd/system/filelist-streaming.service
+if [ "$target" != "$owned_target" ]; then
+	sed -i "s|^ExecStart=.*|ExecStart=$target serve --data-dir /var/lib/filelist-streaming/data|" "$stage/filelist-streaming.service"
+fi
+mv -f -- "${target}.new" "$target"
+
+# Service-user ownership of the default install lets the in-application
+# updater stage and swap the binary without privilege escalation. Custom
+# targets give the binary the same owner; when the surrounding directory
+# cannot follow, updates there are reported as manual-only.
+if [ "$target" = "$owned_target" ]; then
+	chown "$service_user:$service_group" "$target"
+else
+	chown "$service_user:$service_group" "$target" 2>/dev/null || true
+	if [ "$(stat -c %U "$(dirname -- "$target")")" != "$service_user" ]; then
+		echo "NOTE: $(dirname -- "$target") is not owned by $service_user; in-application updates for $target are manual-only (re-run pi-deploy.sh to update)." >&2
+	fi
+fi
+
+install -m 0644 "$stage/filelist-streaming.service" "$unit_path"
 install -m 0644 "$stage/filelist-streaming.logrotate" /etc/logrotate.d/filelist-streaming
 systemctl daemon-reload
 
 if ! systemctl enable --now "$service" || ! systemctl restart "$service" || ! systemctl is-active --quiet "$service"; then
-	echo "deployment failed; rollback will restore the application and qBittorrent config" >&2
+	echo "deployment failed; rollback will restore the previous unit and binary" >&2
 	exit 1
 fi
 
-rm -f "$previous"
+rm -f -- "$previous"
+if [ -n "$previous_unit" ]; then
+	rm -f -- "$previous_unit"
+fi
+if [ "$legacy_present" = true ]; then
+	rm -f -- "$legacy_target"
+fi
 success=true
 trap - EXIT INT TERM
 rm -rf -- "$stage"

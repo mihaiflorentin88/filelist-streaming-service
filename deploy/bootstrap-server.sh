@@ -49,6 +49,7 @@ echo "  qB Web UI: http://127.0.0.1:8080"
 echo "  downloads: $download_root"
 echo "  incomplete downloads: $qb_temp_path"
 echo "  application state: /var/lib/filelist-streaming"
+echo "  application binary: /var/lib/filelist-streaming/bin/filelist-streaming (headless build)"
 echo "No firewall rules or application secrets will be changed."
 
 case "$package_manager" in
@@ -60,14 +61,15 @@ esac
 
 architecture=$(uname -m)
 case "$architecture" in x86_64) go_arch=amd64;; aarch64|arm64) go_arch=arm64;; *) echo "Unsupported Go architecture: $architecture" >&2; exit 1;; esac
-go_version=$(awk '$1=="go"{print $2;exit}' go.mod)
+version=$(tr -d '[:space:]' < "$repo_root/VERSION")
+go_version=$(awk '$1=="go"{print $2;exit}' "$repo_root/go.mod")
 go_archive="go${go_version}.linux-${go_arch}.tar.gz"
 go_url="https://go.dev/dl/${go_archive}"
 go_checksum_url="${go_url}.sha256"
 go_root="/var/lib/filelist-streaming/toolchains/go${go_version}"
 build_root="/var/lib/filelist-streaming/build"
 
-run install -d -m 0750 /var/lib/filelist-streaming /var/lib/filelist-streaming/data /var/lib/filelist-streaming/data/logs "$build_root" "$download_root"
+run install -d -m 0750 /var/lib/filelist-streaming /var/lib/filelist-streaming/data /var/lib/filelist-streaming/data/logs /var/lib/filelist-streaming/bin "$build_root" "$download_root"
 if [ "$dry_run" = true ]; then
 	echo "+ download $go_url and $go_checksum_url; verify SHA-256; extract privately to $go_root"
 else
@@ -83,7 +85,7 @@ else
 	tar -C "$go_root.new" --strip-components=1 -xzf "$tmp_dir/$go_archive"
 	rm -rf -- "$go_root"
 	mv "$go_root.new" "$go_root"
-	GOCACHE="$build_root/go-cache" CGO_ENABLED=0 "$go_root/bin/go" build -trimpath -ldflags='-s -w' -o "$build_root/filelist-streaming" ./cmd/server
+	GOCACHE="$build_root/go-cache" CGO_ENABLED=0 "$go_root/bin/go" build -trimpath -tags headless -ldflags="-s -w -X github.com/mihaiflorentin88/filelist-streaming-service/internal/composition.Version=${version}" -o "$build_root/filelist-streaming" ./cmd/server
 fi
 
 if ! getent group qbittorrent >/dev/null 2>&1; then run groupadd --system qbittorrent; fi
@@ -105,10 +107,10 @@ elif [ ! -f "$qb_config" ]; then
 	chown qbittorrent:qbittorrent "$qb_config"
 	chmod 0640 "$qb_config"
 fi
-run install -m 0755 "$build_root/filelist-streaming" /usr/local/bin/filelist-streaming
+run install -m 0755 -o filelist-streaming -g filelist-streaming "$build_root/filelist-streaming" /var/lib/filelist-streaming/bin/filelist-streaming
 run install -m 0644 deploy/systemd/qbittorrent-nox.service /etc/systemd/system/qbittorrent-nox.service
 run install -m 0644 deploy/systemd/filelist-streaming.service /etc/systemd/system/filelist-streaming.service
-run sed -i "s#/srv/filelist-downloads#$download_root#g" /etc/systemd/system/qbittorrent-nox.service /etc/systemd/system/filelist-streaming.service
+run sed -i "s#/srv/filelist-downloads#$download_root#g; s|@DOWNLOAD_ROOT@|$download_root|g" /etc/systemd/system/qbittorrent-nox.service /etc/systemd/system/filelist-streaming.service
 run install -m 0644 deploy/systemd/filelist-streaming.logrotate /etc/logrotate.d/filelist-streaming
 run systemctl daemon-reload
 run systemctl enable --now qbittorrent-nox.service

@@ -26,12 +26,10 @@ make validate-tizen-wgt TIZEN_TARGET=5.0
 ## Server builds and Raspberry Pi deployment
 
 ```sh
-make build
-make build-arm64
 make deploy-pi
 ```
 
-`deploy-pi` cross-compiles the ARM64 binary and prompts for the SSH target and non-secret deployment paths. Enter accepts remembered values from ignored `deploy/.deploy.local.conf`; `PI_HOST=user@server.lan make deploy-pi` overrides the remembered host. The script backs up and safely merges the qBittorrent streaming policy before replacing the application service, and rolls both services back on failure. Routine deployment installs no packages. The service may use up to 2 GiB, with a 1.5 GiB soft watermark.
+`deploy-pi` cross-compiles the headless ARM64 binary and prompts for the SSH target and non-secret deployment paths. Enter accepts remembered values from ignored `deploy/.deploy.local.conf`; `PI_HOST=user@server.lan make deploy-pi` overrides the remembered host. The binary installs under the service-owned `/var/lib/filelist-streaming/bin` directory (older `/usr/local/bin` installs migrate; explicit custom paths are preserved) so the in-application updater can stage and swap it without root. The script backs up and safely merges the qBittorrent streaming policy before replacing the application service, and rolls the unit, binary, and qBittorrent configuration back on failure. Routine deployment installs no packages. The service may use up to 2 GiB, with a 1.5 GiB soft watermark.
 
 `tools/progressive_stream_smoke.py` is a destructive integration test for a release that is not already managed. Run it on the server with the protected application settings path. It applies a per-torrent test limit (2 MiB/s by default), checks startup and tail ranges, optionally runs an existing `ffprobe`, resets that limit, then removes the test torrent and files in `finally`. It never changes qBittorrent's global speed limit and refuses to reuse an existing download.
 

@@ -9,8 +9,8 @@ User=filelist-streaming
 Group=filelist-streaming
 SupplementaryGroups=qbittorrent
 WorkingDirectory=/var/lib/filelist-streaming
-ExecStart=/usr/local/bin/filelist-streaming serve --data-dir /var/lib/filelist-streaming/data
-Restart=on-failure
+ExecStart=/var/lib/filelist-streaming/bin/filelist-streaming serve --data-dir /var/lib/filelist-streaming/data
+Restart=always
 RestartSec=10
 TimeoutStopSec=20
 UMask=0027
@@ -22,7 +22,10 @@ ProtectHome=true
 # the native engine writes media and session state there, so the sandbox must
 # allow it. The leading dash tolerates a not-yet-created path. Never list the
 # download root (or any writable path) below: systemd applies these lines in
-# order, and a later mention re-mutes an earlier grant.
+# order, and a later mention re-mutes an earlier grant. The application
+# binary lives in /var/lib/filelist-streaming/bin, owned by the service
+# user, so the in-application updater stages and swaps it inside the
+# ReadWritePaths grant above without a privilege escalation.
 ReadWritePaths=/var/lib/filelist-streaming -@DOWNLOAD_ROOT@
 ReadOnlyPaths=-/var/lib/qbittorrent/qBittorrent/downloads
 MemoryHigh=1536M

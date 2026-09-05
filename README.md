@@ -76,7 +76,7 @@ The default trusted networks are loopback and RFC1918 private address ranges. Na
 
 ## Raspberry Pi deployment
 
-`make deploy-pi PI_HOST=user@server.lan` cross-compiles the ARM64 server, then prompts for the server and non-secret qBittorrent/application paths. Answers are remembered in ignored `deploy/.deploy.local.conf`. Every run creates a new protected qBittorrent config backup, merges only the credential-free streaming template, and restores both qBittorrent configuration and the previous application binary if deployment fails. The target operation uses `sudo` and therefore requires explicit approval.
+`make deploy-pi PI_HOST=user@server.lan` cross-compiles the headless ARM64 server, then prompts for the server and non-secret qBittorrent/application paths. Answers are remembered in ignored `deploy/.deploy.local.conf`. The binary is installed under the service-owned `/var/lib/filelist-streaming/bin` directory so the in-application updater can replace it without root; installs that still live in `/usr/local/bin` are migrated, while an explicitly configured custom path is kept (reported as manual-update-only when its directory cannot be owned by the service user). Every run creates a new protected qBittorrent config backup, merges only the credential-free streaming template, and restores the previous unit, application binary, and qBittorrent configuration if deployment fails. The target operation uses `sudo` and therefore requires explicit approval.
 
 ## Server dependencies and fresh-machine setup
 
