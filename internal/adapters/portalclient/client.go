@@ -127,7 +127,7 @@ func statusError(status int) error {
 func decodeBody(r io.Reader, out any) error {
 	data, err := io.ReadAll(io.LimitReader(r, maxBodyBytes+1))
 	if err != nil {
-		return fmt.Errorf("%w: read response: %v", ErrUnavailable, err)
+		return fmt.Errorf("%w: read response: %w", ErrUnavailable, err)
 	}
 	if len(data) > maxBodyBytes {
 		return errors.New("upstream response exceeded size limit")
@@ -297,7 +297,7 @@ func (c *Client) Click(ctx context.Context, provider, id string) (string, error)
 	}
 	resp, err := clicker.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrUnavailable, err)
+		return "", fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
 	defer resp.Body.Close()
 
