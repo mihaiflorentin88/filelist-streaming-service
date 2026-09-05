@@ -259,11 +259,13 @@ func (b *Bindings) OpenWebUI() error {
 	return b.openURL("http://127.0.0.1:" + port)
 }
 
-// OpenURL opens an http(s) URL in the default browser — the Downloads
-// page's Play hands playback off to the web player this way. The scheme
-// allow-list keeps arbitrary content (file://, custom schemes, command
-// strings) away from the OS opener, and the URL travels as one argv
-// element — never a shell string.
+// OpenURL opens an http(s) URL with a non-empty host in the default
+// browser — the Downloads page's Play hands playback off to the web player
+// this way, and the portal surfaces route their external links through it.
+// The scheme allow-list keeps arbitrary content (file://, custom schemes,
+// command strings) away from the OS opener, the host requirement keeps
+// hostless http URLs from reaching the opener, and the URL travels as one
+// argv element — never a shell string.
 func (b *Bindings) OpenURL(rawURL string) error {
 	parsed, err := url.Parse(strings.TrimSpace(rawURL))
 	if err != nil {
@@ -271,6 +273,9 @@ func (b *Bindings) OpenURL(rawURL string) error {
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return fmt.Errorf("refusing to open %q: only http and https URLs are allowed", rawURL)
+	}
+	if parsed.Host == "" {
+		return fmt.Errorf("refusing to open %q: a host is required", rawURL)
 	}
 	return b.openURL(parsed.String())
 }

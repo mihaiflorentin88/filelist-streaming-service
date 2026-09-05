@@ -14,7 +14,7 @@ import {
   Version,
 } from '../bindings/github.com/mihaiflorentin88/filelist-streaming-service/internal/gui/bindings';
 
-import { useServerState } from '../lib/state';
+import { usePortal, useServerState } from '../lib/state';
 
 // renderLogLine formats one JSONL log record as "time LEVEL message" —
 // the server's slog JSON handler keys — with HTTP access records rendered
@@ -46,6 +46,7 @@ function renderLogLine(line: string): string {
 // data folder with reveal buttons).
 export function ServerPage() {
   const server = useServerState();
+  const portal = usePortal();
   const [version, setVersion] = useState('');
   const [settingsPath, setSettingsPath] = useState('');
   const [dataDir, setDataDir] = useState('');
@@ -207,6 +208,11 @@ export function ServerPage() {
           <span class={`dot dot-${server.state}`} aria-hidden="true" />
           {stateLine}
         </p>
+        {server.state === 'running' && portal.status?.available && (
+          <p class="update-state" data-state="available">
+            {portal.status.latest ? `Update available: version ${portal.status.latest}.` : 'A new version is available.'}
+          </p>
+        )}
         <div class="fields">
           {server.state === 'running' || server.state === 'starting'
             ? <button class="primary" type="button" disabled={transitioning} onClick={() => void run(StopServer)}>Stop server</button>

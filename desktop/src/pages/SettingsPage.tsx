@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { Settings } from '@filelist/web/settings';
+import { UpdateSection, type UpdateController } from '@filelist/web/portal';
+import { sharedApi } from '@filelist/web/shared-api';
 import type { Settings as SettingsRecord } from '../bindings/github.com/mihaiflorentin88/filelist-streaming-service/internal/platform/config/models';
 import type { SchemaField, SettingsView } from '../bindings/github.com/mihaiflorentin88/filelist-streaming-service/internal/adapters/httpapi/models';
 import {
@@ -9,7 +11,7 @@ import {
   SaveSettings,
   SettingsSchema,
 } from '../bindings/github.com/mihaiflorentin88/filelist-streaming-service/internal/gui/bindings';
-import { useServerState } from '../lib/state';
+import { openExternal, usePortal, useServerState } from '../lib/state';
 
 // Settings page: the shared web Settings component with the bindings as the
 // PRIMARY save transport (works while the server is stopped — that is the
@@ -19,8 +21,15 @@ import { useServerState } from '../lib/state';
 // restart-required fields surfaces the inline "Restart to apply" action; a
 // save that completes the required settings auto-starts the server purely
 // Go-side, and the state event flips the shell pill to running.
-export function SettingsPage() {
+//
+// Portal parity with web: the Account tab exists only while the snapshot
+// says accounts are enabled (an outage or a disabled server unmounts the
+// whole group with zero trace; the stored settings are untouched), and the
+// update section renders only while THIS embedded server is running — the
+// controls must never pretend a stopped (or different) server is live.
+export function SettingsPage({ updates }: { updates: UpdateController }) {
   const server = useServerState();
+  const portal = usePortal();
   const [value, setValue] = useState<SettingsView | null>(null);
   const [fields, setFields] = useState<SchemaField[]>([]);
   const [missing, setMissing] = useState<string[]>([]);
@@ -119,6 +128,10 @@ export function SettingsPage() {
             save={saveTransport}
             onSaved={onSaved}
             onError={message => setSaveError(message)}
+            accountsEnabled={portal.snapshot?.accountsEnabled === true}
+            updateSection={server.state === 'running' && portal.status
+              ? <UpdateSection client={sharedApi()} status={portal.status} connected={portal.connected} failure={portal.failure} controller={updates} openExternal={openExternal} />
+              : null}
           />
           : <p class="supporting">Loading settings…</p>}
     </section>

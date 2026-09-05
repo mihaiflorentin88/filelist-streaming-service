@@ -1,7 +1,9 @@
 import { render } from 'preact';
 import { act } from 'preact/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { seedServerState } from '../lib/state';
+import type { PortalState, UpdateStatus } from '@filelist/shared';
+import type { UpdateController } from '@filelist/web/portal';
+import { resetPortal, seedServerState } from '../lib/state';
 import { SettingsPage } from './SettingsPage';
 
 // The shared web Settings component is driven through its real DOM; the
@@ -18,7 +20,29 @@ const fakeBindings = vi.hoisted(() => ({
 
 const fakeApi = vi.hoisted(() => ({
   call: vi.fn(),
+  portalState: vi.fn(),
+  portalMe: vi.fn(),
+  updatesCurrent: vi.fn(),
 }));
+
+// Inert stream: the portal engine opens one per origin; tests never drive it.
+class FakeEventSource {
+  constructor(public url: string) { }
+  addEventListener() { }
+  close() { }
+}
+
+// A controller stub with the shared controller's exact shape: the gating
+// tests assert placement and availability, not the apply orchestration
+// (covered by the web suite that owns the shared component).
+const stubUpdates: UpdateController = {
+  phase: 'idle', outcome: null, reconnectedCurrent: false,
+  check: async () => { }, requestApply: () => { }, cancelApply: () => { }, confirmApply: async () => { },
+};
+
+const enabledSnapshot: PortalState = { accountsEnabled: true, adsEnabled: false, donor: false, links: [] };
+const disabledSnapshot: PortalState = { accountsEnabled: false, adsEnabled: false, donor: false, links: [] };
+const updateStatus: UpdateStatus = { currentVersion: '1.2.3', available: true, latest: '1.3.0', releasesUrl: 'https://example.invalid/releases', selfUpdate: true, applying: false };
 
 vi.mock('../bindings/github.com/mihaiflorentin88/filelist-streaming-service/internal/gui/bindings', () => ({
   LoadSettings: fakeBindings.loadSettings,
@@ -79,7 +103,7 @@ async function mount(): Promise<HTMLElement> {
   const host = document.createElement('div');
   document.body.appendChild(host);
   mountedHosts.push(host);
-  await act(async () => { render(<SettingsPage />, host) });
+  await act(async () => { render(<SettingsPage updates={stubUpdates} />, host) });
   for (let i = 0; i < 5; i++) {
     await act(async () => {
       const { promise, resolve } = Promise.withResolvers<void>();
@@ -89,6 +113,35 @@ async function mount(): Promise<HTMLElement> {
   }
   return host;
 }
+
+
+beforeEach(() => {
+  vi.stubGlobal('EventSource', FakeEventSource);
+  seedServerState({ state: 'running', address: '127.0.0.1:8097' });
+  history.replaceState(null, '', '#');
+  fakeBindings.loadSettings.mockResolvedValue(settingsValue);
+  fakeBindings.settingsSchema.mockResolvedValue(schemaFields);
+  fakeBindings.missingRequired.mockResolvedValue([]);
+  fakeBindings.saveSettings.mockResolvedValue({ saved: true, restartRequired: false, autoStarted: false });
+  fakeApi.call.mockReset();
+  fakeApi.call.mockResolvedValue({});
+  fakeApi.portalState.mockReset();
+  fakeApi.portalState.mockResolvedValue(disabledSnapshot);
+  fakeApi.portalMe.mockReset();
+  fakeApi.portalMe.mockRejectedValue(Object.assign(new Error('no session'), { status: 401 }));
+  fakeApi.updatesCurrent.mockReset();
+  fakeApi.updatesCurrent.mockResolvedValue(updateStatus);
+  resetPortal();
+});
+
+afterEach(() => {
+  for (const host of mountedHosts) { render(null, host); host.remove() }
+  mountedHosts.length = 0;
+  document.body.innerHTML = '';
+  vi.clearAllMocks();
+  vi.unstubAllGlobals();
+  resetPortal();
+});
 
 const settingsTabs = () => Array.from(document.querySelectorAll<HTMLButtonElement>('.settings-tabs button'));
 const selectedTab = () => settingsTabs().find(button => button.getAttribute('aria-selected') === 'true')?.textContent;
@@ -258,5 +311,46 @@ describe('SettingsPage banners', () => {
     const noteIndex = Array.from(host.children).indexOf(note!);
     const formIndex = Array.from(host.children).findIndex(child => child.querySelector('form.settings'));
     expect(noteIndex).toBeLessThan(formIndex);
+  });
+});
+
+// Account and update gating must behave exactly like the web app: the
+// account group exists only while the snapshot says accounts are enabled
+// (an outage — an unknown snapshot — is identical to a disabled server),
+// and the update controls render only while THIS embedded server is
+// running. The stored settings are carried by the Go store (SaveSettings
+// transport) and are never touched by portal state, so the stored server
+// key survives capability loss by construction.
+describe('SettingsPage portal gating', () => {
+  it('shows the Account tab and the update section while accounts are enabled and the server runs', async () => {
+    fakeApi.portalState.mockResolvedValue(enabledSnapshot);
+    const host = await mount();
+    expect(settingsTabs().some(button => button.textContent === 'Account')).toBe(true);
+    const section = host.querySelector('.update-section');
+    expect(section).not.toBeNull();
+    expect(section?.querySelector('.update-actions button:not([disabled])')).not.toBeNull();
+  });
+
+  it('unmounts the entire account group with zero trace when accounts are disabled', async () => {
+    fakeApi.portalState.mockResolvedValue(disabledSnapshot);
+    const host = await mount();
+    expect(settingsTabs().some(button => button.textContent === 'Account')).toBe(false);
+    expect(host.textContent).not.toContain('Account');
+  });
+
+  it('treats an unknown snapshot (portal outage) as accounts disabled', async () => {
+    fakeApi.portalState.mockRejectedValue(new Error('portal routes absent'));
+    const host = await mount();
+    expect(settingsTabs().some(button => button.textContent === 'Account')).toBe(false);
+  });
+
+  it('keeps update controls unavailable while the embedded server is stopped', async () => {
+    fakeApi.portalState.mockResolvedValue(enabledSnapshot);
+    seedServerState({ state: 'stopped' });
+    const host = await mount();
+    // Status still recovers from the last session, but the section must not
+    // pretend a stopped server can check or apply anything.
+    expect(host.querySelector('.update-section')).toBeNull();
+    expect(host.textContent).toContain('The server is stopped');
   });
 });

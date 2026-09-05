@@ -304,6 +304,9 @@ func TestOpenURLRestrictsSchemes(t *testing.T) {
 		{"example.com/no-scheme", false},
 		{"://missing-scheme", false},
 		{"", false},
+		{"http://", false},
+		{"https://", false},
+		{"http:///path/only", false},
 	}
 	for _, tc := range cases {
 		err := b.OpenURL(tc.url)

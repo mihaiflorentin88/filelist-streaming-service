@@ -1,7 +1,7 @@
 import { render } from 'preact';
 import { act } from 'preact/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { seedServerState } from '../lib/state';
+import { resetPortal, seedServerState } from '../lib/state';
 import { ServerPage } from './ServerPage';
 
 // Bindings are stubbed at the module boundary; the Wails event API stays
@@ -44,10 +44,25 @@ vi.mock('@wailsio/runtime', () => ({
   Events: { On: () => () => { } },
 }));
 
+const fakeApi = vi.hoisted(() => ({
+  call: vi.fn(),
+  portalState: vi.fn(),
+  updatesCurrent: vi.fn(),
+  portalMe: vi.fn(),
+}));
+
 vi.mock('@filelist/web/shared-api', () => ({
   configureSharedApi: () => { },
-  sharedApi: () => ({ call: vi.fn() }),
+  sharedApi: () => fakeApi,
 }));
+
+// The shell's portal engine opens an SSE stream per origin; these tests
+// never drive it.
+class FakeEventSource {
+  constructor(public url: string) { }
+  addEventListener() { }
+  close() { }
+}
 
 const mountedHosts: HTMLElement[] = [];
 
@@ -56,7 +71,12 @@ async function mount(): Promise<HTMLElement> {
   document.body.appendChild(host);
   mountedHosts.push(host);
   await act(async () => { render(<ServerPage />, host) });
-  await act(async () => { });
+  // The portal engine's recovery refetch resolves a few microtasks deep;
+  // drain several rounds so every settled render lands before assertions.
+  // Plain microtask rounds only — the log-viewer tests run fake timers.
+  for (let i = 0; i < 5; i++) {
+    await act(async () => { await Promise.resolve() });
+  }
   return host;
 }
 
@@ -64,11 +84,20 @@ const button = (label: string) =>
   Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(b => b.textContent?.trim() === label)!;
 
 beforeEach(() => {
+  vi.stubGlobal('EventSource', FakeEventSource);
   seedServerState({ state: 'stopped' });
   fakeBindings.version.mockResolvedValue('v0.1.2');
   fakeBindings.dataDirInfo.mockResolvedValue(['/opt/fs/data', 'pointer']);
   fakeBindings.loadSettings.mockResolvedValue({ settingsPath: '/opt/fs/data/settings.json' });
   fakeBindings.autostartStatus.mockResolvedValue(false);
+  fakeApi.call.mockReset();
+  fakeApi.portalState.mockReset();
+  fakeApi.portalState.mockRejectedValue(new Error('portal routes absent'));
+  fakeApi.updatesCurrent.mockReset();
+  fakeApi.updatesCurrent.mockRejectedValue(new Error('absent'));
+  fakeApi.portalMe.mockReset();
+  fakeApi.portalMe.mockRejectedValue(Object.assign(new Error('no session'), { status: 401 }));
+  resetPortal();
 });
 
 afterEach(() => {
@@ -76,6 +105,8 @@ afterEach(() => {
   mountedHosts.length = 0;
   document.body.innerHTML = '';
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
+  resetPortal();
 });
 
 describe('ServerPage status card', () => {
@@ -172,6 +203,37 @@ describe('ServerPage details row', () => {
     expect(fakeBindings.openPath).toHaveBeenLastCalledWith('logs');
     await act(async () => { button('Open data folder').click() });
     expect(fakeBindings.openPath).toHaveBeenLastCalledWith('data');
+  });
+});
+
+// Update state reaches the Server page from the shared portal surface. The
+// line only exists while THIS embedded server is running — a stopped (or
+// restarting) server must not show availability it cannot act on, even if
+// a status from the previous session is still mirrored.
+describe('ServerPage update state', () => {
+  it('shows the available version on the running server', async () => {
+    seedServerState({ state: 'running', address: '127.0.0.1:8097' });
+    fakeApi.portalState.mockResolvedValue({ accountsEnabled: false, adsEnabled: false, donor: false, links: [] });
+    fakeApi.updatesCurrent.mockResolvedValue({ currentVersion: '1.2.3', available: true, latest: '1.3.0', releasesUrl: 'https://example.invalid/releases', selfUpdate: true, applying: false });
+    const host = await mount();
+    const line = host.querySelector('.update-state');
+    expect(line).not.toBeNull();
+    expect(line?.textContent).toContain('Update available: version 1.3.0');
+  });
+
+  it('shows no update line while the server is stopped, even with a mirrored status', async () => {
+    fakeApi.portalState.mockResolvedValue({ accountsEnabled: false, adsEnabled: false, donor: false, links: [] });
+    fakeApi.updatesCurrent.mockResolvedValue({ currentVersion: '1.2.3', available: true, latest: '1.3.0', releasesUrl: 'https://example.invalid/releases', selfUpdate: true, applying: false });
+    const host = await mount();
+    expect(host.querySelector('.update-state')).toBeNull();
+  });
+
+  it('shows no update line when the server runs and nothing is available', async () => {
+    seedServerState({ state: 'running', address: '127.0.0.1:8097' });
+    fakeApi.portalState.mockResolvedValue({ accountsEnabled: false, adsEnabled: false, donor: false, links: [] });
+    fakeApi.updatesCurrent.mockResolvedValue({ currentVersion: '1.2.3', available: false, releasesUrl: '', selfUpdate: true, applying: false });
+    const host = await mount();
+    expect(host.querySelector('.update-state')).toBeNull();
   });
 });
 

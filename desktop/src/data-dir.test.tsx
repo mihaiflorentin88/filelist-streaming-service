@@ -1,7 +1,7 @@
 import { render } from 'preact';
 import { act } from 'preact/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { seedServerState } from './lib/state';
+import { resetPortal, seedServerState } from './lib/state';
 import { ServerPage } from './pages/ServerPage';
 
 // Bindings are stubbed at the module boundary; the dialog tests drive the
@@ -37,10 +37,25 @@ vi.mock('@wailsio/runtime', () => ({
   Events: { On: () => () => { } },
 }));
 
+const fakeApi = vi.hoisted(() => ({
+  call: vi.fn(),
+  portalState: vi.fn(),
+  updatesCurrent: vi.fn(),
+  portalMe: vi.fn(),
+}));
+
 vi.mock('@filelist/web/shared-api', () => ({
   configureSharedApi: () => { },
-  sharedApi: () => ({ call: vi.fn() }),
+  sharedApi: () => fakeApi,
 }));
+
+// The shell's portal engine opens an SSE stream per origin; these tests
+// never drive it.
+class FakeEventSource {
+  constructor(public url: string) { }
+  addEventListener() { }
+  close() { }
+}
 
 const mountedHosts: HTMLElement[] = [];
 
@@ -67,17 +82,24 @@ async function type(host: HTMLElement, value: string) {
 }
 
 beforeEach(() => {
+  vi.stubGlobal('EventSource', FakeEventSource);
   seedServerState({ state: 'stopped' });
   fakeBindings.version.mockResolvedValue('v0.1.2');
   fakeBindings.loadSettings.mockResolvedValue({ settingsPath: '/opt/fs/data/settings.json' });
   fakeBindings.autostartStatus.mockResolvedValue(false);
   fakeBindings.dataDirInfo.mockResolvedValue(['/opt/fs/data', 'pointer']);
+  fakeApi.portalState.mockRejectedValue(new Error('portal routes absent'));
+  fakeApi.updatesCurrent.mockRejectedValue(new Error('absent'));
+  fakeApi.portalMe.mockRejectedValue(Object.assign(new Error('no session'), { status: 401 }));
+  resetPortal();
 });
 
 afterEach(() => {
   for (const host of mountedHosts) { render(null, host); host.remove() }
   mountedHosts.length = 0;
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
+  resetPortal();
 });
 
 describe('ServerPage change data dir dialog', () => {
