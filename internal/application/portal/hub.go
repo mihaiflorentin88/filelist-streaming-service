@@ -149,7 +149,17 @@ func (h *Hub) Promotions() []Promotion {
 func (h *Hub) Notice() (Notice, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.notice, h.hasNotice
+	return copyNotice(h.notice), h.hasNotice
+}
+
+// copyNotice duplicates a notice including its Binaries slice so returned
+// values never alias the cached state.
+func copyNotice(notice Notice) Notice {
+	if notice.Binaries == nil {
+		return notice
+	}
+	notice.Binaries = append(make([]Binary, 0, len(notice.Binaries)), notice.Binaries...)
+	return notice
 }
 
 // RefreshNotice fetches the update notice and caches it. An absent notice
@@ -168,7 +178,7 @@ func (h *Hub) RefreshNotice(ctx context.Context) (Notice, bool, error) {
 		return Notice{}, false, err
 	}
 	h.notice, h.hasNotice = notice, true
-	return notice, true, nil
+	return copyNotice(notice), true, nil
 }
 
 // Refresh runs one serialized refresh cycle: public settings gate accounts
@@ -212,7 +222,10 @@ func (h *Hub) refresh(ctx context.Context) error {
 		return stale
 	}
 	if err != nil {
-		errs = append(errs, err) // keep the previously known links
+		// A failed links fetch removes the links surface; a later
+		// successful probe restores it. Unrelated state stays alone.
+		next.links = nil
+		errs = append(errs, err)
 	} else {
 		next.links = links
 	}
@@ -248,7 +261,7 @@ func (h *Hub) refresh(ctx context.Context) error {
 	}
 
 	switch {
-	case settings.AdsEnabled && next.promotionLive:
+	case settings.AdsEnabled && !next.donor && next.promotionLive:
 		// The slot is live: deliver directly.
 		promotions, err := h.client.Promotions(ctx, h.promotionCount)
 		if stale := h.gate(ctx, g); stale != nil {
@@ -262,7 +275,7 @@ func (h *Hub) refresh(ctx context.Context) error {
 		} else {
 			next.promotions = promotions
 		}
-	case settings.AdsEnabled:
+	case settings.AdsEnabled && !next.donor:
 		// The slot is hidden: recover through the non-impression
 		// availability probe before delivering again.
 		available, err := h.client.PromotionAvailability(ctx)
@@ -287,6 +300,10 @@ func (h *Hub) refresh(ctx context.Context) error {
 			}
 		}
 	default:
+		// Ads disabled, or a valid donor: a donor hides promotions
+		// across the household and delivery records an upstream
+		// impression, so a donor never triggers delivery. Donor expiry
+		// restores the slot through the availability-probe path.
 		next.promotions, next.promotionLive = nil, false
 	}
 

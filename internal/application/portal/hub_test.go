@@ -235,17 +235,16 @@ func TestHubRefreshAppliesHealthyStateAndPublishesSnapshot(t *testing.T) {
 	client := healthyFake()
 	sink := &recordingSink{}
 	hub := newTestHub(client, &keyHolder{}, sink)
-	until := newFakeClock().Now().Add(time.Hour)
 	client.mu.Lock()
-	client.status = AccountStatus{Donor: true, DonorUntil: &until}
+	client.status = AccountStatus{Donor: false}
 	client.mu.Unlock()
 
 	if err := hub.Refresh(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	snapshot := hub.Snapshot()
-	if !snapshot.AccountsEnabled || !snapshot.AdsEnabled || !snapshot.Donor {
-		t.Fatalf("healthy refresh must enable all surfaces: %#v", snapshot)
+	if !snapshot.AccountsEnabled || !snapshot.AdsEnabled || snapshot.Donor {
+		t.Fatalf("a healthy non-donor refresh must enable surfaces without donor state: %#v", snapshot)
 	}
 	if len(snapshot.Links) != 1 || snapshot.Links[0].ID != 1 {
 		t.Fatalf("links were not applied: %#v", snapshot.Links)
@@ -261,7 +260,7 @@ func TestHubRefreshAppliesHealthyStateAndPublishesSnapshot(t *testing.T) {
 	if err := json.Unmarshal(events[0].payload, &carried); err != nil {
 		t.Fatalf("portal.state payload must carry a JSON Snapshot: %v", err)
 	}
-	if !carried.AccountsEnabled || !carried.AdsEnabled || !carried.Donor {
+	if !carried.AccountsEnabled || !carried.AdsEnabled || carried.Donor {
 		t.Fatalf("published snapshot lost state: %#v", carried)
 	}
 }
@@ -290,7 +289,7 @@ func TestHubPublicSettingsFailureClearsAccountsAndPromotionsKeepsLinks(t *testin
 	}
 }
 
-func TestHubLinksFailureLeavesUnrelatedStateAlone(t *testing.T) {
+func TestHubLinksFailureRemovesLinksAndRecoveryRestoresThem(t *testing.T) {
 	client := healthyFake()
 	hub := newTestHub(client, &keyHolder{}, &recordingSink{})
 	if err := hub.Refresh(context.Background()); err != nil {
@@ -303,8 +302,20 @@ func TestHubLinksFailureLeavesUnrelatedStateAlone(t *testing.T) {
 		t.Fatal("links failure must surface as a refresh error")
 	}
 	snapshot := hub.Snapshot()
-	if !snapshot.AccountsEnabled || !snapshot.AdsEnabled || len(snapshot.Links) != 1 {
-		t.Fatalf("links failure must leave unrelated state alone: %#v", snapshot)
+	if !snapshot.AccountsEnabled || !snapshot.AdsEnabled {
+		t.Fatalf("links failure must leave accounts and promotions alone: %#v", snapshot)
+	}
+	if len(snapshot.Links) != 0 {
+		t.Fatalf("a failed links fetch must remove the links surface: %#v", snapshot.Links)
+	}
+	client.mu.Lock()
+	client.linksErr = nil
+	client.mu.Unlock()
+	if err := hub.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot := hub.Snapshot(); len(snapshot.Links) != 1 || snapshot.Links[0].ID != 1 {
+		t.Fatalf("a later successful probe must restore links: %#v", snapshot.Links)
 	}
 }
 
@@ -648,6 +659,71 @@ func TestHubNoticePresenceIsExplicitAndClearedOnFailedFetch(t *testing.T) {
 	}
 	if _, ok := hub.Notice(); ok {
 		t.Fatal("a failed fetch must clear the cached notice")
+	}
+}
+
+func TestHubNoticeReturnsBinariesCopies(t *testing.T) {
+	client := healthyFake()
+	hub := newTestHub(client, &keyHolder{}, &recordingSink{})
+	client.mu.Lock()
+	client.notice = Notice{Version: "v1.2.3", Binaries: []Binary{{Platform: "linux-amd64", DownloadURL: "https://example.invalid/a.tar.gz"}}}
+	client.mu.Unlock()
+	if _, ok, err := hub.RefreshNotice(context.Background()); err != nil || !ok {
+		t.Fatalf("expected the notice, got %v %v", ok, err)
+	}
+	got, ok := hub.Notice()
+	if !ok || len(got.Binaries) != 1 {
+		t.Fatalf("expected the cached binaries, got %#v %v", got, ok)
+	}
+	got.Binaries[0].Platform = "mutated"
+	fresh, _ := hub.Notice()
+	if fresh.Binaries[0].Platform != "linux-amd64" {
+		t.Fatalf("returned notice aliases cached state: %#v", fresh.Binaries)
+	}
+}
+
+func TestHubValidDonorSuppressesPromotionDeliveryUntilExpiry(t *testing.T) {
+	client := healthyFake()
+	clock := newFakeClock()
+	hub := NewHub(client, (&keyHolder{}).read, clock.Now, nil, (&recordingSink{}).sink)
+	until := clock.Now().Add(80 * time.Millisecond)
+	client.mu.Lock()
+	client.status = AccountStatus{Donor: true, DonorUntil: &until}
+	client.mu.Unlock()
+
+	if err := hub.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := hub.Snapshot()
+	if !snapshot.Donor || snapshot.AdsEnabled {
+		t.Fatalf("a valid donor must hide the promotion slot: %#v", snapshot)
+	}
+	if promotions := hub.Promotions(); len(promotions) != 0 {
+		t.Fatalf("a donor must not keep cached promotions: %#v", promotions)
+	}
+	client.mu.Lock()
+	deliveries, probes := client.promotionCalls, client.availabilityCalls
+	client.mu.Unlock()
+	if deliveries != 0 || probes != 0 {
+		t.Fatalf("a donor must never trigger delivery or probes: deliveries=%d probes=%d", deliveries, probes)
+	}
+
+	clock.Advance(200 * time.Millisecond) // the donor expiry passes
+	hub.expireDonor()
+	if snapshot := hub.Snapshot(); snapshot.Donor {
+		t.Fatal("donor status must expire at its actual time")
+	}
+	if err := hub.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	client.mu.Lock()
+	deliveries, probes = client.promotionCalls, client.availabilityCalls
+	client.mu.Unlock()
+	if probes != 1 || deliveries != 1 {
+		t.Fatalf("donor expiry must restore the slot through the availability probe: deliveries=%d probes=%d", deliveries, probes)
+	}
+	if snapshot := hub.Snapshot(); !snapshot.AdsEnabled {
+		t.Fatalf("the promotion slot must return after donor expiry: %#v", snapshot)
 	}
 }
 
