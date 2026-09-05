@@ -58,7 +58,7 @@ function useOverlayFocus(active: boolean, onClose: () => void) {
 
 export function Downloads({ items, onRefresh, onPlay, onRemove, onAction }: { items: Download[]; onRefresh: () => void; onPlay: (d: Download) => void; onRemove: (d: Download) => Promise<void>; onAction: (d: Download, action: DownloadTransferAction) => Promise<void> }) {
   const [pending, setPending] = useState<Download | null>(null); const [removing, setRemoving] = useState(false); const [query, setQuery] = useState(''); const [filter, setFilter] = useState('all'); const [sort, setSort] = useState<DownloadSort>('recent'); const [order, setOrder] = useState<string[]>(() => orderDownloadIDs(items, 'recent')); useOverlayFocus(Boolean(pending), () => { if (!removing) setPending(null) });
-  const [busy, setBusy] = useState(''); const runAction = async (download: Download, action: DownloadTransferAction) => { const key = `${download.id}:${action}`; if (busy) return; setBusy(key); try { await onAction(download, action) } finally { setBusy('') } };
+  const [busy, setBusy] = useState(''); const runAction = async (download: Download, action: DownloadTransferAction) => { const key = `${download.id}:${action}`; if (busy) return; setBusy(key); try { await onAction(download, action) } catch { } finally { setBusy('') } };
   const idsKey = items.map(item => item.id).join('\u0000');
   useEffect(() => setOrder(current => { const available = new Set(items.map(item => item.id)); const retained = current.filter(id => available.has(id)); const known = new Set(retained); const added = items.filter(item => !known.has(item.id)).map(item => item.id); return [...added, ...retained] }), [idsKey]);
   const changeSort = (next: DownloadSort) => { setSort(next); setOrder(orderDownloadIDs(items, next)) };

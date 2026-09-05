@@ -2,6 +2,7 @@
 // catalog sync maintenance actions and observed catalog coverage. The app
 // renders these on both the Settings and Events views.
 import { useEffect, useRef, useState } from 'preact/hooks';
+import type { ComponentChild } from 'preact';
 import { SettingsField } from '@filelist/shared';
 import { sharedApi } from './shared-api';
 
@@ -40,6 +41,11 @@ const TABS: Array<{ id: string; label: string }> = [
   { id: 'maintenance', label: 'Maintenance' },
   { id: 'test', label: 'Test' },
 ];
+// The account tab (supporter key) exists only while the portal reports a
+// working account capability; capability loss removes every trace of the
+// tab and its fields without touching the stored server key.
+const ACCOUNT_TAB = { id: 'account', label: 'Account' };
+const tabsFor = (accountsEnabled: boolean) => accountsEnabled ? [...TABS.slice(0, 4), ACCOUNT_TAB, ...TABS.slice(4)] : TABS;
 
 const TAB_GROUPS: Record<string, Array<{ title: string; fields: SettingsRow[]; when?: (current: Record<string, unknown>) => boolean }>> = {
   tracker: [
@@ -57,13 +63,16 @@ const TAB_GROUPS: Record<string, Array<{ title: string; fields: SettingsRow[]; w
   server: [
     { title: 'Server and background work', fields: [['Server name', 'instanceName'], ['Listen address', 'listenAddress'], ['Database path', 'databasePath'], ['Catalog max age hours', 'catalogMaxAgeHours', 'number'], ['Maximum concurrent jobs', 'maxConcurrentJobs', 'number'], ['Title refresh timeout minutes', 'titleRefreshTimeoutMinutes', 'number'], ['Trusted CIDRs (comma separated)', 'trustedCidrs']] },
   ],
+  account: [
+    { title: 'Supporter account', fields: [['Supporter API key', 'portalAPIKey', 'password']] },
+  ],
 };
 
 // The active tab rides the URL hash so refresh and shared links reopen the
 // same section; anything unknown falls back to the first tab.
-function tabFromHash(): string {
+function tabFromHash(accountsEnabled: boolean): string {
   const id = location.hash.replace(/^#/, '');
-  return TABS.some(tab => tab.id === id) ? id : 'tracker';
+  return tabsFor(accountsEnabled).some(tab => tab.id === id) ? id : 'tracker';
 }
 
 const tabFieldKeys = (id: string): string[] => (TAB_GROUPS[id] || []).flatMap(group => group.fields.map(field => field[1]));
@@ -79,8 +88,8 @@ const linkify = (text: string) =>
     /^https?:\/\//.test(part) ? <a key={i} href={part} target="_blank" rel="noreferrer">{part}</a> : part
   );
 
-export function Settings({ value, fields, onSaved, onError, onDirtyChange, save: saveTransport }: {
-  value: Record<string, unknown>; fields: SettingsField[]; onSaved: (v: Record<string, unknown>) => void; onError: (s: string) => void; onDirtyChange?: (dirty: boolean) => void;
+export function Settings({ value, fields, onSaved, onError, onDirtyChange, accountsEnabled, updateSection, save: saveTransport }: {
+  value: Record<string, unknown>; fields: SettingsField[]; onSaved: (v: Record<string, unknown>) => void; onError: (s: string) => void; onDirtyChange?: (dirty: boolean) => void; accountsEnabled?: boolean; updateSection?: ComponentChild;
   // Alternate save transport for embedded hosts (the desktop GUI): the save
   // bar calls it with the submitted body instead of the storage PUT, and a
   // thrown error takes the normal error path. Absent, the webapp behaves
@@ -92,15 +101,22 @@ export function Settings({ value, fields, onSaved, onError, onDirtyChange, save:
   const [help, setHelp] = useState<SettingsField | null>(null);
   const [tests, setTests] = useState<Record<string, string>>({});
   const [connState, setConnState] = useState<Record<string, string>>({});
-  const [tab, setTabState] = useState(tabFromHash);
+  const [tab, setTabState] = useState(() => tabFromHash(accountsEnabled === true));
+  // The account tab can disappear under the user (capability loss mid-edit):
+  // an unknown tab renders the first one, so no orphan field group remains.
+  const visibleTabs = tabsFor(accountsEnabled === true);
+  const activeTab = visibleTabs.some(entry => entry.id === tab) ? tab : 'tracker';
+  const accountsEnabledRef = useRef(accountsEnabled === true);
+  accountsEnabledRef.current = accountsEnabled === true;
   const setTab = (id: string) => { setTabState(id); history.replaceState(null, '', `#${id}`) };
   const tabEdits = (id: string) => tabFieldKeys(id).filter(key => current[key] !== formValue(key, value[key]));
   const [pendingTab, setPendingTab] = useState<string | null>(null);
-  const anyDirty = () => TABS.some(entry => tabEdits(entry.id).length > 0);
+  const anyDirty = () => visibleTabs.some(entry => tabEdits(entry.id).length > 0);
   // Tab switches ask first while anything on the page is dirty; the
   // beforeunload prompt covers browser close and refresh.
   const requestTab = (id: string) => {
-    if (id === tab || !anyDirty()) { setTab(id); return }
+    if (!visibleTabs.some(entry => entry.id === id)) return;
+    if (id === activeTab || !anyDirty()) { setTab(id); return }
     setPendingTab(id);
   };
   // The hashchange listener lives for the component's life but the guard
@@ -128,7 +144,7 @@ export function Settings({ value, fields, onSaved, onError, onDirtyChange, save:
   // Hash edits are navigation too: they go through the same guarded switch
   // so Back/forward and manual hash changes cannot bypass the prompt.
   useEffect(() => {
-    const followHash = () => requestTabRef.current(tabFromHash());
+    const followHash = () => requestTabRef.current(tabFromHash(accountsEnabledRef.current));
     window.addEventListener('hashchange', followHash);
     return () => window.removeEventListener('hashchange', followHash);
   }, []);
@@ -139,7 +155,7 @@ export function Settings({ value, fields, onSaved, onError, onDirtyChange, save:
     // edits ride on top of the last-saved values — edits made on other tabs
     // stay pending until their own tab is saved.
     const merged: Record<string, unknown> = { ...value };
-    tabFieldKeys(tab).forEach(key => { merged[key] = current[key] });
+    tabFieldKeys(activeTab).forEach(key => { merged[key] = current[key] });
     if (typeof merged.trustedCidrs === 'string') merged.trustedCidrs = (merged.trustedCidrs as string).split(',').map((x: string) => x.trim()).filter(Boolean);
     if (typeof merged.evictionRules === 'string') merged.evictionRules = (merged.evictionRules as string).split(',').map((x: string) => x.trim().toLowerCase()).filter(Boolean);
     const out = { ...merged };
@@ -152,13 +168,13 @@ export function Settings({ value, fields, onSaved, onError, onDirtyChange, save:
       // The saved tab's draft snaps to the canonical form shape so the tab
       // reads clean immediately — no leave-and-return required.
       const canonical = { ...current };
-      tabFieldKeys(tab).forEach(key => { canonical[key] = formValue(key, merged[key]) });
+      tabFieldKeys(activeTab).forEach(key => { canonical[key] = formValue(key, merged[key]) });
       setCurrent(canonical);
     } catch (e) { onError((e as Error).message) }
   }
   function discard() {
     const reverted = { ...current };
-    tabFieldKeys(tab).forEach(key => { reverted[key] = formValue(key, value[key]) });
+    tabFieldKeys(activeTab).forEach(key => { reverted[key] = formValue(key, value[key]) });
     setCurrent(reverted);
     setMessage('');
   }
@@ -194,10 +210,10 @@ export function Settings({ value, fields, onSaved, onError, onDirtyChange, save:
   };
   const diagnostics = (connections: typeof CONNECTIONS) => <section class="diagnostics"><h2>Connection checks</h2>{connections.map(connection => <div><button type="button" onClick={() => void test(connection.name)}>Test {connection.label}</button><span role="status">{tests[connection.name]}</span></div>)}</section>;
   const panelContent = () => {
-    if (tab === 'maintenance') return <><CacheCoverage /><Events onError={onError} confirmRebuild /></>;
-    if (tab === 'test') return diagnostics(CONNECTIONS);
-    const visibleGroups = () => (TAB_GROUPS[tab] || []).filter(group => !group.when || group.when(current));
-    return <>{visibleGroups().map(renderGroup)}{connectionsFor(tab).length > 0 && diagnostics(connectionsFor(tab))}</>;
+    if (activeTab === 'maintenance') return <><CacheCoverage /><Events onError={onError} confirmRebuild /></>;
+    if (activeTab === 'test') return diagnostics(CONNECTIONS);
+    const visibleGroups = () => (TAB_GROUPS[activeTab] || []).filter(group => !group.when || group.when(current));
+    return <>{visibleGroups().map(renderGroup)}{connectionsFor(activeTab).length > 0 && diagnostics(connectionsFor(activeTab))}</>;
   };
   const renderGroup = (group: { title: string; fields: SettingsRow[]; when?: (current: Record<string, unknown>) => boolean }) => {
     // Switches read best as their own full-width list under the value fields.
@@ -210,12 +226,13 @@ export function Settings({ value, fields, onSaved, onError, onDirtyChange, save:
     <form class="settings" onSubmit={save}>
       <p class="supporting">Stored securely at {String(value.settingsPath || 'data/settings.json')}. Blank secrets keep their current value. Fields supplied by the process environment are shown read-only.</p>
       <div class="settings-tabs" role="tablist" aria-label="Settings sections">
-        {TABS.map(t => <button type="button" role="tab" class={[t.id === 'maintenance' ? 'ops-start' : '', tabEdits(t.id).length > 0 ? 'dirty' : ''].filter(Boolean).join(' ')} aria-selected={tab === t.id} onClick={() => requestTab(t.id)}>{connectionsFor(t.id).length > 0 && <span class={`led ${tabLed(t.id)}`} aria-hidden="true" />}{t.label}</button>)}
+        {visibleTabs.map(t => <button type="button" role="tab" class={[t.id === 'maintenance' ? 'ops-start' : '', tabEdits(t.id).length > 0 ? 'dirty' : ''].filter(Boolean).join(' ')} aria-selected={activeTab === t.id} onClick={() => requestTab(t.id)}>{connectionsFor(t.id).length > 0 && <span class={`led ${tabLed(t.id)}`} aria-hidden="true" />}{t.label}</button>)}
       </div>
       <div class="settings-panel" role="tabpanel">{panelContent()}</div>
-      {isConfigTab(tab) && <><div class="settings-actions"><span class="dirty-count" role="status">{tabEdits(tab).length > 0 ? `${tabEdits(tab).length} unsaved ${tabEdits(tab).length === 1 ? 'change' : 'changes'}` : ''}</span><button type="button" disabled={tabEdits(tab).length === 0} onClick={discard}>Discard changes</button><button class="primary" type="submit" disabled={tabEdits(tab).length === 0}>Save changes</button></div>{message && <p class="settings-status" role="status">{message}</p>}</>}
+      {isConfigTab(activeTab) && <><div class="settings-actions"><span class="dirty-count" role="status">{tabEdits(activeTab).length > 0 ? `${tabEdits(activeTab).length} unsaved ${tabEdits(activeTab).length === 1 ? 'change' : 'changes'}` : ''}</span><button type="button" disabled={tabEdits(activeTab).length === 0} onClick={discard}>Discard changes</button><button class="primary" type="submit" disabled={tabEdits(activeTab).length === 0}>Save changes</button></div>{message && <p class="settings-status" role="status">{message}</p>}</>}
     </form>
+    {updateSection}
     {help && <div class="overlay" role="dialog" aria-modal="true" aria-label={`Help for ${help.label}`}><section class="help-modal"><button class="close" onClick={() => setHelp(null)}>Close</button><h2>{help.label}</h2><p>{help.help}</p>{help.readOnly && <p><strong>This setting is managed by the process environment and cannot be edited here.</strong></p>}{help.restartRequired && <p><strong>Restart required after changing this setting.</strong></p>}{help.obtain && <><h3>Where to get it</h3><p>{linkify(help.obtain)}</p></>}<button onClick={() => void navigator.clipboard.writeText([help.help, help.obtain].filter(Boolean).join('\n\n')).then(() => setMessage('Help copied.'))}>Copy help</button></section></div>}
-    {pendingTab !== null && <div class="overlay" role="dialog" aria-modal="true" aria-label="Unsaved tab changes"><section class="help-modal"><h2>Tab has unsaved changes</h2><p>Unsaved changes on this tab stay pending — the tab label keeps its dot until you save or discard them.</p><div class="confirm-actions"><button type="button" onClick={() => { history.replaceState(null, '', `#${tab}`); setPendingTab(null) }}>Keep editing</button><button type="button" class="primary" onClick={() => { const target = pendingTab; setPendingTab(null); setTab(target) }}>Switch anyway</button></div></section></div>}
+    {pendingTab !== null && <div class="overlay" role="dialog" aria-modal="true" aria-label="Unsaved tab changes"><section class="help-modal"><h2>Tab has unsaved changes</h2><p>Unsaved changes on this tab stay pending — the tab label keeps its dot until you save or discard them.</p><div class="confirm-actions"><button type="button" onClick={() => { history.replaceState(null, '', `#${activeTab}`); setPendingTab(null) }}>Keep editing</button><button type="button" class="primary" onClick={() => { const target = pendingTab; setPendingTab(null); setTab(target) }}>Switch anyway</button></div></section></div>}
   </>
 }

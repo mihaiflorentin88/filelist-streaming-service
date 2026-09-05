@@ -9,6 +9,7 @@
     "./downloads": "./downloads.tsx",
     "./jobs": "./jobs.tsx",
     "./shared-api": "./shared-api.ts",
+    "./portal": "./portal.tsx",
     "./style.css": "./style.css"
   },
   "scripts": {

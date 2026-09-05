@@ -2483,3 +2483,273 @@ progress {
  display: flex;
  justify-content: flex-end
 }
+
+/* Portal dock: compact promotion, other-projects links, and the account
+   entry, anchored to the sidebar bottom with the existing nav tokens. The
+   sidebar becomes a column so margin-top:auto seats the dock. */
+.sidebar {
+ display: flex;
+ flex-direction: column
+}
+
+.portal-dock {
+ margin-top: auto;
+ padding-top: 10px;
+ border-top: 1px solid #ffffff0d
+}
+
+.portal-promo {
+ padding: 8px 0 4px
+}
+
+.portal-promo-label {
+ margin: 0 0 8px 14px;
+ color: var(--muted);
+ font-size: 12px;
+ white-space: nowrap;
+ text-transform: uppercase;
+ letter-spacing: .08em
+}
+
+.portal-promo a {
+ display: grid;
+ gap: 6px;
+ width: 246px;
+ padding: 10px;
+ border: 1px solid var(--line);
+ border-radius: 12px;
+ background: var(--panel);
+ color: var(--text);
+ text-decoration: none
+}
+
+.portal-promo a:hover {
+ border-color: var(--teal)
+}
+
+.portal-promo img {
+ width: 100%;
+ aspect-ratio: 3 / 1;
+ border-radius: 8px;
+ object-fit: cover
+}
+
+.portal-promo strong {
+ font-size: 14px
+}
+
+.portal-promo span {
+ display: -webkit-box;
+ -webkit-line-clamp: 3;
+ -webkit-box-orient: vertical;
+ overflow: hidden;
+ color: var(--muted);
+ font-size: 12px
+}
+
+.portal-projects {
+ padding: 8px 0;
+ white-space: nowrap
+}
+
+.portal-projects p {
+ margin: 2px 12px 7px 14px;
+ color: var(--muted);
+ font-size: 12px;
+ text-transform: uppercase;
+ letter-spacing: .08em
+}
+
+.portal-projects a {
+ display: block;
+ width: 246px;
+ padding: 7px 12px;
+ border-radius: 10px;
+ color: #c7d3d8;
+ text-decoration: none;
+ font-size: 14px;
+ overflow: hidden;
+ text-overflow: ellipsis
+}
+
+.portal-projects a:hover {
+ background: #ffffff0b;
+ color: var(--text)
+}
+
+.portal-account {
+ display: flex;
+ align-items: center;
+ width: 246px;
+ height: 48px;
+ gap: 18px;
+ border: 0;
+ border-radius: 12px;
+ background: transparent;
+ text-align: left;
+ cursor: pointer;
+ color: #c7d3d8;
+ white-space: nowrap
+}
+
+.portal-account:hover {
+ background: #ffffff0b
+}
+
+.portal-account svg {
+ flex: 0 0 24px;
+ margin-left: 14px
+}
+
+.portal-account span {
+ overflow: hidden;
+ text-overflow: ellipsis
+}
+
+/* Account dialog form: same field tokens as the settings editor. */
+.portal-account-dialog form {
+ display: grid;
+ gap: 12px;
+ margin: 14px 0 0
+}
+
+.portal-account-dialog label {
+ display: grid;
+ gap: 6px;
+ color: var(--muted)
+}
+
+.portal-account-dialog input {
+ width: 100%;
+ border: 1px solid var(--line);
+ border-radius: 10px;
+ background: var(--panel);
+ color: var(--text);
+ padding: 11px
+}
+
+.portal-account-identity {
+ display: grid;
+ gap: 4px;
+ margin: 0 0 14px
+}
+
+.portal-account-identity span {
+ color: var(--muted)
+}
+
+.portal-form-error {
+ margin: 0;
+ color: var(--danger)
+}
+
+.portal-form-notice {
+ margin: 0;
+ color: var(--teal)
+}
+
+/* Server updates: the Settings section and the availability notice share
+   the state colors and the warning block. */
+.update-section {
+ margin: 18px 0 0;
+ padding: 20px;
+ border: 1px solid var(--line);
+ border-radius: var(--radius);
+ background: var(--panel)
+}
+
+.update-section h2 {
+ margin: 0 0 6px;
+ font-size: 20px
+}
+
+.update-state {
+ margin: 0 0 12px;
+ color: var(--muted)
+}
+
+.update-state[data-state="available"],
+.update-state[data-state="manual-only"],
+.update-state[data-state="reconnected"] {
+ color: var(--amber)
+}
+
+.update-state[data-state="failed"] {
+ color: var(--danger)
+}
+
+.update-notes {
+ margin: 0 0 12px
+}
+
+.update-actions {
+ display: flex;
+ gap: 12px;
+ align-items: center;
+ margin-bottom: 14px
+}
+
+.update-actions button {
+ border: 1px solid var(--line);
+ border-radius: 10px;
+ background: var(--panel-2);
+ color: var(--text);
+ padding: 9px 14px;
+ cursor: pointer
+}
+
+.update-actions button:disabled {
+ opacity: .55;
+ cursor: default
+}
+
+.update-actions button.primary {
+ background: var(--teal);
+ border-color: var(--teal);
+ color: #06231b
+}
+
+.update-actions a {
+ color: var(--teal)
+}
+
+.update-notice {
+ display: flex;
+ flex-wrap: wrap;
+ gap: 12px 28px;
+ align-items: start;
+ margin: 0 0 18px;
+ padding: 16px 20px;
+ border: 1px solid var(--amber);
+ border-radius: var(--radius);
+ background: var(--panel-2)
+}
+
+.update-notice-copy strong {
+ color: var(--amber)
+}
+
+.update-notice-copy p {
+ margin: 6px 0 0;
+ max-width: 70ch
+}
+
+.update-notice-copy small {
+ display: block;
+ margin-top: 4px;
+ color: var(--muted)
+}
+
+.update-warning {
+ display: grid;
+ gap: 4px;
+ flex-basis: 100%;
+ padding-top: 10px;
+ border-top: 1px solid var(--line);
+ color: var(--muted);
+ font-size: 13px
+}
+
+.update-warning p {
+ margin: 0
+}
