@@ -22,10 +22,10 @@ import (
 )
 
 // Run assembles and runs the Wails desktop app: data-dir resolution,
-// settings load, single-instance forwarding, the supervisor (which anchors
-// the relative default paths on first successful start), the window, the
-// tray, and the state-event wiring. All Wails usage is confined to this
-// package so a framework migration touches one boundary (spec: Risks).
+// settings load (which anchors the relative native paths to the data dir),
+// single-instance forwarding, the supervisor, the window, the tray, and
+// the state-event wiring. All Wails usage is confined to this package so a
+// framework migration touches one boundary (spec: Risks).
 
 // minimizedHides reports whether a launch starts the window hidden:
 // --minimized hides it, but only with complete configuration — with
