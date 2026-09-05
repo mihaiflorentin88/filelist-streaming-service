@@ -187,8 +187,13 @@ rollback() {
 	if [ "$app_phase" = true ]; then
 		if [ "$had_unit" = true ]; then
 			cp -p -- "$previous_unit" "$unit_path"
+			rm -f -- "$previous_unit"
 		else
+			# A first install that already ran enable --now leaves a wants
+			# symlink behind; disable and reload so no missing unit lingers.
+			systemctl disable --now "$service" >/dev/null 2>&1 || true
 			rm -f -- "$unit_path"
+			systemctl daemon-reload || true
 		fi
 		if [ "$had_binary" = true ] && [ -f "$previous" ]; then
 			mv -f -- "$previous" "$target"

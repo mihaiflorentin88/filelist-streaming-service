@@ -132,6 +132,7 @@ The desktop app renders through the platform webview: WKWebView on macOS, WebVie
 For an always-on server, install the reviewed systemd and logrotate files from `deploy/systemd/`:
 
 ```bash
+sudo useradd --system --home-dir /var/lib/filelist-streaming --no-create-home --shell /usr/sbin/nologin filelist-streaming
 sudo install -d -m 0755 -o filelist-streaming -g filelist-streaming /var/lib/filelist-streaming/bin
 sudo install -m 0755 -o filelist-streaming -g filelist-streaming filelist-streaming /var/lib/filelist-streaming/bin/filelist-streaming
 sudo install -m 0644 deploy/systemd/filelist-streaming.service /etc/systemd/system/
